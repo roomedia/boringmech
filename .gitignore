@@ -1,0 +1,29 @@
+# 계좌·상태 데이터 (런타임 생성물 — 절대 커밋 금지)
+*.db
+*.db-*
+paper.db*
+state.json
+dashboard_state.json
+seen.json
+seen_esports.json
+scan_state.json
+scan_state_esports.json
+run-log.md
+*-log.md
+
+# 백테스트 캐시 (재수집 가능, 대용량)
+bt_hist_cache.json
+
+# 실전 게이트·자격증명
+LIVE_ENABLED
+*.key
+creds.json
+builder.json
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
