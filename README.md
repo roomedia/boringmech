@@ -41,7 +41,7 @@ python3 scan_boring.py --dry-run
 
 래퍼 `pm-trader.sh`는 `pm-trader` 바이너리와 데이터 디렉토리를 환경변수로 받는다 (`PM_TRADER_BIN`, `PM_TRADER_DATA_DIR` — 기본값은 PATH와 레포 루트). 스캐너는 Gamma API를 직접 호출하므로 별도 인증이 필요 없다.
 
-운용 사이클은 "스캔 → 밴드 확인 → 매수 → (다음 사이클에) 정산"의 반복이다. 생산 환경에서는 15분 주기로 돌렸다.
+운용 사이클은 "스캔 → 밴드 확인 → 매수 → 손절 체크(`stop_loss.py`, 진입가 −25¢ 시 전량 매도 — 2026-11-12 규칙 변경) → (다음 사이클에) 정산"의 반복이다. 생산 환경에서는 15분 주기로 돌렸다.
 
 ## 백테스트
 
@@ -65,6 +65,7 @@ python3 backtest_band_sweep.py    # 밴드 스윕 → bt_sweep_results.json (bt_
 | `STRATEGY.md` | 고정 규칙·후보 필터·밴드 근거·이력 정정 |
 | `RESULTS.md` | 포워드 실측 + 백테스트 요약 |
 | `scan_boring.py` | 후보 스캐너 (풀 1,000, 판단·매수 안 함) |
+| `stop_loss.py` | 손절 체크·실행 (진입가 −0.25 시 전량 매도, `--dry-run` 평가 모드) |
 | `backtest_boring.py` / `backtest_band_sweep.py` / `bt_stats.py` | 백테스트·밴드 스윕·공용 통계 |
 | `bt_results.json` / `bt_sweep_results.json` | 백테스트 원시 결과 |
 | `pm-trader.sh` | 페이퍼 실행 래퍼 |
