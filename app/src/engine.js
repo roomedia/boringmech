@@ -235,6 +235,14 @@ function buildClient(signer, creds, funder) {
   });
 }
 
+// 개인키 입력의 유일한 정규화 지점 — 0x 접두사는 있어도 없어도 된다.
+function normalizePrivateKey(raw) {
+  const s = String(raw ?? "").trim();
+  if (/^[0-9a-fA-F]{64}$/.test(s)) return `0x${s}`;
+  if (/^0x[0-9a-fA-F]{64}$/.test(s)) return s;
+  throw new Error("개인키 형식이 아닙니다 (64자리 hex).");
+}
+
 function makeSigner(privateKey) {
   const account = privateKeyToAccount(privateKey);
   return {
@@ -418,11 +426,7 @@ function stop() {
 }
 
 async function link(privateKeyRaw) {
-  const pk = privateKeyRaw.trim();
-  const hex = pk.startsWith("0x") ? pk : `0x${pk}`;
-  if (!/^0x[0-9a-fA-F]{64}$/.test(hex)) {
-    throw new Error("개인키 형식이 아닙니다 (64자리 hex).");
-  }
+  const hex = normalizePrivateKey(privateKeyRaw);
   const { account, wallet } = makeSigner(hex);
   const eoa = account.address;
   const funder = await detectFunder(eoa);
