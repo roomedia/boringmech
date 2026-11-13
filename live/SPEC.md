@@ -62,11 +62,12 @@
 | blocked, block_reason | fail-safe 영구 차단 |
 | eval_flag | null | "equity_100" | "settled_20" |
 | redeemable_pending | redeem 대기 목록 {condition_id, slug, outcome, status, current_value} |
+| redeem_history | redeem 실행·종결 기록 {ts, kind(redeem\|worthless_close), condition_id, slugs, expected_usd, recovered_usd, tx_hash, transaction_id, transport, verify_status} |
 | created_at, updated_at | ISO 8601 (KST) |
 
 ## 정산 감지·redeem
 
-- Data API v2 `/positions`의 status가 `REDEEMABLE`(승)·`REDEEMABLE_LOST`(패)로 바뀐 포지션을 정산으로 감지해 settled에 기록하고, redeemable_pending에 목록화한다. **현재 단계는 감지·목록화까지** — redeem 실행 코드는 짜되 실행하지 않는다.
+- Data API v2 `/positions`의 status가 `REDEEMABLE`(승)·`REDEEMABLE_LOST`(패)로 바뀐 포지션을 정산으로 감지해 settled에 기록하고, redeemable_pending에 목록화한다. redeem 실행은 `--redeem` 모드로 구현돼 있다 (아래 "redeem 실행" 절). 이 환경(지역 제한)에서는 제출하지 않는다 — 활성화는 본체 단계.
 - 주의: Data API v1은 폐기됐다 (2026-11-11 실측). v2 경로는 `https://data-api.polymarket.com/v2/value|positions`이며 응답 envelope는 `{"data": ...}`다.
 
 ### redeem 경로 조사 결과 (2026-11-11)
@@ -75,6 +76,18 @@
 - **통합 SDK `polymarket-client` 0.18.0에 경로가 있다**: `SecureClient.redeem_positions()`가 내부에서 `ctf_redeem_positions_call` — 즉 ConditionalTokens `redeemPositions(collateral=pUSD, parentCollectionId=0x0, conditionId, indexSets=[1,2])` — 를 만들어 deposit wallet 배치로 서명하고 `https://relayer-v2.polymarket.com`에 **gasless** 제출한다. EOA는 서명만 하고 가스는 relayer가 낸다.
   - 선행 조건: relayer 인증 키 — Builder API key(`POLY_BUILDER_*` HMAC) 또는 Relayer API key가 필요하다. Builder 키는 polymarket.com 설정 또는 CLOB 클라이언트의 `create_builder_api_key`로 발급 가능 (미실행 — 키 발급은 본체 단계).
 - 폴백 경로: 같은 DW 배치를 EOA가 직접 `execute()`로 제출하면 가스(POL)를 직접 낸다. **EOA POL 잔고는 0** (2026-11-11 Polygonscan 확인)이라 현재는 이 경로가 막혀 있다.
+
+### redeem 실행 (2026-11-14 구현)
+
+- 명령: `live_executor.py --redeem` (실행) / `--redeem --dry-run` (계획·의도된 호출 내역만 출력, 제출·상태 저장 없음). 실행은 실주문 3중 게이트(`--live` + 환경변수 + LIVE_ENABLED 파일)를 그대로 탄다.
+- 흐름: 정산 감지 갱신 → condition 단위 계획 → 건별 [전송 → 종단 대기(`handle.wait()`) → pUSD(CLOB 담보) 잔고 델타로 회수액 검증] → `redeem_history` 기록·`settled[].redeemed` 표시·pending 제거. 검증 허용 오차는 max($0.05, 기대액의 2%) — 어긋나면 mismatch로 기록하고 실측 델타를 회수액으로 남긴다.
+- 1차 전송: `SdkRelayerRedeemTransport` — 통합 SDK `SecureClient.redeem_positions(condition_id)` (Builder 키 `~/.config/polymarket/builder.json`의 key/secret/passphrase 사용). 실제 콜 타깃(V2 마켓의 CtfCollateralAdapter 등)은 SDK가 마켓 컨텍스트로 정한다. executor의 `build_redeem_call`은 dry-run 표시·로깅용 표준형이다.
+- 패배 포지션: 승리 항목이 있는 condition은 그 redeem 호출로 함께 소멸한다 (redeemPositions가 양쪽 indexSet을 정산). 패배만 있는 condition은 호출 없이 `worthless_close`로 종결한다 (회수 $0).
+- 제출 후 잔고 측정이 실패하면 중복 제출 방지를 위해 `submitted_unverified`로 종결하고 tx 해시를 남긴다.
+- 실패 규칙 (2026-11-14 확정): 건별 실패는 해당 건만 pending에 남기고 사유를 run-log에 남긴다. 영구 차단 래치를 걸지 않는다 (매수 경로의 fail-safe blocked와 별개).
+- 단위 테스트: `live/test_redeem.py` — 전송 계층 mock으로 calldata 구성(SDK 빌더와 바이트 단위 일치 포함)·계획 분류·상태 전이·잔고 검증을 검증한다. 이 환경에서는 실제 redeem 제출을 하지 않았다 (적격 계정·실포지션 없음).
+- AUDIT-LIVE-20261114 갭 #7(정산·상환 "없음")은 이 구현으로 코드 차원에서 닫혔다. 감사 체크리스트의 "redeem 경로 실동작 확인" 항목만 적격 환경 실측 전까지 미완으로 남는다.
+- 폴백(EOA 직접 제출)은 미구현 — SDK dispatch의 무키(Builder 키 없음) 동작이 미검증이고 EOA POL 잔고도 0이라 `[미확인]`으로 남긴다.
 
 ### 가스 예비 운용 규칙 (사용자 확정)
 
