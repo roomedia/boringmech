@@ -101,6 +101,9 @@
     <div class="card">
       <h2>최근 로그</h2>
       <div class="log" id="logBox">—</div>
+      <div class="stack" style="margin-top:10px">
+        <button class="btn ghost" id="btnCopyLog">로그 복사</button>
+      </div>
     </div>
   </div>
 
@@ -148,7 +151,7 @@
 
   BM.onLog = function(line){
     logs.push(line);
-    if (logs.length > 30) logs.shift();
+    if (logs.length > 50) logs.shift();
     $('logBox').textContent = logs.slice(-5).join('\n');
   };
   BM.onState = function(snap){ render(snap); };
@@ -174,6 +177,41 @@
   $('btnStop').addEventListener('click', function(){ BM.stop(); render(null); });
   $('btnRefresh').addEventListener('click', async function(){
     try { render(await BM.snapshot()); } catch (e) { BM.onLog('새로고침 실패: ' + String(e.message ?? e)); }
+  });
+  $('btnCopyLog').addEventListener('click', async function(){
+    var btn = $('btnCopyLog');
+    var text = logs.join('\n');
+    var result = '';
+    if (!text) {
+      result = '복사할 로그 없음';
+    } else {
+      var ok = false;
+      try { await navigator.clipboard.writeText(text); ok = true; } catch (e) {}
+      if (!ok) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try { ok = document.execCommand('copy'); } catch (e) {}
+        document.body.removeChild(ta);
+      }
+      if (ok) {
+        result = '복사됨';
+      } else {
+        // 복사 API가 전부 막힌 환경 — 로그를 선택 상태로 두고 직접 복사하게 한다
+        var range = document.createRange();
+        range.selectNodeContents($('logBox'));
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        result = '선택됨 — 길게 눌러 복사하세요';
+      }
+    }
+    btn.textContent = result;
+    setTimeout(function(){ btn.textContent = '로그 복사'; }, 2500);
   });
   $('btnUnlink').addEventListener('click', function(){
     BM.unlink();

@@ -210,6 +210,8 @@ const state = {
   timer: null,
   cycle: 0,
   gen: 0,
+  sessionFills: 0,
+  posGapWarned: false,
   onLog: () => {},
   onState: () => {},
   lastSnapshot: null,
@@ -347,6 +349,33 @@ const isFailsafe = (text) => {
   return FAILSAFE_KEYWORDS.some((k) => t.includes(k));
 };
 
+// 체결 판정은 응답의 실제 필드로만 한다. CLOB는 FOK가 미체결이어도
+// success:true + status:"unmatched"로 응답하므로, errorMsg 유무만으로 보면
+// 체결 안 된 주문을 매수로 오인한다 (2026-11-14 실계정 사고: 잔고 불변인데
+// "매수" 로그 2건). 체결 증거(status matched/filled·트랜잭션 해시·체결
+// ID·실제 지불액)가 하나라도 있어야 체결로 인정한다.
+export function judgeFill(resp) {
+  if (!resp || typeof resp !== "object") {
+    return { filled: false, kind: "unfilled", status: "" };
+  }
+  if (resp.errorMsg) {
+    return { filled: false, kind: "error", status: String(resp.status || "") };
+  }
+  if (resp.success === false) {
+    return { filled: false, kind: "rejected", status: String(resp.status || "") };
+  }
+  const status = String(resp.status || "").toLowerCase();
+  const hashes = Array.isArray(resp.transactionsHashes) ? resp.transactionsHashes : [];
+  const trades = Array.isArray(resp.tradeIDs) ? resp.tradeIDs : [];
+  const making = Number(resp.makingAmount || 0);
+  const filled = resp.success === true &&
+    (status === "matched" || status === "filled" || hashes.length > 0 ||
+      trades.length > 0 || making > 0);
+  return filled
+    ? { filled: true, kind: "filled", status }
+    : { filled: false, kind: "unfilled", status };
+}
+
 async function runCycle(gen) {
   const snap = await snapshot();
   state.onState(snap);
@@ -354,6 +383,15 @@ async function runCycle(gen) {
     `사이클 ${state.cycle} · 잔고 $${snap.cash} · 평가 $${snap.equity} · ` +
     `건당 $${snap.bet} · 슬롯 ${snap.slots} · 보유 ${snap.openCount}`,
   );
+  // 체결로 기록한 건은 다음 사이클 스냅샷에 포지션으로 실재해야 한다 —
+  // 어긋나면 조용히 넘기지 않고 경고로 드러낸다 (실행당 1회).
+  if (state.sessionFills > 0 && !state.posGapWarned) {
+    const found = snap.openCount + snap.settledCount;
+    if (found < state.sessionFills) {
+      state.posGapWarned = true;
+      log(`보유 대조 경고: 체결 기록 ${state.sessionFills}건인데 포지션은 ${found}건만 확인됨`);
+    }
+  }
   if (snap.slots < 1) {
     log("슬롯 없음 — 이번 사이클 매수 없음");
     return;
@@ -406,7 +444,8 @@ async function runCycle(gen) {
       }
       continue;
     }
-    if (resp.errorMsg || resp.success === false) {
+    const verdict = judgeFill(resp);
+    if (!verdict.filled && verdict.kind !== "unfilled") {
       const msg = resp.errorMsg || "주문 거부 (success=false)";
       log(`주문 실패 ${cand.slug}: ${String(msg).slice(0, 120)}`);
       if (isFailsafe(String(msg))) {
@@ -416,12 +455,18 @@ async function runCycle(gen) {
       }
       continue;
     }
+    if (!verdict.filled) {
+      // 미체결 (unmatched·delayed·live 등) — 매수 기록을 남기지 않고 슬롯도 쓰지 않는다
+      log(`미체결 ${cand.slug} · 응답 status: ${resp.status ?? "(없음)"}`);
+      continue;
+    }
     markBought(cand.slug);
+    state.sessionFills += 1;
     slotsLeft -= 1;
     const fill = resp.makingAmount && resp.takingAmount
       ? ` 체결가 ${round2(Number(resp.makingAmount) / Number(resp.takingAmount))}`
       : "";
-    log(`매수 ${cand.slug} · $${snap.bet} @ ${detail.limitPrice}${fill}`);
+    log(`매수 ${cand.slug} · $${snap.bet} @ ${detail.limitPrice}${fill} · 상태 ${resp.status ?? "matched"}`);
   }
 }
 
@@ -472,6 +517,7 @@ function start() {
   setRunIntent(true);
   state.gen += 1;
   state.cycle = 0;
+  state.posGapWarned = false;
   log("엔진 실행 시작");
   state.onState(state.lastSnapshot);
   loop(state.gen);
