@@ -173,6 +173,7 @@ function scanCandidates(markets, heldSlugs, boughtSlugs) {
     if (!m.active || m.closed) continue;
     const slug = m.slug || "";
     if (SHORT_TERM_RE.test(slug)) continue;
+    if (m.sportsMarketType) continue; // 스포츠는 목록 단계에서 제외 (검증 단계에도 가드로 남겨 둠)
     if (heldSlugs.has(slug) || boughtSlugs.has(slug)) continue;
     const end = (m.endDate || "").slice(0, 10);
     if (!(todayIso < end && end <= endMaxIso)) continue;
@@ -344,6 +345,41 @@ async function verifyCandidate(cand, bet) {
   };
 }
 
+// 검증 탈락 사유의 표시 이름 — 모르는 사유는 원문 그대로 보여준다
+const REJECT_LABELS = {
+  sports: "스포츠",
+  spread_too_wide: "스프레드",
+  ask_out_of_band: "밴드이탈",
+  snapshot_mismatch: "가격변동",
+  no_asks: "매도호가없음",
+  no_bids: "매수호가없음",
+  ask_depth_low: "호가깊이부족",
+  below_min_order_size: "최소수량미달",
+  gamma_market_missing: "마켓없음",
+  gamma_parse_error: "응답파싱오류",
+  gamma_shape_error: "응답형식오류",
+  verify_error: "검증오류",
+};
+
+// 사이클 결과를 한 줄로 집계한다. 탈락을 건별로 찍으면 로그가 폭발하므로
+// 사유별 카운트만 남긴다 — "왜 안 샀는지"가 사이클마다 보이게 하는 게 목적.
+export function summarizeCycle({ candidates, verified, rejects, filled, unfilled, failed }) {
+  const parts = [`사이클 요약 · 후보 ${candidates} · 검증 ${verified}`];
+  const entries = Object.entries(rejects || {})
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1]);
+  if (entries.length) {
+    const text = entries
+      .map(([reason, n]) => `${REJECT_LABELS[reason] || reason} ${n}`)
+      .join("·");
+    parts.push(`탈락 ${text}`);
+  }
+  parts.push(`제출 ${filled}`);
+  if (unfilled > 0) parts.push(`미체결 ${unfilled}`);
+  if (failed > 0) parts.push(`실패 ${failed}`);
+  return parts.join(" · ");
+}
+
 const isFailsafe = (text) => {
   const t = (text || "").toLowerCase();
   return FAILSAFE_KEYWORDS.some((k) => t.includes(k));
@@ -400,6 +436,13 @@ async function runCycle(gen) {
   const candidates = scanCandidates(markets, snap.heldSlugs, boughtSlugs());
   let slotsLeft = snap.slots;
   let verified = 0;
+  const rejects = {};
+  let filledCount = 0;
+  let unfilledCount = 0;
+  let failedCount = 0;
+  const tallyReject = (reason) => {
+    rejects[reason] = (rejects[reason] || 0) + 1;
+  };
   for (const cand of candidates) {
     if (!state.running || gen !== state.gen) return;
     if (slotsLeft < 1 || verified >= VERIFY_CAP) break;
@@ -408,10 +451,14 @@ async function runCycle(gen) {
     try {
       detail = await verifyCandidate(cand, snap.bet);
     } catch (e) {
+      tallyReject("verify_error");
       log(`검증 오류 ${cand.slug}: ${e.message ?? e}`);
       continue;
     }
-    if (!detail.ok) continue;
+    if (!detail.ok) {
+      tallyReject(detail.reason);
+      continue;
+    }
     if (!state.running || gen !== state.gen) return;
     let signed;
     try {
@@ -425,6 +472,7 @@ async function runCycle(gen) {
         { tickSize: detail.tickSize, negRisk: detail.negRisk },
       );
     } catch (e) {
+      failedCount += 1;
       log(`주문 서명 실패 ${cand.slug}: ${String(e.message ?? e).slice(0, 120)}`);
       continue;
     }
@@ -434,6 +482,7 @@ async function runCycle(gen) {
     } catch (e) {
       // 제출됐으나 결과를 모르는 상태 — 체결됐을 수 있어 중복 매수 방지를 위해
       // 매수한 것으로 기록한다 (결과 불명 건은 로그로 드러나게 남긴다)
+      failedCount += 1;
       markBought(cand.slug);
       const msg = String(e.message ?? e);
       log(`주문 결과 불명 ${cand.slug}: ${msg.slice(0, 120)} — 중복 방지 기록`);
@@ -446,6 +495,7 @@ async function runCycle(gen) {
     }
     const verdict = judgeFill(resp);
     if (!verdict.filled && verdict.kind !== "unfilled") {
+      failedCount += 1;
       const msg = resp.errorMsg || "주문 거부 (success=false)";
       log(`주문 실패 ${cand.slug}: ${String(msg).slice(0, 120)}`);
       if (isFailsafe(String(msg))) {
@@ -457,17 +507,27 @@ async function runCycle(gen) {
     }
     if (!verdict.filled) {
       // 미체결 (unmatched·delayed·live 등) — 매수 기록을 남기지 않고 슬롯도 쓰지 않는다
+      unfilledCount += 1;
       log(`미체결 ${cand.slug} · 응답 status: ${resp.status ?? "(없음)"}`);
       continue;
     }
     markBought(cand.slug);
     state.sessionFills += 1;
+    filledCount += 1;
     slotsLeft -= 1;
     const fill = resp.makingAmount && resp.takingAmount
       ? ` 체결가 ${round2(Number(resp.makingAmount) / Number(resp.takingAmount))}`
       : "";
     log(`매수 ${cand.slug} · $${snap.bet} @ ${detail.limitPrice}${fill} · 상태 ${resp.status ?? "matched"}`);
   }
+  log(summarizeCycle({
+    candidates: candidates.length,
+    verified,
+    rejects,
+    filled: filledCount,
+    unfilled: unfilledCount,
+    failed: failedCount,
+  }));
 }
 
 async function loop(gen) {
