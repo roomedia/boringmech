@@ -837,11 +837,13 @@ def mode_cycle(client, state, args):
             pick = random.SystemRandom().choice(passing)
             res, failsafe = place_order(client, pick)
             if failsafe:
-                state["blocked"] = True
-                state["block_reason"] = (res.get("error") or "")[:300]
-                events.append("failsafe_blocked")
-                log_md(f"\n### {iso_now()} FAIL-SAFE 발동\n"
-                       f"- {pick['slug']}: {state['block_reason']}\n")
+                # 2026-11-14 확정 규칙: 영구 차단 래치를 두지 않는다.
+                # 403 등 failsafe 응답은 이번 실행만 중단하고 사유를 보고하며,
+                # 다음 실행에서 플랫폼의 현재 응답을 다시 받는다.
+                reason = (res.get("error") or "")[:300]
+                events.append("failsafe_stop")
+                log_md(f"\n### {iso_now()} FAIL-SAFE (이번 실행 중단, 영구 차단 아님)\n"
+                       f"- {pick['slug']}: {reason}\n")
                 break
             if not res.get("ok"):
                 events.append("order_unfilled")
