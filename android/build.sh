@@ -9,7 +9,7 @@ BT="$ANDROID_HOME/build-tools/34.0.0"
 JAR="$ANDROID_HOME/platforms/android-34/android.jar"
 OUT=build
 APP=../app/index.html
-APK=boringmech-v0.3.1.apk
+APK=boringmech-v0.3.2.apk
 KS=keystore.jks
 KS_PASS="${KEYSTORE_PASS:-boringmech}"
 
@@ -25,7 +25,7 @@ cp ../app/engine.js "$OUT/assets/engine.js"
   -A "$OUT/assets" \
   --java "$OUT/gen" \
   --min-sdk-version 26 --target-sdk-version 34 \
-  --version-code 4 --version-name 0.3.1
+  --version-code 5 --version-name 0.3.2
 
 find src "$OUT/gen" -name '*.java' > "$OUT/sources.txt"
 javac -cp "$JAR" -d "$OUT/classes" @"$OUT/sources.txt"

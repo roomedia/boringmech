@@ -182,8 +182,13 @@ function scanCandidates(markets, heldSlugs, boughtSlugs) {
     const side = prices[0] >= prices[1] ? "yes" : "no";
     const price = side === "yes" ? prices[0] : prices[1];
     if (price < BAND_LO || price > BAND_HI) continue;
-    out.push({ slug, question: m.question || "", side, price });
+    out.push({ slug, question: m.question || "", side, price, endDate: m.endDate || "" });
   }
+  // 매수 우선순위: 0.70–0.80 구간 먼저, 그 안에서 만기 먼 순 (동률은 입력 순서 유지)
+  const bandGroup = (p) => (p >= 0.7 && p < 0.8 ? 0 : 1);
+  out.sort((a, b) =>
+    bandGroup(a.price) - bandGroup(b.price) ||
+    b.endDate.localeCompare(a.endDate));
   return out;
 }
 
