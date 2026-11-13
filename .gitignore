@@ -27,3 +27,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# 원장 자동 갱신 로그
+.update-results.log
