@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>boringmech</title>
+<style>
+  :root{
+    --bg:#f5f5f7; --card:#fff; --ink:#1d1d1f; --sub:#6e6e73; --line:#e8e8ec;
+    --accent:#0a7d4f; --accent-soft:#e6f4ec; --warn:#b25000; --warn-soft:#fdf0e2;
+    --danger:#c62f3b; --danger-soft:#fdecec; --radius:20px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Apple SD Gothic Neo","Noto Sans KR",sans-serif;background:var(--bg);color:var(--ink);padding:22px 16px 90px}
+  .wrap{max-width:860px;margin:0 auto}
+  header{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:10px}
+  h1{font-size:30px;font-weight:800;letter-spacing:-.5px}
+  h1 .thin{color:var(--sub);font-weight:600}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{font-size:12.5px;font-weight:600;padding:6px 12px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
+  .chip.grey{background:#ececf0;color:var(--sub)}
+  .chip.warn{background:var(--warn-soft);color:var(--warn)}
+  .chip.danger{background:var(--danger-soft);color:var(--danger)}
+  .asof{color:var(--sub);font-size:13px;margin:8px 0 18px}
+  nav.tabs{position:sticky;top:0;z-index:5;background:var(--bg);padding:8px 0 12px;display:flex;gap:8px;overflow-x:auto}
+  .tab{font:inherit;font-size:14px;font-weight:700;padding:9px 16px;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--sub);cursor:pointer;white-space:nowrap}
+  .tab.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  section{display:none}
+  section.on{display:block}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media (max-width:640px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border-radius:var(--radius);padding:22px;box-shadow:0 1px 3px rgba(0,0,0,.04),0 10px 30px rgba(0,0,0,.05);margin-bottom:14px}
+  .card h2{font-size:14px;font-weight:700;color:var(--sub);margin-bottom:14px}
+  .bignum{font-size:40px;font-weight:800;letter-spacing:-1px;line-height:1.05}
+  .bignum .unit{font-size:20px;font-weight:700;color:var(--sub)}
+  .delta{font-size:15px;font-weight:700;color:var(--accent);margin-top:4px}
+  .row{display:flex;justify-content:space-between;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--line);font-size:14.5px}
+  .row:last-child{border-bottom:none}
+  .row .k{color:var(--sub)}
+  .row .v{font-weight:700;font-variant-numeric:tabular-nums;text-align:right}
+  .bar-row{display:grid;grid-template-columns:80px 1fr 70px;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .bar-row:last-child{border-bottom:none}
+  .bar{height:8px;border-radius:99px;background:#ececf0;overflow:hidden}
+  .bar i{display:block;height:100%;border-radius:99px;background:var(--accent)}
+  .bar i.neg{background:var(--danger)}
+  .bar-row .amt{font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+  .neg-t{color:var(--danger)}
+  /* controls */
+  .seg{display:flex;background:#ececf0;border-radius:12px;padding:3px;gap:3px}
+  .seg button{flex:1;font:inherit;font-size:14px;font-weight:700;padding:9px 0;border:none;border-radius:9px;background:transparent;color:var(--sub);cursor:pointer}
+  .seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.12)}
+  .switch{position:relative;width:50px;height:30px;flex:0 0 auto;cursor:pointer}
+  .switch input{opacity:0;width:100%;height:100%;position:absolute;margin:0;cursor:pointer}
+  .switch i{position:absolute;inset:0;background:#d9d9de;border-radius:99px;transition:.15s;pointer-events:none}
+  .switch i:after{content:"";position:absolute;width:26px;height:26px;border-radius:50%;background:#fff;top:2px;left:2px;transition:.15s;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+  .switch input:checked + i{background:var(--accent)}
+  .switch input:checked + i:after{left:22px}
+  .switch input:disabled + i{opacity:.35}
+  .btn{font:inherit;font-size:15px;font-weight:700;width:100%;padding:14px;border:none;border-radius:14px;background:var(--ink);color:#fff;cursor:pointer}
+  .btn.accent{background:var(--accent)}
+  .btn.danger{background:var(--danger)}
+  .btn:disabled{background:#d9d9de;color:var(--sub);cursor:default}
+  .btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  .stack{display:grid;gap:10px}
+  .note{font-size:13px;color:var(--sub);line-height:1.5}
+  .log{background:#101012;color:#d6f2e2;border-radius:14px;padding:14px 16px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.65;min-height:96px;white-space:pre-wrap;word-break:break-all}
+  .field label{display:block;font-size:12.5px;font-weight:600;color:var(--sub);margin-bottom:6px}
+  .field input{font:inherit;font-size:19px;font-weight:700;width:100%;padding:10px 14px;border:1px solid var(--line);border-radius:12px;background:#fbfbfd;font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;accent-color:var(--accent);margin:12px 0 2px}
+  .presets{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .preset{font:inherit;font-size:13px;font-weight:600;padding:7px 13px;border-radius:999px;border:1px solid var(--line);background:#fff;cursor:pointer}
+  .preset.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .sim-out{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:16px}
+  @media (max-width:640px){.sim-out{grid-template-columns:repeat(2,1fr)}}
+  .out{background:#fbfbfd;border:1px solid var(--line);border-radius:14px;padding:13px}
+  .out .k{font-size:12px;font-weight:600;color:var(--sub);margin-bottom:4px}
+  .out .v{font-size:22px;font-weight:800;letter-spacing:-.4px;font-variant-numeric:tabular-nums}
+  .out .s{font-size:12px;color:var(--sub);margin-top:2px}
+  .alloc{display:flex;height:14px;border-radius:99px;overflow:hidden;margin-top:16px;background:#ececf0}
+  .alloc .dep{background:var(--accent)}
+  .alloc .cash{background:#c9c9d1}
+  .alloc-legend{display:flex;gap:18px;font-size:12.5px;color:var(--sub);margin-top:8px}
+  .alloc-legend b{color:var(--ink)}
+  .cand{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:13px 0;border-bottom:1px solid var(--line)}
+  .cand:last-child{border-bottom:none}
+  .cand .t{font-weight:700;font-size:14.5px}
+  .cand .s{font-size:12.5px;color:var(--sub);margin-top:2px}
+  .cand .p{font-size:19px;font-weight:800;font-variant-numeric:tabular-nums}
+  .cand .buy{font:inherit;font-size:13px;font-weight:700;padding:8px 14px;border-radius:10px;border:none;background:var(--accent);color:#fff;cursor:pointer}
+  .cand .buy:disabled{background:#d9d9de;color:var(--sub)}
+  footer{color:var(--sub);font-size:12.5px;text-align:center;margin-top:8px}
+  a{color:var(--accent);text-decoration:none;font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>boringmech</h1>
+    <div class="chips">
+      <span class="chip" id="chipPaper">페이퍼 운용 중</span>
+      <span class="chip warn" id="chipLive">라이브 미무장</span>
+      <span class="chip grey">v0.2.0</span>
+    </div>
+  </header>
+  <div class="asof">포워드 페이퍼 스냅샷 · 2026-11-14 01:28 KST · 가상 자본 $10,000 (실제 돈 아님)</div>
+
+  <nav class="tabs">
+    <button class="tab on" data-tab="home">개요</button>
+    <button class="tab" data-tab="scan">스캔</button>
+    <button class="tab" data-tab="size">사이징</button>
+    <button class="tab" data-tab="exec">실행</button>
+    <button class="tab" data-tab="pos">포지션</button>
+  </nav>
+
+  <section id="home" class="on">
+    <div class="grid">
+      <div class="card">
+        <h2>총자산</h2>
+        <div class="bignum">$10,555<span class="unit">.18</span></div>
+        <div class="delta">+$555.18 (+5.6%)</div>
+        <div class="row"><span class="k">미정산 보유</span><span class="v">57건</span></div>
+        <div class="row"><span class="k">평가 방식</span><span class="v">Gamma 재가격</span></div>
+      </div>
+      <div class="card">
+        <h2>정산 성적 · 41건</h2>
+        <div class="bignum">+16.1<span class="unit">% ROI</span></div>
+        <div class="delta">실현 +$662.23 · 원가 $4,117.25</div>
+        <div class="row"><span class="k">승 / 패</span><span class="v">34승 / 7패 (82.9%)</span></div>
+        <div class="row"><span class="k">평균 진입가 → 실제 승률</span><span class="v">71.2¢ → 82.9%</span></div>
+        <div class="row"><span class="k">캘리브레이션 괴리</span><span class="v">+11.7pp</span></div>
+        <div class="row"><span class="k">평균 매수 수수료</span><span class="v">0.63%</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>진입가 구간별 ROI (정산분)</h2>
+      <div class="bar-row"><span>0.60–0.70</span><div class="bar"><i style="width:100%"></i></div><span class="amt">+26.2%</span></div>
+      <div class="bar-row"><span>0.70–0.80</span><div class="bar"><i style="width:78%"></i></div><span class="amt">+20.4%</span></div>
+      <div class="bar-row"><span>0.80–0.90</span><div class="bar"><i style="width:13%"></i></div><span class="amt">+3.4%</span></div>
+      <div class="bar-row"><span>밴드 외</span><div class="bar"><i class="neg" style="width:28%"></i></div><span class="amt neg-t">−7.4%</span></div>
+    </div>
+    <div class="card">
+      <h2>전략 규칙</h2>
+      <div class="row"><span class="k">가격 밴드</span><span class="v">0.60–0.90 · 우세 쪽 매수</span></div>
+      <div class="row"><span class="k">유니버스</span><span class="v">거래량 ≥ 10,000 · 만기 내일~45일</span></div>
+      <div class="row"><span class="k">청산</span><span class="v">손절 없음 · 만기 보유 · 정산 시 redeem</span></div>
+      <div class="row"><span class="k">재매수</span><span class="v">보유 중 마켓 금지</span></div>
+    </div>
+  </section>
+
+  <section id="scan">
+    <div class="card">
+      <h2>스캔 조건</h2>
+      <div class="row"><span class="k">가격 밴드</span><span class="v">0.60–0.90</span></div>
+      <div class="row"><span class="k">거래량</span><span class="v">≥ 10,000</span></div>
+      <div class="row"><span class="k">만기</span><span class="v">내일 ~ 45일</span></div>
+      <div class="row"><span class="k">제외</span><span class="v">스포츠 · 단기 슬러그 · 보유 중 마켓</span></div>
+      <div class="row"><span class="k">주기</span><span class="v">15분 (페이퍼 스캐너)</span></div>
+    </div>
+    <div class="card">
+      <h2>후보</h2>
+      <div id="candList">
+        <div class="cand"><div><div class="t">후보 불러오기 전</div><div class="s">스캔 실행을 누르면 호스트 스캐너 결과가 표시됩니다</div></div></div>
+      </div>
+      <div class="stack" style="margin-top:14px">
+        <button class="btn accent" id="btnScan">스캔 실행</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="size">
+    <div class="card">
+      <h2>사이징 시뮬레이터</h2>
+      <div class="grid">
+        <div class="field"><label>총자본 (pUSD)</label><input id="equity" type="number" min="0" step="1" value="130"></div>
+        <div class="field"><label>현재 보유 건수</label><input id="open" type="number" min="0" max="70" step="1" value="0"></div>
+      </div>
+      <input id="eqRange" type="range" min="30" max="10000" step="1" value="130">
+      <div class="presets" id="presets">
+        <button class="preset" data-eq="57.87">$57.87</button>
+        <button class="preset on" data-eq="130">$130</button>
+        <button class="preset" data-eq="357">$357</button>
+        <button class="preset" data-eq="1000">$1,000</button>
+        <button class="preset" data-eq="10000">$10,000</button>
+      </div>
+      <div class="sim-out">
+        <div class="out"><div class="k">건당 베팅</div><div class="v" id="oBet">—</div><div class="s">자본의 1% · 하한 $5</div></div>
+        <div class="out"><div class="k">현금 하한 (총알)</div><div class="v" id="oFloor">—</div><div class="s">자본의 30% · 최소 $2.87</div></div>
+        <div class="out"><div class="k">투입 가능액</div><div class="v" id="oDep">—</div><div class="s">자본 − 현금 하한</div></div>
+        <div class="out"><div class="k">추가 가능 슬롯</div><div class="v" id="oSlots">—</div><div class="s">동시 보유 최대 70건</div></div>
+      </div>
+      <div class="alloc"><div class="dep" id="allocDep"></div><div class="cash" id="allocCash"></div></div>
+      <div class="alloc-legend"><span>투입 <b id="lgDep">—</b></span><span>현금 <b id="lgCash">—</b></span></div>
+    </div>
+  </section>
+
+  <section id="exec">
+    <div class="card">
+      <h2>실행 모드</h2>
+      <div class="seg" id="modeSeg">
+        <button data-mode="dry" class="on">dry-run</button>
+        <button data-mode="live">live</button>
+      </div>
+      <div class="row" style="margin-top:8px"><span class="k">호스트 실행기</span><span class="v">live_executor.py · 키는 호스트 ~/.config 보관</span></div>
+      <div class="row"><span class="k">주문 경로</span><span class="v">CLOB V2 · deposit wallet</span></div>
+      <div class="row"><span class="k">정산 회수</span><span class="v">redeem · relayer gasless · 잔고 델타 검증</span></div>
+    </div>
+    <div class="card">
+      <h2>게이트 — 셋이 다 켜져야 주문이 나간다</h2>
+      <div class="row"><span class="k">① 실행 플래그 (--live)</span><label class="switch"><input type="checkbox" id="gFlag"><i></i></label></div>
+      <div class="row"><span class="k">② 환경변수 (LIVE 환경)</span><label class="switch"><input type="checkbox" id="gEnv"><i></i></label></div>
+      <div class="row"><span class="k">③ 무장 파일 (LIVE_ENABLED)</span><label class="switch"><input type="checkbox" id="gArm"><i></i></label></div>
+      <div class="stack" style="margin-top:16px">
+        <button class="btn danger" id="btnOrder" disabled>주문 실행 — 게이트 미충족</button>
+        <button class="btn ghost" id="btnRedeem">redeem 실행 (정산분 회수)</button>
+      </div>
+      <p class="note" style="margin-top:12px">failsafe(403 등)가 걸리면 그 실행만 중단되고 다음 실행에서 다시 시도한다 — 영구 래치 없음. 잔고 $35 미만이면 자동 정지.</p>
+    </div>
+    <div class="card">
+      <h2>실행 로그</h2>
+      <div class="log" id="execLog">대기 중.</div>
+    </div>
+  </section>
+
+  <section id="pos">
+    <div class="card">
+      <h2>포지션 요약 (페이퍼)</h2>
+      <div class="row"><span class="k">보유 중</span><span class="v">57건</span></div>
+      <div class="row"><span class="k">정산 완료 누적</span><span class="v">41건 (34승 7패)</span></div>
+      <div class="row"><span class="k">redeem 대상</span><span class="v">정산 감지 시 자동 큐잉</span></div>
+      <div class="row"><span class="k">평가</span><span class="v">2026-11-23 예정</span></div>
+    </div>
+    <div class="card">
+      <h2>구간별 정산 (건수)</h2>
+      <div class="row"><span class="k">0.60–0.70</span><span class="v">12건 · +$316.92</span></div>
+      <div class="row"><span class="k">0.70–0.80</span><span class="v">17건 · +$347.75</span></div>
+      <div class="row"><span class="k">0.80–0.90</span><span class="v">8건</span></div>
+      <div class="row"><span class="k">밴드 외</span><span class="v">4건</span></div>
+    </div>
+  </section>
+
+  <footer><a href="https://github.com/roomedia/boringmech">github.com/roomedia/boringmech</a> · MIT</footer>
+</div>
+
+<script>
+  document.querySelectorAll('.tab').forEach(function(t){
+    t.addEventListener('click', function(){
+      document.querySelectorAll('.tab').forEach(function(x){ x.classList.toggle('on', x === t); });
+      document.querySelectorAll('section').forEach(function(s){ s.classList.toggle('on', s.id === t.dataset.tab); });
+    });
+  });
+
+  var BET_PCT = 0.01, BET_MIN = 5.0, FLOOR_PCT = 0.30, FLOOR_MIN = 2.87, MAX_POS = 70;
+  var eq = document.getElementById('equity'), op = document.getElementById('open'), rg = document.getElementById('eqRange');
+  function fmt(n){ return '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+  function calc(){
+    var equity = Math.max(0, parseFloat(eq.value) || 0);
+    var open = Math.min(MAX_POS, Math.max(0, parseInt(op.value) || 0));
+    var bet = Math.max(BET_MIN, Math.round(equity * BET_PCT * 100) / 100);
+    var floor = Math.max(FLOOR_MIN, Math.round(equity * FLOOR_PCT * 100) / 100);
+    var dep = Math.max(0, equity - floor);
+    var slots = Math.max(0, Math.min(Math.floor(dep / bet), MAX_POS - open));
+    document.getElementById('oBet').textContent = fmt(bet);
+    document.getElementById('oFloor').textContent = fmt(floor);
+    document.getElementById('oDep').textContent = fmt(dep);
+    document.getElementById('oSlots').textContent = slots + '건';
+    var pct = equity > 0 ? dep / equity * 100 : 0;
+    document.getElementById('allocDep').style.width = pct + '%';
+    document.getElementById('allocCash').style.width = (100 - pct) + '%';
+    document.getElementById('lgDep').textContent = fmt(dep) + ' (' + pct.toFixed(0) + '%)';
+    document.getElementById('lgCash').textContent = fmt(floor) + ' (' + (100 - pct).toFixed(0) + '%)';
+    document.querySelectorAll('.preset').forEach(function(b){
+      b.classList.toggle('on', Math.abs(parseFloat(b.dataset.eq) - equity) < 0.005);
+    });
+  }
+  eq.addEventListener('input', function(){ rg.value = Math.min(10000, Math.max(30, eq.value || 30)); calc(); });
+  rg.addEventListener('input', function(){ eq.value = rg.value; calc(); });
+  op.addEventListener('input', calc);
+  document.getElementById('presets').addEventListener('click', function(e){
+    var b = e.target.closest('.preset'); if (!b) return;
+    eq.value = b.dataset.eq; rg.value = Math.min(10000, Math.max(30, parseFloat(b.dataset.eq))); calc();
+  });
+  calc();
+
+  var mode = 'dry';
+  document.getElementById('modeSeg').addEventListener('click', function(e){
+    var b = e.target.closest('button'); if (!b) return;
+    mode = b.dataset.mode;
+    document.querySelectorAll('#modeSeg button').forEach(function(x){ x.classList.toggle('on', x === b); });
+    gateCheck();
+  });
+  var gates = ['gFlag', 'gEnv', 'gArm'].map(function(id){ return document.getElementById(id); });
+  var btnOrder = document.getElementById('btnOrder'), log = document.getElementById('execLog');
+  function stamp(){
+    var d = new Date(), p = function(n){ return String(n).padStart(2, '0'); };
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  function gateCheck(){
+    var on = gates.filter(function(g){ return g.checked; }).length;
+    var ready = mode === 'live' && on === 3;
+    btnOrder.disabled = !ready;
+    btnOrder.textContent = mode !== 'live' ? '주문 실행 — dry-run 모드'
+      : ready ? '주문 실행 — 게이트 3/3 충족' : '주문 실행 — 게이트 ' + on + '/3';
+    var chip = document.getElementById('chipLive');
+    chip.textContent = ready ? '라이브 무장됨' : '라이브 미무장';
+    chip.className = 'chip ' + (ready ? 'danger' : 'warn');
+  }
+  gates.forEach(function(g){ g.addEventListener('change', gateCheck); });
+  gateCheck();
+  btnOrder.addEventListener('click', function(){
+    log.textContent = '[' + stamp() + '] 주문 요청 → 호스트 실행기 (게이트 3/3 통과)\n스캔 후보 순서대로 건당 사이징 적용, 체결은 실행기 로그에서 확정된다.';
+  });
+  document.getElementById('btnRedeem').addEventListener('click', function(){
+    log.textContent = '[' + stamp() + '] redeem 요청 → 정산 감지분 condition 단위 계획\n제출 후 pUSD 잔고 델타로 회수액을 검증한다.';
+  });
+  document.getElementById('btnScan').addEventListener('click', function(){
+    document.getElementById('candList').innerHTML =
+      '<div class="cand"><div><div class="t">호스트 스캐너 연결 필요</div>' +
+      '<div class="s">이 빌드는 단독 실행본이라 실시간 후보를 가져올 호스트가 없다. 조건·판정 로직은 스캔 조건 카드와 동일하다.</div></div></div>';
+  });
+</script>
+</body>
+</html>
