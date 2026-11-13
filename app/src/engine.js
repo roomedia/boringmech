@@ -47,6 +47,7 @@ const LS = {
   creds: "bm_creds",
   funder: "bm_funder",
   bought: "bm_bought",
+  runIntent: "bm_run_intent",
 };
 
 const round2 = (x) => Math.round((x + Number.EPSILON) * 100) / 100;
@@ -412,9 +413,38 @@ async function loop() {
   }
 }
 
+// 실행 의도의 단일 기록 지점 — localStorage(재개 판정)와 네이티브 브리지
+// (포그라운드 서비스 기동·종료 + 알림 정지 시 재개 차단 미러)에 함께 남긴다.
+function setRunIntent(on) {
+  try {
+    if (on) localStorage.setItem(LS.runIntent, "1");
+    else localStorage.removeItem(LS.runIntent);
+  } catch {}
+  try {
+    window.AndroidBridge?.setRunIntent(Boolean(on));
+  } catch {}
+}
+
+function runIntentSaved() {
+  let saved = false;
+  try {
+    saved = localStorage.getItem(LS.runIntent) === "1";
+  } catch {}
+  if (!saved) return false;
+  try {
+    // 알림에서 정지했으면(네이티브 미러 해제) 재개하지 않고 플래그를 정리한다
+    if (window.AndroidBridge && !window.AndroidBridge.getRunIntent()) {
+      localStorage.removeItem(LS.runIntent);
+      return false;
+    }
+  } catch {}
+  return true;
+}
+
 function start() {
   if (!state.client || state.running) return;
   state.running = true;
+  setRunIntent(true);
   state.cycle = 0;
   log("엔진 실행 시작");
   state.onState(state.lastSnapshot);
@@ -422,6 +452,7 @@ function start() {
 }
 
 function stop() {
+  setRunIntent(false);
   if (!state.running) return;
   state.running = false;
   if (state.timer) clearTimeout(state.timer);
@@ -473,7 +504,12 @@ async function restore() {
   state.client = buildClient(wallet, creds, funder);
   state.eoa = account.address;
   state.funder = funder;
-  return snapshot();
+  const snap = await snapshot();
+  if (runIntentSaved()) {
+    log("이전 실행 의도 복원 — 엔진 자동 재개");
+    start();
+  }
+  return snap;
 }
 
 function unlink() {

@@ -28,7 +28,7 @@ cp ../app/engine.js "$OUT/assets/engine.js"
   --version-code 5 --version-name 0.3.2
 
 find src "$OUT/gen" -name '*.java' > "$OUT/sources.txt"
-javac -cp "$JAR" -d "$OUT/classes" @"$OUT/sources.txt"
+javac -encoding UTF-8 -cp "$JAR" -d "$OUT/classes" @"$OUT/sources.txt"
 "$BT/d8" --output "$OUT/dex" $(find "$OUT/classes" -name '*.class')
 cp "$OUT/unsigned.apk" "$OUT/with-dex.apk"
 (cd "$OUT/dex" && zip -q ../with-dex.apk classes.dex)
