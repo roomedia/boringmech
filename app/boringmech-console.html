@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>boringmech 콘솔</title>
+<style>
+  :root{
+    --bg:#f5f5f7; --card:#ffffff; --ink:#1d1d1f; --sub:#6e6e73; --line:#e8e8ec;
+    --accent:#0a7d4f; --accent-soft:#e6f4ec; --warn:#b25000; --warn-soft:#fdf0e2;
+    --radius:20px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue","Apple SD Gothic Neo","Noto Sans KR",sans-serif;background:var(--bg);color:var(--ink);padding:28px 18px 60px}
+  .wrap{max-width:860px;margin:0 auto}
+  header{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:6px}
+  h1{font-size:32px;font-weight:800;letter-spacing:-0.5px}
+  h1 .thin{color:var(--sub);font-weight:600}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{font-size:12.5px;font-weight:600;padding:6px 12px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
+  .chip.grey{background:#ececf0;color:var(--sub)}
+  .chip.warn{background:var(--warn-soft);color:var(--warn)}
+  .asof{color:var(--sub);font-size:13px;margin-bottom:22px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:640px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border-radius:var(--radius);padding:24px;box-shadow:0 1px 3px rgba(0,0,0,.04),0 10px 30px rgba(0,0,0,.05)}
+  .card.full{grid-column:1/-1}
+  .card h2{font-size:15px;font-weight:700;color:var(--sub);letter-spacing:.2px;margin-bottom:16px}
+  .bignum{font-size:44px;font-weight:800;letter-spacing:-1px;line-height:1.05}
+  .bignum .unit{font-size:22px;font-weight:700;color:var(--sub)}
+  .delta{font-size:16px;font-weight:700;color:var(--accent);margin-top:4px}
+  .rows{margin-top:18px;border-top:1px solid var(--line)}
+  .row{display:flex;justify-content:space-between;align-items:baseline;padding:11px 0;border-bottom:1px solid var(--line);font-size:14.5px}
+  .row:last-child{border-bottom:none}
+  .row .k{color:var(--sub)}
+  .row .v{font-weight:700;font-variant-numeric:tabular-nums}
+  .bar-row{display:grid;grid-template-columns:86px 1fr 74px;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .bar-row:last-child{border-bottom:none}
+  .bar-row .k{color:var(--sub);font-variant-numeric:tabular-nums}
+  .bar-row .v{font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+  .bar{height:8px;border-radius:99px;background:#ececf0;overflow:hidden}
+  .bar i{display:block;height:100%;border-radius:99px;background:var(--accent)}
+  .bar i.neg{background:#d24545}
+  .neg-t{color:#d24545}
+  /* simulator */
+  .sim-top{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px}
+  .field label{display:block;font-size:12.5px;font-weight:600;color:var(--sub);margin-bottom:6px}
+  .field input{font:inherit;font-size:20px;font-weight:700;width:170px;padding:10px 14px;border:1px solid var(--line);border-radius:12px;background:#fbfbfd;font-variant-numeric:tabular-nums}
+  .field input.small{width:110px}
+  input[type=range]{width:100%;accent-color:var(--accent);margin:14px 0 4px}
+  .presets{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 4px}
+  .preset{font:inherit;font-size:13px;font-weight:600;padding:7px 13px;border-radius:999px;border:1px solid var(--line);background:#fff;cursor:pointer}
+  .preset.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .sim-out{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:18px}
+  @media (max-width:640px){.sim-out{grid-template-columns:repeat(2,1fr)}}
+  .out{background:#fbfbfd;border:1px solid var(--line);border-radius:14px;padding:14px}
+  .out .k{font-size:12px;font-weight:600;color:var(--sub);margin-bottom:5px}
+  .out .v{font-size:23px;font-weight:800;letter-spacing:-.4px;font-variant-numeric:tabular-nums}
+  .out .s{font-size:12px;color:var(--sub);margin-top:2px}
+  .alloc{display:flex;height:14px;border-radius:99px;overflow:hidden;margin-top:18px;background:#ececf0}
+  .alloc .dep{background:var(--accent)}
+  .alloc .cash{background:#c9c9d1}
+  .alloc-legend{display:flex;gap:18px;font-size:12.5px;color:var(--sub);margin-top:8px}
+  .alloc-legend b{color:var(--ink)}
+  .rule{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:14.5px;align-items:baseline}
+  .rule:last-child{border-bottom:none}
+  .rule .n{flex:0 0 26px;height:26px;border-radius:8px;background:#f0f0f4;color:var(--sub);font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;transform:translateY(3px)}
+  .rule b{font-weight:700}
+  .gate{display:flex;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line);font-size:14.5px}
+  .gate:last-child{border-bottom:none}
+  .gate .k{color:var(--sub)}
+  .gate .v{font-weight:700}
+  footer{color:var(--sub);font-size:12.5px;text-align:center;margin-top:26px}
+  a{color:var(--accent);text-decoration:none;font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>boringmech <span class="thin">콘솔</span></h1>
+    <div class="chips">
+      <span class="chip">페이퍼 운용 중</span>
+      <span class="chip warn">라이브 미무장</span>
+      <span class="chip grey">v0.1.0</span>
+    </div>
+  </header>
+  <div class="asof">포워드 페이퍼 스냅샷 · 2026-11-14 01:28 KST · 가상 자본 $10,000 (실제 돈 아님)</div>
+
+  <div class="grid">
+
+    <div class="card">
+      <h2>총자산</h2>
+      <div class="bignum">$10,555<span class="unit">.18</span></div>
+      <div class="delta">+$555.18 (+5.6%)</div>
+      <div class="rows">
+        <div class="row"><span class="k">미정산 보유</span><span class="v">57건</span></div>
+        <div class="row"><span class="k">평가 방식</span><span class="v">Gamma 재가격</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>정산 성적 · 41건</h2>
+      <div class="bignum">+16.1<span class="unit">% ROI</span></div>
+      <div class="delta">실현 +$662.23 · 원가 $4,117.25</div>
+      <div class="rows">
+        <div class="row"><span class="k">승 / 패</span><span class="v">34승 / 7패 (82.9%)</span></div>
+        <div class="row"><span class="k">평균 진입가 → 실제 승률</span><span class="v">71.2¢ → 82.9%</span></div>
+        <div class="row"><span class="k">캘리브레이션 괴리</span><span class="v">+11.7pp</span></div>
+        <div class="row"><span class="k">평균 매수 수수료</span><span class="v">0.63%</span></div>
+      </div>
+    </div>
+
+    <div class="card full">
+      <h2>진입가 구간별 ROI (정산분)</h2>
+      <div class="bar-row"><span class="k">0.60–0.70</span><div class="bar"><i style="width:100%"></i></div><span class="v">+26.2%</span></div>
+      <div class="bar-row"><span class="k">0.70–0.80</span><div class="bar"><i style="width:78%"></i></div><span class="v">+20.4%</span></div>
+      <div class="bar-row"><span class="k">0.80–0.90</span><div class="bar"><i style="width:13%"></i></div><span class="v">+3.4%</span></div>
+      <div class="bar-row"><span class="k">밴드 외</span><div class="bar"><i class="neg" style="width:28%"></i></div><span class="v neg-t">−7.4%</span></div>
+    </div>
+
+    <div class="card full">
+      <h2>사이징 시뮬레이터</h2>
+      <div class="sim-top">
+        <div class="field">
+          <label>총자본 (pUSD)</label>
+          <input id="equity" type="number" min="0" step="1" value="130">
+        </div>
+        <div class="field">
+          <label>현재 보유 건수</label>
+          <input id="open" class="small" type="number" min="0" max="70" step="1" value="0">
+        </div>
+      </div>
+      <input id="eqRange" type="range" min="30" max="10000" step="1" value="130">
+      <div class="presets" id="presets">
+        <button class="preset" data-eq="57.87">$57.87</button>
+        <button class="preset on" data-eq="130">$130</button>
+        <button class="preset" data-eq="357">$357</button>
+        <button class="preset" data-eq="1000">$1,000</button>
+        <button class="preset" data-eq="10000">$10,000</button>
+      </div>
+      <div class="sim-out">
+        <div class="out"><div class="k">건당 베팅</div><div class="v" id="oBet">—</div><div class="s">자본의 1% · 하한 $5</div></div>
+        <div class="out"><div class="k">현금 하한 (총알)</div><div class="v" id="oFloor">—</div><div class="s">자본의 30% · 최소 $2.87</div></div>
+        <div class="out"><div class="k">투입 가능액</div><div class="v" id="oDep">—</div><div class="s">자본 − 현금 하한</div></div>
+        <div class="out"><div class="k">추가 가능 슬롯</div><div class="v" id="oSlots">—</div><div class="s">동시 보유 최대 70건</div></div>
+      </div>
+      <div class="alloc"><div class="dep" id="allocDep"></div><div class="cash" id="allocCash"></div></div>
+      <div class="alloc-legend"><span>투입 <b id="lgDep">—</b></span><span>현금 <b id="lgCash">—</b></span></div>
+    </div>
+
+    <div class="card">
+      <h2>전략 규칙</h2>
+      <div class="rule"><span class="n">1</span><div><b>밴드 0.60–0.90</b> — 우세 쪽만 산다</div></div>
+      <div class="rule"><span class="n">2</span><div><b>거래량 ≥ 10,000</b> · 만기 내일~45일</div></div>
+      <div class="rule"><span class="n">3</span><div><b>손절 없음</b> — 만기까지 보유</div></div>
+      <div class="rule"><span class="n">4</span><div>보유 중인 마켓은 <b>재매수 금지</b></div></div>
+      <div class="rule"><span class="n">5</span><div>정산되면 <b>redeem</b>으로 자동 회수</div></div>
+    </div>
+
+    <div class="card">
+      <h2>라이브 실행기</h2>
+      <div class="gate"><span class="k">주문 게이트</span><span class="v">--live + 환경변수 + 무장 파일</span></div>
+      <div class="gate"><span class="k">무장 파일 (LIVE_ENABLED)</span><span class="v">없음 — 실행 불가 상태</span></div>
+      <div class="gate"><span class="k">redeem (정산 회수)</span><span class="v">구현됨 · 잔고 델타 검증</span></div>
+      <div class="gate"><span class="k">failsafe</span><span class="v">해당 실행만 중단 · 영구 래치 없음</span></div>
+      <div class="gate"><span class="k">사이징</span><span class="v">건당 1% (하한 $5) · 현금 30% · 최대 70건</span></div>
+    </div>
+
+  </div>
+
+  <footer>
+    <a href="https://github.com/roomedia/boringmech">github.com/roomedia/boringmech</a> · MIT · 이 화면은 조회 전용으로 주문을 내지 않습니다
+  </footer>
+</div>
+
+<script>
+  var BET_PCT = 0.01, BET_MIN = 5.0, FLOOR_PCT = 0.30, FLOOR_MIN = 2.87, MAX_POS = 70;
+  var eq = document.getElementById('equity'), op = document.getElementById('open'),
+      rg = document.getElementById('eqRange');
+  function fmt(n){ return '$' + n.toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2}); }
+  function calc(){
+    var equity = Math.max(0, parseFloat(eq.value) || 0);
+    var open = Math.min(MAX_POS, Math.max(0, parseInt(op.value) || 0));
+    var bet = Math.max(BET_MIN, Math.round(equity * BET_PCT * 100) / 100);
+    var floor = Math.max(FLOOR_MIN, Math.round(equity * FLOOR_PCT * 100) / 100);
+    var dep = Math.max(0, equity - floor);
+    var slots = Math.max(0, Math.min(Math.floor(dep / bet), MAX_POS - open));
+    document.getElementById('oBet').textContent = fmt(bet);
+    document.getElementById('oFloor').textContent = fmt(floor);
+    document.getElementById('oDep').textContent = fmt(dep);
+    document.getElementById('oSlots').textContent = slots + '건';
+    var pct = equity > 0 ? (dep / equity * 100) : 0;
+    document.getElementById('allocDep').style.width = pct + '%';
+    document.getElementById('allocCash').style.width = (100 - pct) + '%';
+    document.getElementById('lgDep').textContent = fmt(dep) + ' (' + pct.toFixed(0) + '%)';
+    document.getElementById('lgCash').textContent = fmt(floor) + ' (' + (100 - pct).toFixed(0) + '%)';
+    document.querySelectorAll('.preset').forEach(function(b){
+      b.classList.toggle('on', Math.abs(parseFloat(b.dataset.eq) - equity) < 0.005);
+    });
+  }
+  eq.addEventListener('input', function(){ rg.value = Math.min(10000, Math.max(30, eq.value || 30)); calc(); });
+  rg.addEventListener('input', function(){ eq.value = rg.value; calc(); });
+  op.addEventListener('input', calc);
+  document.getElementById('presets').addEventListener('click', function(e){
+    var b = e.target.closest('.preset'); if(!b) return;
+    eq.value = b.dataset.eq; rg.value = Math.min(10000, Math.max(30, parseFloat(b.dataset.eq))); calc();
+  });
+  calc();
+</script>
+</body>
+</html>
