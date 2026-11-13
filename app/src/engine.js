@@ -19,7 +19,7 @@ const POLYGON_RPCS = [
   "https://polygon-bor-rpc.publicnode.com",
   "https://1rpc.io/matic",
   "https://polygon.drpc.org",
-  "https://polygon-mainnet.public.blastapi.io",
+  "https://polygon.api.onfinality.io/public",
 ];
 
 const BET_PCT = 0.01;
@@ -57,6 +57,10 @@ export function betUsdFor(equity) {
 }
 
 export function sizing(cash, equity, openCount) {
+  // 비유한 입력(NaN·Infinity)이면 사이징을 닫는다 — 측정값을 못 믿으면 사지 않는다
+  if (!Number.isFinite(cash) || !Number.isFinite(equity) || !Number.isFinite(openCount)) {
+    return { cashFloor: RESERVE_USD, available: 0, bet: betUsdFor(0), slots: 0 };
+  }
   const cashFloor = round2(Math.max(RESERVE_USD, equity * CASH_FLOOR_PCT));
   const available = round2(Math.max(0, cash - cashFloor));
   const bet = betUsdFor(equity);
@@ -205,6 +209,7 @@ const state = {
   running: false,
   timer: null,
   cycle: 0,
+  gen: 0,
   onLog: () => {},
   onState: () => {},
   lastSnapshot: null,
@@ -342,7 +347,7 @@ const isFailsafe = (text) => {
   return FAILSAFE_KEYWORDS.some((k) => t.includes(k));
 };
 
-async function runCycle() {
+async function runCycle(gen) {
   const snap = await snapshot();
   state.onState(snap);
   log(
@@ -358,7 +363,7 @@ async function runCycle() {
   let slotsLeft = snap.slots;
   let verified = 0;
   for (const cand of candidates) {
-    if (!state.running) return;
+    if (!state.running || gen !== state.gen) return;
     if (slotsLeft < 1 || verified >= VERIFY_CAP) break;
     verified += 1;
     let detail;
@@ -369,9 +374,10 @@ async function runCycle() {
       continue;
     }
     if (!detail.ok) continue;
-    if (!state.running) return;
+    if (!state.running || gen !== state.gen) return;
+    let signed;
     try {
-      const signed = await state.client.createOrder(
+      signed = await state.client.createOrder(
         {
           tokenID: detail.tokenId,
           price: detail.limitPrice,
@@ -380,36 +386,55 @@ async function runCycle() {
         },
         { tickSize: detail.tickSize, negRisk: detail.negRisk },
       );
-      const resp = await state.client.postOrder(signed, OrderType.FOK);
-      if (resp.errorMsg) throw new Error(resp.errorMsg);
-      markBought(cand.slug);
-      slotsLeft -= 1;
-      const fill = resp.makingAmount && resp.takingAmount
-        ? ` 체결가 ${round2(Number(resp.makingAmount) / Number(resp.takingAmount))}`
-        : "";
-      log(`매수 ${cand.slug} · $${snap.bet} @ ${detail.limitPrice}${fill}`);
     } catch (e) {
+      log(`주문 서명 실패 ${cand.slug}: ${String(e.message ?? e).slice(0, 120)}`);
+      continue;
+    }
+    let resp;
+    try {
+      resp = await state.client.postOrder(signed, OrderType.FOK);
+    } catch (e) {
+      // 제출됐으나 결과를 모르는 상태 — 체결됐을 수 있어 중복 매수 방지를 위해
+      // 매수한 것으로 기록한다 (결과 불명 건은 로그로 드러나게 남긴다)
+      markBought(cand.slug);
       const msg = String(e.message ?? e);
-      log(`주문 실패 ${cand.slug}: ${msg.slice(0, 120)}`);
+      log(`주문 결과 불명 ${cand.slug}: ${msg.slice(0, 120)} — 중복 방지 기록`);
       if (isFailsafe(msg)) {
         stop();
         log("failsafe 감지 — 엔진 정지. 정지 사유를 확인한 뒤 다시 실행하세요.");
         return;
       }
+      continue;
     }
+    if (resp.errorMsg || resp.success === false) {
+      const msg = resp.errorMsg || "주문 거부 (success=false)";
+      log(`주문 실패 ${cand.slug}: ${String(msg).slice(0, 120)}`);
+      if (isFailsafe(String(msg))) {
+        stop();
+        log("failsafe 감지 — 엔진 정지. 정지 사유를 확인한 뒤 다시 실행하세요.");
+        return;
+      }
+      continue;
+    }
+    markBought(cand.slug);
+    slotsLeft -= 1;
+    const fill = resp.makingAmount && resp.takingAmount
+      ? ` 체결가 ${round2(Number(resp.makingAmount) / Number(resp.takingAmount))}`
+      : "";
+    log(`매수 ${cand.slug} · $${snap.bet} @ ${detail.limitPrice}${fill}`);
   }
 }
 
-async function loop() {
-  if (!state.running) return;
+async function loop(gen) {
+  if (!state.running || gen !== state.gen) return;
   state.cycle += 1;
   try {
-    await runCycle();
+    await runCycle(gen);
   } catch (e) {
     log(`사이클 오류: ${String(e.message ?? e).slice(0, 160)}`);
   }
-  if (state.running) {
-    state.timer = setTimeout(loop, CYCLE_MS);
+  if (state.running && gen === state.gen) {
+    state.timer = setTimeout(() => loop(gen), CYCLE_MS);
   }
 }
 
@@ -445,14 +470,16 @@ function start() {
   if (!state.client || state.running) return;
   state.running = true;
   setRunIntent(true);
+  state.gen += 1;
   state.cycle = 0;
   log("엔진 실행 시작");
   state.onState(state.lastSnapshot);
-  loop();
+  loop(state.gen);
 }
 
 function stop() {
   setRunIntent(false);
+  state.gen += 1; // 진행 중 사이클 무효화 — 정지→재실행이 겹쳐도 구 사이클이 이어 사지 않게
   if (!state.running) return;
   state.running = false;
   if (state.timer) clearTimeout(state.timer);
