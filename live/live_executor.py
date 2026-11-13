@@ -54,7 +54,10 @@ CLOB_HOST = "https://clob.polymarket.com"
 CHAIN_ID = 137
 SIG_TYPE = 3
 
-BET_USD = 5.0
+BET_PCT = 0.01      # 건당 베팅 = 총자본(equity)의 1% — 전략 본체의 사이징
+BET_MIN_USD = 5.0   # 하한 — 최소 주문 수량(5주)과 슬리피지 캡 설계를 유지하는 최소액
+CASH_FLOOR_PCT = 0.30  # 현금 하한 — 평가금의 30%는 항상 pUSD 현금(총알)으로 유지
+MAX_POSITIONS = 70     # 동시 보유 상한 (1% 사이징 × 70% 투입 = 현금 하한과 정합)
 DEFAULT_RESERVE_USD = 2.87
 BAND_LO, BAND_HI = 0.70, 0.90
 SPREAD_MAX = 0.02
@@ -67,6 +70,15 @@ EVAL_SETTLED = 20
 VERIFY_CAP = 60  # 사이클당 오더북 재검증 상한
 LOW_WATER_USD = 0.50
 POL_USD_FALLBACK = 0.09  # 가격 조회 실패 시 근사값 (SPEC에 명시된 폴백)
+
+def bet_usd_for(equity):
+    """건당 베팅액 — 총자본의 1%, 단 BET_MIN_USD 아래로는 내리지 않는다.
+
+    자본이 작으면(1% < 하한) 하한이 강제하는 소수 대형 베팅이 되고,
+    자본이 커지면 1% 비례로 분산이 자동으로 따라온다.
+    """
+    return round(max(BET_MIN_USD, float(equity or 0) * BET_PCT), 2)
+
 
 KST = timezone(timedelta(hours=9))
 GAMMA_MARKETS_URL = "https://gamma-api.polymarket.com/markets"
@@ -217,9 +229,13 @@ def snapshot(client, state):
     positions_value = round(fetch_positions_value(), 2)
     equity = round(cash + positions_value, 2)
     reserve = float(state.get("reserve_usd", DEFAULT_RESERVE_USD))
-    available = round(max(0.0, cash - reserve), 2)
-    slots = int((available + 1e-9) // BET_USD)
     open_positions = [p for p in positions if p.get("status") == "OPEN"]
+    # 현금 하한: 가스 예비비와 평가금 30% 중 큰 쪽은 매수에 쓰지 않는다.
+    cash_floor = round(max(reserve, equity * CASH_FLOOR_PCT), 2)
+    available = round(max(0.0, cash - cash_floor), 2)
+    bet = bet_usd_for(equity)
+    cash_slots = int((available + 1e-9) // bet)
+    slots = max(0, min(cash_slots, MAX_POSITIONS - len(open_positions)))
     redeemable = [p for p in positions
                   if p.get("status") in ("REDEEMABLE", "REDEEMABLE_LOST")]
     halted = equity < HALT_EQUITY
@@ -233,10 +249,12 @@ def snapshot(client, state):
     return {
         "cash": round(cash, 2),
         "reserve_usd": reserve,
+        "cash_floor_usd": cash_floor,
         "available_cash": round(available, 2),
         "positions_count": len(open_positions),
         "positions_value": round(positions_value, 2),
         "equity": round(equity, 2),
+        "bet_usd": bet,
         "slots": slots,
         "halted": halted,
         "blocked": bool(state.get("blocked")),
@@ -318,7 +336,7 @@ def round_tick(price, tick):
     return float(q * t)
 
 
-def verify_candidate(client, cand, held_slugs, ever_bought):
+def verify_candidate(client, cand, held_slugs, ever_bought, bet_usd):
     """반환: (통과 여부, 사유, 상세 dict). 상세에는 주문 구성 재료가 들어 있다."""
     slug = cand["slug"]
     if slug in ever_bought:
@@ -365,7 +383,7 @@ def verify_candidate(client, cand, held_slugs, ever_bought):
         return False, f"ask_depth_low(${depth_usd:.2f})", {}
     tick = float(book.get("tick_size") or client.get_tick_size(token_id))
     limit_price = min(round_tick(best_ask + SLIPPAGE_CAP, tick), BAND_HI)
-    shares = math.floor(BET_USD / limit_price * 100) / 100
+    shares = math.floor(bet_usd / limit_price * 100) / 100
     min_size = float(book.get("min_order_size") or 0)
     if shares < min_size:
         return False, f"below_min_order_size({shares} < {min_size})", {}
@@ -389,7 +407,7 @@ def verify_candidate(client, cand, held_slugs, ever_bought):
         "neg_risk": bool(book.get("neg_risk")),
         "limit_price": limit_price,
         "shares": shares,
-        "usd": BET_USD,
+        "usd": bet_usd,
         "max_expected_drag": round(limit_price - snap_price, 4),
         "end_date": cand.get("end_date"),
         "volume": cand.get("volume"),
@@ -708,7 +726,7 @@ def select_and_verify(client, state, snap):
     passing, rejected = [], []
     for cand in candidates[:VERIFY_CAP]:
         ok, reason, detail = verify_candidate(client, cand, held_slugs,
-                                              ever_bought)
+                                              ever_bought, snap["bet_usd"])
         if ok:
             passing.append(detail)
         else:
@@ -725,7 +743,7 @@ def fmt_snapshot_line(snap, pol):
         pol_txt = f"{pol['pol']:.4f} POL (${pol['pol_usd']})"
         if pol["low_water"]:
             pol_txt += " ⚠ low-water ($0.50 미만)"
-    return (f"현금 ${snap['cash']} (예비 ${snap['reserve_usd']} 동결, "
+    return (f"현금 ${snap['cash']} (하한 ${snap['cash_floor_usd']} 동결, "
             f"가용 ${snap['available_cash']}) · 포지션 {snap['positions_count']}건 "
             f"${snap['positions_value']} · 평가금 ${snap['equity']} · "
             f"슬롯 {snap['slots']} · halted={snap['halted']} · "
@@ -737,8 +755,9 @@ def fmt_snapshot_line(snap, pol):
 def mode_status(client, state):
     snap = snapshot(client, state)
     pol = eoa_pol_balance()
-    out = {k: snap[k] for k in ("cash", "reserve_usd", "available_cash",
-                                "positions_count", "positions_value", "equity",
+    out = {k: snap[k] for k in ("cash", "reserve_usd", "cash_floor_usd",
+                                "available_cash", "positions_count",
+                                "positions_value", "equity", "bet_usd",
                                 "slots", "halted", "blocked", "eval_flag",
                                 "settled_count", "wins", "drag_avg")}
     out["eoa_pol"] = pol
