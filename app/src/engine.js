@@ -397,12 +397,30 @@ const isFailsafe = (text) => {
 // 체결 안 된 주문을 매수로 오인한다 (2026-11-14 실계정 사고: 잔고 불변인데
 // "매수" 로그 2건). 체결 증거(status matched/filled·트랜잭션 해시·체결
 // ID·실제 지불액)가 하나라도 있어야 체결로 인정한다.
+// SDK는 throwOnError 없이는 거절을 예외가 아니라 객체로 반환한다:
+// HTTP 오류는 {error: <본문>, status: <HTTP 코드>}, 네트워크 오류는
+// {error: <메시지>}. error 필드를 보지 않으면 거절이 전부 status 없는
+// 미체결로 떨어진다 (2026-11-14 2차 사고).
 export function judgeFill(resp) {
   if (!resp || typeof resp !== "object") {
     return { filled: false, kind: "unfilled", status: "" };
   }
+  if (resp.error) {
+    const err = resp.error;
+    return {
+      filled: false,
+      kind: "error",
+      status: String(resp.status ?? ""),
+      error: typeof err === "string" ? err : JSON.stringify(err),
+    };
+  }
   if (resp.errorMsg) {
-    return { filled: false, kind: "error", status: String(resp.status || "") };
+    return {
+      filled: false,
+      kind: "error",
+      status: String(resp.status || ""),
+      error: String(resp.errorMsg),
+    };
   }
   if (resp.success === false) {
     return { filled: false, kind: "rejected", status: String(resp.status || "") };
@@ -503,9 +521,11 @@ async function runCycle(gen) {
     const verdict = judgeFill(resp);
     if (!verdict.filled && verdict.kind !== "unfilled") {
       failedCount += 1;
-      const msg = resp.errorMsg || "주문 거부 (success=false)";
-      log(`주문 실패 ${cand.slug}: ${String(msg).slice(0, 120)}`);
-      if (isFailsafe(String(msg))) {
+      const msg = verdict.error || "주문 거부 (success=false)";
+      // 다음 진단이 추측이 되지 않게 원본 응답을 같은 줄에 남긴다.
+      // failsafe는 메시지 외에 HTTP 코드(예: 지역 제한 403)도 검사한다.
+      log(`주문 실패 ${cand.slug}: ${String(msg).slice(0, 120)} · 응답 원문: ${JSON.stringify(resp).slice(0, 200)}`);
+      if (isFailsafe(String(msg)) || isFailsafe(verdict.status)) {
         stop();
         log("failsafe 감지 — 엔진 정지. 정지 사유를 확인한 뒤 다시 실행하세요.");
         return;
@@ -515,7 +535,7 @@ async function runCycle(gen) {
     if (!verdict.filled) {
       // 미체결 (unmatched·delayed·live 등) — 매수 기록을 남기지 않고 슬롯도 쓰지 않는다
       unfilledCount += 1;
-      log(`미체결 ${cand.slug} · 응답 status: ${resp.status ?? "(없음)"}`);
+      log(`미체결 ${cand.slug} · 응답 status: ${resp.status ?? "(없음)"} · 응답 원문: ${JSON.stringify(resp).slice(0, 200)}`);
       continue;
     }
     markBought(cand.slug);
