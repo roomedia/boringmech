@@ -130,17 +130,49 @@ async function fetchJson(url) {
   return resp.json();
 }
 
-async function fetchPositions(funder) {
+async function fetchPositions(funder, status) {
   const out = [];
   let cursor = null;
   for (;;) {
     const params = new URLSearchParams({ user: funder, limit: "100" });
+    if (status) params.set("status", status);
     if (cursor) params.set("cursor", cursor);
     const page = await fetchJson(`${DATA_API_V2}/positions?${params}`);
     out.push(...(page.data || []));
     cursor = page.pagination?.next_cursor;
     if (!cursor) return out;
   }
+}
+
+// 포지션 장부 집계 — Data API v2 필드 기준 (문서 List positions + 실응답 대조):
+// 수량 current_size, 평균 진입가 avg_price, 현재 가치 current_value.
+// 등락 %는 보유(OPEN) 행만으로 (현재가치 합 − 진입원가 합) / 진입원가 합.
+// 정산 승패는 행의 status 값으로 가르지 않는다 — 상환 가능 패자 행도 status가
+// REDEEMABLE로 보존되므로(문서 명시), 조회 필터 결과 건수로만 센다
+// (status=REDEEMABLE 조회 = 승, status=REDEEMABLE_LOST 조회 = 패).
+// 정산 조회를 못 읽었으면(winRows·lostRows가 배열이 아니면) settled*는 null —
+// 화면은 숫자를 지어내지 않고 미표시로 남긴다.
+export function summarizeBook(allRows, winRows, lostRows) {
+  const open = (allRows || []).filter((p) => p.status === "OPEN");
+  let value = 0;
+  let cost = 0;
+  for (const p of open) {
+    const v = Number(p.current_value);
+    const c = Number(p.current_size) * Number(p.avg_price);
+    if (Number.isFinite(v)) value += v;
+    if (Number.isFinite(c)) cost += c;
+  }
+  const positionsPnlPct =
+    open.length > 0 && cost > 0 ? ((value - cost) / cost) * 100 : null;
+  const settledKnown = Array.isArray(winRows) && Array.isArray(lostRows);
+  return {
+    openCount: open.length,
+    positionsPnlPct,
+    settledCount: settledKnown ? winRows.length + lostRows.length : null,
+    settledWins: settledKnown ? winRows.length : null,
+    settledLosses: settledKnown ? lostRows.length : null,
+    heldSlugs: new Set(open.map((p) => p.slug).filter(Boolean)),
+  };
 }
 
 async function fetchPositionsValue(funder) {
@@ -285,18 +317,28 @@ async function snapshot() {
   const positions = await fetchPositions(state.funder);
   const positionsValue = round2(await fetchPositionsValue(state.funder));
   const equity = round2(cash + positionsValue);
-  const open = positions.filter((p) => p.status === "OPEN");
-  const settled = positions.filter(
-    (p) => p.status === "REDEEMABLE" || p.status === "REDEEMABLE_LOST",
-  );
-  const s = sizing(cash, equity, open.length);
+  let winRows = null;
+  let lostRows = null;
+  try {
+    [winRows, lostRows] = await Promise.all([
+      fetchPositions(state.funder, "REDEEMABLE"),
+      fetchPositions(state.funder, "REDEEMABLE_LOST"),
+    ]);
+  } catch {
+    // 정산 집계를 못 읽으면 settled*는 null로 남아 화면이 미표시한다
+  }
+  const book = summarizeBook(positions, winRows, lostRows);
+  const s = sizing(cash, equity, book.openCount);
   const snap = {
     cash,
     positionsValue,
     equity,
-    openCount: open.length,
-    settledCount: settled.length,
-    heldSlugs: new Set(open.map((p) => p.slug).filter(Boolean)),
+    openCount: book.openCount,
+    settledCount: book.settledCount,
+    settledWins: book.settledWins,
+    settledLosses: book.settledLosses,
+    positionsPnlPct: book.positionsPnlPct,
+    heldSlugs: book.heldSlugs,
     ...s,
   };
   state.lastSnapshot = snap;
@@ -455,7 +497,7 @@ async function runCycle(gen) {
   // 체결로 기록한 건은 다음 사이클 스냅샷에 포지션으로 실재해야 한다 —
   // 어긋나면 조용히 넘기지 않고 경고로 드러낸다 (실행당 1회).
   if (state.sessionFills > 0 && !state.posGapWarned) {
-    const found = snap.openCount + snap.settledCount;
+    const found = snap.openCount + (snap.settledCount ?? 0);
     if (found < state.sessionFills) {
       state.posGapWarned = true;
       log(`보유 대조 경고: 체결 기록 ${state.sessionFills}건인데 포지션은 ${found}건만 확인됨`);

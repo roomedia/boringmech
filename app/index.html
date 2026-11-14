@@ -75,10 +75,10 @@
     </div>
 
     <div class="card">
-      <h2>잔고 (pUSD)</h2>
-      <div class="bignum" id="cashBig">$—</div>
-      <div class="row"><span class="k">평가금 (잔고 + 포지션)</span><span class="v" id="equity">—</span></div>
+      <h2>평가금 (잔고 + 포지션)</h2>
+      <div class="bignum" id="equityBig">$—</div>
       <div class="row"><span class="k">포지션 가치</span><span class="v" id="posValue">—</span></div>
+      <div class="row"><span class="k">보유금</span><span class="v" id="cash">—</span></div>
       <div class="row"><span class="k">보유 중</span><span class="v" id="openCount">—</span></div>
       <div class="row"><span class="k">정산 완료</span><span class="v" id="settledCount">—</span></div>
     </div>
@@ -127,13 +127,27 @@
   function fmt(n){ return '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
   function short(a){ return a ? a.slice(0, 10) + '…' + a.slice(-6) : '—'; }
 
+  function fmtPct(p){ return (p > 0 ? '+' : '') + p.toFixed(1) + '%'; }
+
   function render(snap){
     if (snap){
-      $('cashBig').textContent = fmt(snap.cash);
-      $('equity').textContent = fmt(snap.equity);
-      $('posValue').textContent = fmt(snap.positionsValue);
+      $('equityBig').textContent = fmt(snap.equity);
+      var pv = fmt(snap.positionsValue);
+      if (snap.positionsPnlPct != null && isFinite(snap.positionsPnlPct)) {
+        var color = snap.positionsPnlPct < 0 ? 'var(--danger)' : 'var(--accent)';
+        $('posValue').innerHTML = pv + ' · <span style="color:' + color + '">' + fmtPct(snap.positionsPnlPct) + '</span>';
+      } else {
+        $('posValue').textContent = pv;
+      }
+      $('cash').textContent = fmt(snap.cash);
       $('openCount').textContent = snap.openCount + '건';
-      $('settledCount').textContent = snap.settledCount + '건';
+      if (snap.settledCount == null) {
+        $('settledCount').textContent = '—';
+      } else if (snap.settledWins != null && snap.settledLosses != null) {
+        $('settledCount').textContent = snap.settledCount + '건 · ' + snap.settledWins + '승 ' + snap.settledLosses + '패';
+      } else {
+        $('settledCount').textContent = snap.settledCount + '건';
+      }
       $('bet').textContent = fmt(snap.bet);
       $('floor').textContent = fmt(snap.cashFloor);
       $('available').textContent = fmt(snap.available);
