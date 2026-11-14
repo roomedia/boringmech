@@ -144,15 +144,45 @@ async function fetchPositions(funder, status) {
   }
 }
 
+// 포지션 식별 키 — 정산 목록 간 중복 제거용. 포지션은 토큰(자산) 단위다.
+function positionKey(p) {
+  if (p?.token_id) return `t:${p.token_id}`;
+  if (p?.condition_id) return `c:${p.condition_id}|${p.outcome_index ?? ""}`;
+  return null;
+}
+
+// CLOSED 행의 승패 판정 — 행 status만으로는 못 가른다.
+// 1순위 current_price(문서: 주당 라이브 마크; 정산이 끝난 토큰은 1 또는 0으로
+// 확정된다 — 실응답 승 건에서 1.0 확인): 1이면 보유 토큰 쪽 승리, 0이면 패배.
+// 2순위 realized_pnl(문서: 포지션 누적 실현 손익) 부호 — 정산 전 전량 청산으로
+// 닫힌 행처럼 current_price가 0/1이 아닌 경우의 폴백.
+// 둘 다로 못 가르면 null (건수에만 더하고 승패에서는 뺀다).
+export function judgeClosedRow(p) {
+  const cp = Number(p?.current_price);
+  if (Number.isFinite(cp)) {
+    if (cp >= 1) return "win";
+    if (cp <= 0) return "loss";
+  }
+  const rp = Number(p?.realized_pnl);
+  if (Number.isFinite(rp)) {
+    if (rp > 0) return "win";
+    if (rp < 0) return "loss";
+  }
+  return null;
+}
+
 // 포지션 장부 집계 — Data API v2 필드 기준 (문서 List positions + 실응답 대조):
 // 수량 current_size, 평균 진입가 avg_price, 현재 가치 current_value.
 // 등락 %는 보유(OPEN) 행만으로 (현재가치 합 − 진입원가 합) / 진입원가 합.
 // 정산 승패는 행의 status 값으로 가르지 않는다 — 상환 가능 패자 행도 status가
-// REDEEMABLE로 보존되므로(문서 명시), 조회 필터 결과 건수로만 센다
+// REDEEMABLE로 보존되므로(문서 명시), 조회 필터 결과로만 가른다
 // (status=REDEEMABLE 조회 = 승, status=REDEEMABLE_LOST 조회 = 패).
-// 정산 조회를 못 읽었으면(winRows·lostRows가 배열이 아니면) settled*는 null —
+// CLOSED 조회분은 행 필드로 판정한다(judgeClosedRow — 2026-11-14 사용자 결정으로
+// 정산 완료 집계에 포함). 세 목록의 합집합은 positionKey로 중복을 제거한다 —
+// 상태 전이 타이밍에 같은 포지션이 두 목록에 걸려도 한 번만 센다.
+// 정산 조회를 하나라도 못 읽으면 settled*는 null —
 // 화면은 숫자를 지어내지 않고 미표시로 남긴다.
-export function summarizeBook(allRows, winRows, lostRows) {
+export function summarizeBook(allRows, winRows, lostRows, closedRows) {
   const open = (allRows || []).filter((p) => p.status === "OPEN");
   let value = 0;
   let cost = 0;
@@ -164,13 +194,37 @@ export function summarizeBook(allRows, winRows, lostRows) {
   }
   const positionsPnlPct =
     open.length > 0 && cost > 0 ? ((value - cost) / cost) * 100 : null;
-  const settledKnown = Array.isArray(winRows) && Array.isArray(lostRows);
+  const settledKnown =
+    Array.isArray(winRows) && Array.isArray(lostRows) && Array.isArray(closedRows);
+  let settledCount = null;
+  let settledWins = null;
+  let settledLosses = null;
+  if (settledKnown) {
+    const verdicts = new Map();
+    let seq = 0;
+    const add = (rows, verdictOf) => {
+      for (const p of rows) {
+        const key = positionKey(p) ?? `u:${seq++}`;
+        if (!verdicts.has(key)) verdicts.set(key, verdictOf(p));
+      }
+    };
+    add(winRows, () => "win");
+    add(lostRows, () => "loss");
+    add(closedRows, judgeClosedRow);
+    settledCount = verdicts.size;
+    settledWins = 0;
+    settledLosses = 0;
+    for (const v of verdicts.values()) {
+      if (v === "win") settledWins += 1;
+      else if (v === "loss") settledLosses += 1;
+    }
+  }
   return {
     openCount: open.length,
     positionsPnlPct,
-    settledCount: settledKnown ? winRows.length + lostRows.length : null,
-    settledWins: settledKnown ? winRows.length : null,
-    settledLosses: settledKnown ? lostRows.length : null,
+    settledCount,
+    settledWins,
+    settledLosses,
     heldSlugs: new Set(open.map((p) => p.slug).filter(Boolean)),
   };
 }
@@ -319,15 +373,17 @@ async function snapshot() {
   const equity = round2(cash + positionsValue);
   let winRows = null;
   let lostRows = null;
+  let closedRows = null;
   try {
-    [winRows, lostRows] = await Promise.all([
+    [winRows, lostRows, closedRows] = await Promise.all([
       fetchPositions(state.funder, "REDEEMABLE"),
       fetchPositions(state.funder, "REDEEMABLE_LOST"),
+      fetchPositions(state.funder, "CLOSED"),
     ]);
   } catch {
     // 정산 집계를 못 읽으면 settled*는 null로 남아 화면이 미표시한다
   }
-  const book = summarizeBook(positions, winRows, lostRows);
+  const book = summarizeBook(positions, winRows, lostRows, closedRows);
   const s = sizing(cash, equity, book.openCount);
   const snap = {
     cash,

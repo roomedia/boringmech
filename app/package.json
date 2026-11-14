@@ -10,7 +10,8 @@
   "name": "boringmech-app",
   "private": true,
   "scripts": {
-    "bundle": "node bundle.mjs"
+    "bundle": "node bundle.mjs",
+    "test": "node test/book.test.mjs"
   },
-  "version": "0.3.10"
+  "version": "0.3.11"
 }
