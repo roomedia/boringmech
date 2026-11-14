@@ -34,3 +34,4 @@ venv/
 # Node (번들 빌드 도구 — 설치 산출물은 커밋하지 않는다)
 node_modules/
 app/package-lock.json
+tools/report_watch_state.json

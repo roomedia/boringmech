@@ -4,6 +4,7 @@
 globalThis.window = {};
 const {
   summarizeBook,
+  summarizeCycle,
   judgeClosedRow,
   sizing,
   bootView,
@@ -850,6 +851,34 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   eq(/SDK 호출 시간 초과/.test(String(threw?.message ?? "")), true, "clientTimeout: hung call is cut by timeout");
 }
 
+// 37.5 스캔 통계 — scanCandidates가 단계별 탈락을 세고, summarizeCycle이
+// 조회 수와 제외 사유를 요약에 싣는다 (후보 0 원인 특정용 계측)
+{
+  const mk = (over) => ({
+    active: true, closed: false, acceptingOrders: true, archived: false,
+    slug: "mkt-x", sportsMarketType: "", endDate: "2099-01-01T00:00:00Z",
+    volume: 50000, outcomePrices: "[0.75, 0.25]", ...over,
+  });
+  const stats = {};
+  const soon = new Date(Date.now() + 10 * 86400_000).toISOString();
+  const out = scanCandidates([
+    mk({ slug: "ok-1", endDate: soon }),
+    mk({ slug: "sport-1", endDate: soon, sportsMarketType: "moneyline" }),
+    mk({ slug: "far-1", endDate: "2099-01-01T00:00:00Z" }),
+    mk({ slug: "band-1", endDate: soon, outcomePrices: "[0.95, 0.05]" }),
+    mk({ slug: "ok-1", endDate: soon }),
+  ], new Set(["ok-1"]), new Set(), stats);
+  eq(out.length, 0, "scanStats: held market excluded from candidates");
+  eq(stats.total, 5, "scanStats: total counts all fetched markets");
+  eq(stats.sports, 1, "scanStats: sports counted");
+  eq(stats.end_out, 1, "scanStats: end_out counted");
+  eq(stats.band_out, 1, "scanStats: band_out counted");
+  eq(stats.owned, 2, "scanStats: owned counted");
+  const line = summarizeCycle({ candidates: 0, verified: 0, rejects: {}, filled: 0, unfilled: 0, failed: 0, scan: stats });
+  eq(line.includes("조회 5"), true, "scanStats: summary carries fetched count");
+  eq(line.includes("스포츠 1"), true, "scanStats: summary carries drop reasons");
+}
+
 // 38. 구조 가드 — F1/F3/F4/F6 수정이 소스에 실제로 박혀 있다
 {
   const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
@@ -863,6 +892,9 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   );
   eq(src.includes("withClientTimeout("), true, "guard: SDK client wrapped with timeout");
   eq(src.includes('setStage("stoploss")'), true, "guard: cycle stage tracking present");
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  eq(html.includes("btnReport"), true, "guard: report button present in viewer");
+  eq(html.includes("/report"), true, "guard: report posts to relay endpoint");
   eq(src.includes("already_redeemed"), true, "guard: already-redeemed termination recorded");
   const bridge = readFileSync(
     new URL("../../android/src/com/roomedia/boringmech/Bridge.java", import.meta.url),

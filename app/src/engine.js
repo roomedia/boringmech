@@ -383,34 +383,39 @@ async function fetchMarkets(total = 1000, pageSize = 100) {
   return markets.slice(0, total);
 }
 
-export function scanCandidates(markets, heldSlugs, boughtSlugs) {
+export function scanCandidates(markets, heldSlugs, boughtSlugs, stats = null) {
   const today = new Date();
   const iso = (d) => d.toISOString().slice(0, 10);
   const todayIso = iso(today);
   const endMaxIso = iso(new Date(today.getTime() + 45 * 86400_000));
   const out = [];
+  const drop = (reason) => {
+    if (stats) stats[reason] = (stats[reason] || 0) + 1;
+  };
   for (const m of markets) {
-    if (!m.active || m.closed) continue;
-    if (m.acceptingOrders === false || m.archived === true) continue; // 주문 수용 중단·보관 마켓 (문서 Market Details — Market Status)
+    if (!m.active || m.closed) { drop("inactive"); continue; }
+    if (m.acceptingOrders === false || m.archived === true) { drop("not_accepting"); continue; } // 주문 수용 중단·보관 마켓 (문서 Market Details — Market Status)
     const slug = m.slug || "";
-    if (SHORT_TERM_RE.test(slug)) continue;
-    if (m.sportsMarketType) continue; // 스포츠는 목록 단계에서 제외 (검증 단계에도 가드로 남겨 둠)
-    if (heldSlugs.has(slug) || boughtSlugs.has(slug)) continue;
+    if (SHORT_TERM_RE.test(slug)) { drop("short_term"); continue; }
+    if (m.sportsMarketType) { drop("sports"); continue; } // 스포츠는 목록 단계에서 제외 (검증 단계에도 가드로 남겨 둠)
+    if (heldSlugs.has(slug) || boughtSlugs.has(slug)) { drop("owned"); continue; }
     const end = (m.endDate || "").slice(0, 10);
-    if (!(todayIso < end && end <= endMaxIso)) continue;
-    if (Number(m.volume || 0) < 10000) continue;
+    if (!(todayIso < end && end <= endMaxIso)) { drop("end_out"); continue; }
+    if (Number(m.volume || 0) < 10000) { drop("volume_low"); continue; }
     let prices;
     try {
       prices = JSON.parse(m.outcomePrices || "[]").map(Number);
     } catch {
+      drop("price_bad");
       continue;
     }
-    if (prices.length < 2) continue;
+    if (prices.length < 2) { drop("price_bad"); continue; }
     const side = prices[0] >= prices[1] ? "yes" : "no";
     const price = side === "yes" ? prices[0] : prices[1];
-    if (price < BAND_LO || price > BAND_HI) continue;
+    if (price < BAND_LO || price > BAND_HI) { drop("band_out"); continue; }
     out.push({ slug, question: m.question || "", side, price, endDate: m.endDate || "" });
   }
+  if (stats) stats.total = markets.length;
   // 매수 우선순위: 0.70–0.80 구간 먼저, 그 안에서 만기 가까운 순
   // (동률은 입력 순서 유지 — Array.sort는 안정 정렬이다)
   const bandGroup = (p) => (p >= 0.7 && p < 0.8 ? 0 : 1);
@@ -854,8 +859,29 @@ const REJECT_LABELS = {
 
 // 사이클 결과를 한 줄로 집계한다. 탈락을 건별로 찍으면 로그가 폭발하므로
 // 사유별 카운트만 남긴다 — "왜 안 샀는지"가 사이클마다 보이게 하는 게 목적.
-export function summarizeCycle({ candidates, verified, rejects, filled, unfilled, failed }) {
+const SCAN_DROP_LABELS = {
+  inactive: "비활성",
+  not_accepting: "주문중단",
+  short_term: "단기코인",
+  sports: "스포츠",
+  owned: "보유·기매수",
+  end_out: "만기밖",
+  volume_low: "거래량미달",
+  price_bad: "가격형식",
+  band_out: "밴드밖",
+};
+
+export function summarizeCycle({ candidates, verified, rejects, filled, unfilled, failed, scan = null }) {
   const parts = [`사이클 요약 · 후보 ${candidates} · 검증 ${verified}`];
+  if (scan) {
+    const drops = Object.entries(scan)
+      .filter(([k, n]) => k !== "total" && n > 0)
+      .sort((a, b) => b[1] - a[1]);
+    const dropText = drops.length
+      ? ` (${drops.map(([k, n]) => `${SCAN_DROP_LABELS[k] || k} ${n}`).join("·")})`
+      : "";
+    parts.push(`조회 ${scan.total ?? 0}${dropText}`);
+  }
   const entries = Object.entries(rejects || {})
     .filter(([, n]) => n > 0)
     .sort((a, b) => b[1] - a[1]);
@@ -1301,7 +1327,9 @@ async function runCycle(gen) {
   }
   setStage("scan");
   const markets = await fetchMarkets();
-  const candidates = scanCandidates(markets, snap.heldSlugs, boughtSlugs());
+  const scanStats = {};
+  const candidates = scanCandidates(markets, snap.heldSlugs, boughtSlugs(), scanStats);
+  state.lastScan = { stats: scanStats, fetched: markets.length, ts: Date.now() };
   let slotsLeft = snap.slots;
   let verified = 0;
   const rejects = {};
@@ -1425,6 +1453,7 @@ async function runCycle(gen) {
     filled: filledCount,
     unfilled: unfilledCount,
     failed: failedCount,
+    scan: scanStats,
   }));
 }
 

@@ -127,6 +127,7 @@
       <div class="log" id="logBox">—</div>
       <div class="stack" style="margin-top:10px">
         <button class="btn ghost" id="btnCopyLog">로그 복사</button>
+        <button class="btn ghost" id="btnReport">구리에게 제보</button>
       </div>
     </div>
   </div>
@@ -406,6 +407,29 @@
       }
       btn.textContent = result;
       setTimeout(function(){ btn.textContent = '로그 복사'; }, 2500);
+    });
+    $('btnReport').addEventListener('click', async function(){
+      var btn = $('btnReport');
+      btn.textContent = '보내는 중…';
+      var payload = { ts: Date.now(), host: HOST };
+      try { payload.stage = JSON.parse(localStorage.getItem('bm_stage') || 'null'); } catch (e) {}
+      try { payload.snap = JSON.parse(localStorage.getItem('bm_snap') || 'null'); } catch (e) {}
+      payload.logs = readLogs();
+      var result = '제보 실패 — 네트워크를 확인하세요';
+      try {
+        var ctl = new AbortController();
+        var timer = setTimeout(function(){ ctl.abort(); }, 15000);
+        var resp = await fetch('https://phoneauto-relay.k45414254.workers.dev/report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ app: 'boringmech', version: String(BM.version || ''), payload: payload }),
+          signal: ctl.signal,
+        });
+        clearTimeout(timer);
+        if (resp.ok) result = '제보됨 — 구리가 확인합니다';
+      } catch (e) {}
+      btn.textContent = result;
+      setTimeout(function(){ btn.textContent = '구리에게 제보'; }, 3000);
     });
     $('btnUnlink').addEventListener('click', function(){
       BM.unlink();
