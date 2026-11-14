@@ -144,7 +144,11 @@
       if (snap.settledCount == null) {
         $('settledCount').textContent = '—';
       } else if (snap.settledWins != null && snap.settledLosses != null) {
-        $('settledCount').textContent = snap.settledCount + '건 · ' + snap.settledWins + '승 ' + snap.settledLosses + '패';
+        var settledText = snap.settledCount + '건 · ' + snap.settledWins + '승 ' + snap.settledLosses + '패';
+        if (snap.settledRealizedPnl != null && isFinite(snap.settledRealizedPnl)) {
+          settledText += ' · 실현 ' + (snap.settledRealizedPnl < 0 ? '-' : '+') + fmt(Math.abs(snap.settledRealizedPnl));
+        }
+        $('settledCount').textContent = settledText;
       } else {
         $('settledCount').textContent = snap.settledCount + '건';
       }

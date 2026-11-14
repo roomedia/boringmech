@@ -166,6 +166,7 @@ eq(bootView(true, true), "running", "boot: key with intent restores running");
     settledCount: 1,
     settledWins: 1,
     settledLosses: 0,
+    settledRealizedPnl: 0.7,
     positionsPnlPct: -1.9,
     heldSlugs: new Set(["a-market", "b-market"]),
     cashFloor: 16.02,
@@ -180,6 +181,7 @@ eq(bootView(true, true), "running", "boot: key with intent restores running");
   eq(restored.openCount, 5, "cache: open count");
   eq(restored.settledCount, 1, "cache: settled count");
   eq(restored.settledWins, 1, "cache: settled wins");
+  eq(restored.settledRealizedPnl, 0.7, "cache: settled realized pnl");
   eq(restored.positionsPnlPct, -1.9, "cache: pnl pct");
   eq([...restored.heldSlugs].sort(), ["a-market", "b-market"], "cache: held slugs as set");
   eq(restored.slots, 0, "cache: slots");
@@ -205,6 +207,7 @@ eq(snapshotFromCache('{"cash":18.83}'), null, "cache: missing equity rejected");
         settledCount: null,
         settledWins: null,
         settledLosses: null,
+        settledRealizedPnl: null,
         positionsPnlPct: null,
         heldSlugs: new Set(),
         cashFloor: 3,
@@ -219,7 +222,85 @@ eq(snapshotFromCache('{"cash":18.83}'), null, "cache: missing equity rejected");
     [null, null, null, null],
     "cache: unknown settled stays unknown",
   );
+  eq(restored.settledRealizedPnl, null, "cache: unknown realized stays unknown");
 }
+
+// 17. 실현수익 합산 — 건수·승패와 같은 dedupe 집합 기준
+{
+  // 승 +2.5 (지급 7.5 − 원가 5), 패 −5 (원가 5), CLOSED +0.7016 → −1.7984 → −1.8
+  const book = summarizeBook(
+    [],
+    [row({ token_id: "RW", entry_cost_usdc: 5, current_value: 7.5 })],
+    [row({ token_id: "RL", entry_cost_usdc: 5, current_value: 0 })],
+    [closedWinLive],
+  );
+  eq(settled(book), [3, 2, 1], "realized: mixed counts");
+  eq(book.settledRealizedPnl, -1.8, "realized: mixed sum");
+  eq(book.settledRealizedExcluded, 0, "realized: none excluded");
+}
+{
+  // 우리 지갑 실측: CLOSED 승 1건의 realized_pnl 0.7016 → 0.7
+  eq(
+    summarizeBook([], [], [], [closedWinLive]).settledRealizedPnl,
+    0.7,
+    "realized: live wallet closed win",
+  );
+}
+{
+  // dedupe — 같은 토큰이 승 목록과 CLOSED에 있으면 살아남은 쪽(승)의 공식을 한 번만
+  const asWin = row({
+    token_id: "DUP",
+    status: "REDEEMABLE",
+    entry_cost_usdc: 5,
+    current_value: 7.5,
+  });
+  const asClosed = row({
+    token_id: "DUP",
+    status: "CLOSED",
+    current_price: 1,
+    realized_pnl: 99,
+    entry_cost_usdc: 5,
+    current_value: 0,
+  });
+  const book = summarizeBook([], [asWin], [], [asClosed]);
+  eq(settled(book), [1, 1, 0], "realized dedupe: counted once");
+  eq(book.settledRealizedPnl, 2.5, "realized dedupe: surviving list formula wins");
+}
+{
+  // 승패 판정 불가(건수만) 행도 realized_pnl이 있으면 합산한다 — 0도 값이다
+  const book = summarizeBook(
+    [],
+    [],
+    [],
+    [row({ status: "CLOSED", current_price: 0.5, realized_pnl: 0 })],
+  );
+  eq(settled(book), [1, 0, 0], "realized: unjudgeable counts only");
+  eq(book.settledRealizedPnl, 0, "realized: zero pnl still sums");
+  eq(book.settledRealizedExcluded, 0, "realized: zero pnl not excluded");
+}
+{
+  // 실현을 계산할 필드가 없는 행은 합산에서 빼고 excluded로 센다 — 0으로 만들지 않는다
+  const noPnl = row({ status: "CLOSED", current_price: undefined, realized_pnl: undefined });
+  const book = summarizeBook([], [], [], [noPnl]);
+  eq(settled(book), [1, 0, 0], "realized excluded: still counted");
+  eq(book.settledRealizedPnl, null, "realized excluded: no fabricated number");
+  eq(book.settledRealizedExcluded, 1, "realized excluded: counted as excluded");
+}
+{
+  // 일부만 계산 가능하면 가능한 행만 합산하고 나머지는 excluded
+  const book = summarizeBook(
+    [],
+    [row({ token_id: "GW", entry_cost_usdc: 4, current_value: 6 })],
+    [],
+    [row({ token_id: "BX", status: "CLOSED" })],
+  );
+  eq(settled(book), [2, 1, 0], "realized partial: counts");
+  eq(book.settledRealizedPnl, 2, "realized partial: sums computable only");
+  eq(book.settledRealizedExcluded, 1, "realized partial: excluded counted");
+}
+// 정산 미상이면 실현도 미상, 정산 0건이면 실현 0이 사실이다
+eq(summarizeBook([], [], [], null).settledRealizedPnl, null, "realized: unknown propagates");
+eq(summarizeBook([], [], [], []).settledRealizedPnl, 0, "realized: empty settled is zero");
 
 console.log(`book tests: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

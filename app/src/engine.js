@@ -172,6 +172,26 @@ export function judgeClosedRow(p) {
   return null;
 }
 
+// 정산 행의 실현손익 — 건수·승패와 같은 dedupe 집합 기준으로, 살아남은 행이
+// 속한 조회 목록의 정의를 따른다. 전 상태 행이 같은 필드를 갖는다(문서 List
+// positions의 Position 스키마 + CLOSED 실응답 대조 — REDEEMABLE 행은 현재
+// 지갑에 0건이라 실응답으로는 미확인, 문서 스키마로 대조).
+// 승(REDEEMABLE): 확정 지급액 − 진입 원가 = current_value − entry_cost_usdc.
+// 패(REDEEMABLE_LOST): 토큰 가치가 0으로 확정 — −entry_cost_usdc.
+// CLOSED: 행의 realized_pnl(문서: 포지션 누적 실현 손익).
+// 필요한 필드가 숫자가 아니면 null — 합산에서 빼고 settledRealizedExcluded로
+// 센다. 승패 판정 불가로 건수에만 들어간 행도 realized_pnl이 있으면 합산한다.
+function realizedOf(kind, p) {
+  const cost = Number(p?.entry_cost_usdc);
+  if (kind === "win") {
+    const value = Number(p?.current_value);
+    return Number.isFinite(value) && Number.isFinite(cost) ? value - cost : null;
+  }
+  if (kind === "loss") return Number.isFinite(cost) ? -cost : null;
+  const rp = Number(p?.realized_pnl);
+  return Number.isFinite(rp) ? rp : null;
+}
+
 // 포지션 장부 집계 — Data API v2 필드 기준 (문서 List positions + 실응답 대조):
 // 수량 current_size, 평균 진입가 avg_price, 현재 가치 current_value.
 // 등락 %는 보유(OPEN) 행만으로 (현재가치 합 − 진입원가 합) / 진입원가 합.
@@ -181,6 +201,8 @@ export function judgeClosedRow(p) {
 // CLOSED 조회분은 행 필드로 판정한다(judgeClosedRow — 2026-11-14 사용자 결정으로
 // 정산 완료 집계에 포함). 세 목록의 합집합은 positionKey로 중복을 제거한다 —
 // 상태 전이 타이밍에 같은 포지션이 두 목록에 걸려도 한 번만 센다.
+// 실현손익도 같은 합집합으로 합산한다(realizedOf). 합산 가능한 행이 하나도
+// 없는데 정산 건만 있으면 settledRealizedPnl은 null — 0으로 지어내지 않는다.
 // 정산 조회를 하나라도 못 읽으면 settled*는 null —
 // 화면은 숫자를 지어내지 않고 미표시로 남긴다.
 export function summarizeBook(allRows, winRows, lostRows, closedRows) {
@@ -200,25 +222,38 @@ export function summarizeBook(allRows, winRows, lostRows, closedRows) {
   let settledCount = null;
   let settledWins = null;
   let settledLosses = null;
+  let settledRealizedPnl = null;
+  let settledRealizedExcluded = null;
   if (settledKnown) {
-    const verdicts = new Map();
+    const entries = new Map();
     let seq = 0;
-    const add = (rows, verdictOf) => {
+    const add = (rows, kind, verdictOf) => {
       for (const p of rows) {
         const key = positionKey(p) ?? `u:${seq++}`;
-        if (!verdicts.has(key)) verdicts.set(key, verdictOf(p));
+        if (!entries.has(key)) {
+          entries.set(key, { verdict: verdictOf(p), pnl: realizedOf(kind, p) });
+        }
       }
     };
-    add(winRows, () => "win");
-    add(lostRows, () => "loss");
-    add(closedRows, judgeClosedRow);
-    settledCount = verdicts.size;
+    add(winRows, "win", () => "win");
+    add(lostRows, "loss", () => "loss");
+    add(closedRows, "closed", judgeClosedRow);
+    settledCount = entries.size;
     settledWins = 0;
     settledLosses = 0;
-    for (const v of verdicts.values()) {
-      if (v === "win") settledWins += 1;
-      else if (v === "loss") settledLosses += 1;
+    settledRealizedExcluded = 0;
+    let pnlSum = 0;
+    let pnlKnown = 0;
+    for (const e of entries.values()) {
+      if (e.verdict === "win") settledWins += 1;
+      else if (e.verdict === "loss") settledLosses += 1;
+      if (e.pnl == null) settledRealizedExcluded += 1;
+      else {
+        pnlSum += e.pnl;
+        pnlKnown += 1;
+      }
     }
+    if (pnlKnown > 0 || settledCount === 0) settledRealizedPnl = round2(pnlSum);
   }
   return {
     openCount: open.length,
@@ -226,6 +261,8 @@ export function summarizeBook(allRows, winRows, lostRows, closedRows) {
     settledCount,
     settledWins,
     settledLosses,
+    settledRealizedPnl,
+    settledRealizedExcluded,
     heldSlugs: new Set(open.map((p) => p.slug).filter(Boolean)),
   };
 }
@@ -386,6 +423,7 @@ export function snapshotCacheOf(snap) {
     settledCount: num(snap.settledCount),
     settledWins: num(snap.settledWins),
     settledLosses: num(snap.settledLosses),
+    settledRealizedPnl: num(snap.settledRealizedPnl),
     positionsPnlPct: num(snap.positionsPnlPct),
     heldSlugs: [...(snap.heldSlugs || [])].filter((s) => typeof s === "string"),
     cashFloor: num(snap.cashFloor),
@@ -417,6 +455,7 @@ export function snapshotFromCache(raw) {
     settledCount: numOrNull(o.settledCount),
     settledWins: numOrNull(o.settledWins),
     settledLosses: numOrNull(o.settledLosses),
+    settledRealizedPnl: numOrNull(o.settledRealizedPnl),
     positionsPnlPct: numOrNull(o.positionsPnlPct),
     heldSlugs: new Set(
       (Array.isArray(o.heldSlugs) ? o.heldSlugs : []).filter(
@@ -468,6 +507,7 @@ async function snapshot() {
     settledCount: book.settledCount,
     settledWins: book.settledWins,
     settledLosses: book.settledLosses,
+    settledRealizedPnl: book.settledRealizedPnl,
     positionsPnlPct: book.positionsPnlPct,
     heldSlugs: book.heldSlugs,
     ...s,
