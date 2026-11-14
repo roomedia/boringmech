@@ -441,6 +441,7 @@ const state = {
   gen: 0,
   sessionFills: 0,
   posGapWarned: false,
+  boughtReconciled: false,
   updateInfo: null,
   updateNotifiedTag: "",
   onLog: () => {},
@@ -516,6 +517,57 @@ function markBought(slug) {
   const set = boughtSlugs();
   set.add(slug);
   durableWrite(LS.bought, JSON.stringify([...set]));
+}
+
+// 기매수 기록 정화 — bought에는 체결분과 "결과 불명"으로 남긴 방어 기록이
+// 섞인다. 방어 기록이 실제 체결로 이어지지 않았으면 그 종목은 영원히
+// 후보에서 빠지는 미끼가 된다 (2026-11-15 실측: 후보 10건 전부 이 기록에
+// 걸려 진입 0). 온체인 매수 이력과 현재 보유에 모두 없는 항목은 산 적이
+// 없는 것으로 판정해 제거한다. 판정은 순수 함수로 분리해 테스트한다.
+export function reconcileBought(boughtSet, onChainBuySlugs, heldSlugsSet) {
+  const truth = new Set([...onChainBuySlugs, ...heldSlugsSet]);
+  const kept = [];
+  const dropped = [];
+  for (const s of boughtSet) (truth.has(s) ? kept : dropped).push(s);
+  return { kept, dropped };
+}
+
+async function fetchBuySlugs(funder) {
+  const slugs = new Set();
+  for (let page = 0; page < 5; page++) {
+    const params = new URLSearchParams({
+      user: funder, limit: "200", offset: String(page * 200),
+    });
+    const data = await fetchJson(`${DATA_API_V2}/activity?${params}`);
+    const rows = Array.isArray(data) ? data : data?.data;
+    if (!Array.isArray(rows) || !rows.length) break;
+    for (const r of rows) {
+      if (r?.type === "TRADE" && r?.side === "BUY" && r?.slug) slugs.add(r.slug);
+    }
+    if (rows.length < 200) break;
+  }
+  return slugs;
+}
+
+// 엔진 가동 중 첫 스캔 전에 1회만 정화한다. 이력 조회에 실패하면
+// 플래그를 세우지 않아 다음 사이클에 다시 시도한다.
+async function reconcileBoughtOnce(snap) {
+  let onChain;
+  try {
+    onChain = await fetchBuySlugs(state.funder);
+  } catch {
+    return;
+  }
+  state.boughtReconciled = true;
+  const cur = boughtSlugs();
+  if (!cur.size) return;
+  const { kept, dropped } = reconcileBought(cur, onChain, snap.heldSlugs);
+  if (!dropped.length) return;
+  durableWrite(LS.bought, JSON.stringify(kept));
+  log(
+    `기매수 기록 정화 — 온체인 매수 이력 없는 ${dropped.length}건 제거: ` +
+      dropped.slice(0, 5).join(", ") + (dropped.length > 5 ? " 외" : ""),
+  );
 }
 
 // ── 비밀 저장 (Android Keystore 암호화) ─────────────────────
@@ -1325,6 +1377,7 @@ async function runCycle(gen) {
     log("슬롯 없음 — 이번 사이클 매수 없음");
     return;
   }
+  if (!state.boughtReconciled) await reconcileBoughtOnce(snap);
   setStage("scan");
   const markets = await fetchMarkets();
   const scanStats = {};

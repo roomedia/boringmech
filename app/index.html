@@ -424,6 +424,7 @@
       if (auto) payload.reason = 'engine_unresponsive';
       try { payload.stage = JSON.parse(localStorage.getItem('bm_stage') || 'null'); } catch (e) {}
       try { payload.snap = JSON.parse(localStorage.getItem('bm_snap') || 'null'); } catch (e) {}
+      try { payload.bought = JSON.parse(localStorage.getItem('bm_bought') || '[]'); } catch (e) {}
       payload.logs = readLogs();
       for (var attempt = 0; attempt < 2; attempt++){
         try {

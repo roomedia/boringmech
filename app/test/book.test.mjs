@@ -28,6 +28,7 @@ const {
   buildV2RedeemCall,
   toBytes31,
   scanCandidates,
+  reconcileBought,
   HEARTBEAT_INTERVAL_MS,
   NO_HEARTBEAT_GRACE_MS,
   FETCH_TIMEOUT_MS,
@@ -898,6 +899,8 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   eq(html.includes("async function sendReport"), true, "guard: shared report sender present");
   eq(html.includes("engine_unresponsive"), true, "guard: auto-report on unresponsive engine");
   eq(html.includes("autoReportSent"), true, "guard: auto-report once per episode");
+  eq(html.includes("payload.bought"), true, "guard: report payload carries bought list");
+  eq(src.includes("reconcileBoughtOnce"), true, "guard: bought reconciliation wired before scan");
   eq(src.includes("already_redeemed"), true, "guard: already-redeemed termination recorded");
   const bridge = readFileSync(
     new URL("../../android/src/com/roomedia/boringmech/Bridge.java", import.meta.url),
@@ -917,6 +920,18 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   );
   eq(act.includes("web.destroy()"), true, "guard: viewer webview destroyed in onDestroy");
   eq(act.includes("onRenderProcessGone"), true, "guard: viewer recreates webview on renderer death");
+}
+
+// ── reconcileBought: 온체인 이력·보유에 없는 기매수 기록만 제거 ──
+{
+  const bought = new Set(["a", "b", "c", "d"]);
+  const onChain = new Set(["a"]);
+  const held = new Set(["b"]);
+  const { kept, dropped } = reconcileBought(bought, onChain, held);
+  eq(JSON.stringify(kept), JSON.stringify(["a", "b"]), "reconcile: keeps traded and held");
+  eq(JSON.stringify(dropped), JSON.stringify(["c", "d"]), "reconcile: drops phantom records");
+  const none = reconcileBought(new Set(), onChain, held);
+  eq(none.kept.length + none.dropped.length, 0, "reconcile: empty bought stays empty");
 }
 
 console.log(`book tests: ${passed} passed, ${failed} failed`);
