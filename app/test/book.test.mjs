@@ -2,7 +2,14 @@
 //   node test/book.test.mjs
 // engine.js는 모듈 최상위에서 window.BM을 대입하므로 스텁을 먼저 깐다.
 globalThis.window = {};
-const { summarizeBook, judgeClosedRow, sizing } = await import("../src/engine.js");
+const {
+  summarizeBook,
+  judgeClosedRow,
+  sizing,
+  bootView,
+  snapshotCacheOf,
+  snapshotFromCache,
+} = await import("../src/engine.js");
 
 let passed = 0;
 let failed = 0;
@@ -141,6 +148,77 @@ eq(judgeClosedRow(null), null, "judge null row");
   const s = sizing(18.83, 53.41, 5);
   eq(s.bet, 5, "sizing bet floor");
   eq(s.slots, 0, "sizing slots blocked by cash floor");
+}
+
+// 13. 부팅 화면 판정 — 키가 있으면 연동 화면은 어떤 경우에도 안 뜬다
+eq(bootView(false, false), "link", "boot: no key shows link");
+eq(bootView(false, true), "link", "boot: intent without key still link");
+eq(bootView(true, false), "stopped", "boot: key without intent shows main stopped");
+eq(bootView(true, true), "running", "boot: key with intent restores running");
+
+// 14. 스냅샷 캐시 라운드트립 — 즉시 표시용 숫자가 그대로 복원된다
+{
+  const snap = {
+    cash: 18.83,
+    positionsValue: 34.58,
+    equity: 53.41,
+    openCount: 5,
+    settledCount: 1,
+    settledWins: 1,
+    settledLosses: 0,
+    positionsPnlPct: -1.9,
+    heldSlugs: new Set(["a-market", "b-market"]),
+    cashFloor: 16.02,
+    available: 2.81,
+    bet: 5,
+    slots: 0,
+  };
+  const restored = snapshotFromCache(JSON.stringify(snapshotCacheOf(snap)));
+  eq(restored.cash, 18.83, "cache: cash");
+  eq(restored.equity, 53.41, "cache: equity");
+  eq(restored.positionsValue, 34.58, "cache: positions value");
+  eq(restored.openCount, 5, "cache: open count");
+  eq(restored.settledCount, 1, "cache: settled count");
+  eq(restored.settledWins, 1, "cache: settled wins");
+  eq(restored.positionsPnlPct, -1.9, "cache: pnl pct");
+  eq([...restored.heldSlugs].sort(), ["a-market", "b-market"], "cache: held slugs as set");
+  eq(restored.slots, 0, "cache: slots");
+  eq(snapshotCacheOf(null), null, "cache: null snapshot");
+}
+
+// 15. 깨진 캐시는 버린다 — 그럴듯한 가짜 숫자보다 자리표시가 낫다
+eq(snapshotFromCache(null), null, "cache: null raw");
+eq(snapshotFromCache(""), null, "cache: empty raw");
+eq(snapshotFromCache("{not json"), null, "cache: broken json");
+eq(snapshotFromCache('{"cash":"18.83","equity":53.41}'), null, "cache: non-numeric cash rejected");
+eq(snapshotFromCache('{"cash":18.83}'), null, "cache: missing equity rejected");
+
+// 16. 정산 미상(null)은 캐시를 거쳐도 미상으로 남는다
+{
+  const restored = snapshotFromCache(
+    JSON.stringify(
+      snapshotCacheOf({
+        cash: 10,
+        positionsValue: 0,
+        equity: 10,
+        openCount: 0,
+        settledCount: null,
+        settledWins: null,
+        settledLosses: null,
+        positionsPnlPct: null,
+        heldSlugs: new Set(),
+        cashFloor: 3,
+        available: 7,
+        bet: 5,
+        slots: 1,
+      }),
+    ),
+  );
+  eq(
+    [restored.settledCount, restored.settledWins, restored.settledLosses, restored.positionsPnlPct],
+    [null, null, null, null],
+    "cache: unknown settled stays unknown",
+  );
 }
 
 console.log(`book tests: ${passed} passed, ${failed} failed`);

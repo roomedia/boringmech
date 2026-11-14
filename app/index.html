@@ -48,10 +48,10 @@
 
   <header>
     <h1>boringmech</h1>
-    <span class="chip warn" id="statusChip">미연동</span>
+    <span class="chip" id="statusChip">확인 중</span>
   </header>
 
-  <div id="viewLink">
+  <div id="viewLink" class="hidden">
     <div class="card">
       <h2>계정 연동</h2>
       <label class="f" for="pk">지갑 개인키</label>
@@ -61,7 +61,7 @@
       <p class="note" style="margin-top:14px">
         개인키는 이 기기의 앱 내부 저장소에만 저장되고, 주문 서명 외에는 어디에도 전송되지 않습니다.
         연동하면 Polymarket deposit wallet이 자동 탐지되고 그 잔고로 매매합니다.
-        앱을 열 때 엔진은 항상 정지 상태이며, 실행 버튼을 눌러야 매매가 시작됩니다.
+        실행 중에 앱을 닫았으면 다시 열 때 자동으로 이어서 실행됩니다.
       </p>
     </div>
   </div>
@@ -178,6 +178,14 @@
     applyUpdate();
   }
 
+  function showLink(){
+    $('viewMain').classList.add('hidden');
+    $('viewLink').classList.remove('hidden');
+    var chip = $('statusChip');
+    chip.textContent = '미연동';
+    chip.className = 'chip warn';
+  }
+
   BM.onLog = function(line){
     logs.push(line);
     if (logs.length > 50) logs.shift();
@@ -249,16 +257,39 @@
     BM.unlink();
     logs = [];
     $('logBox').textContent = '—';
-    $('viewMain').classList.add('hidden');
-    $('viewLink').classList.remove('hidden');
+    showLink();
     render(null);
   });
+
+  // 부팅 — 동기 판정부터 한다. 저장된 키가 있으면 첫 화면은 본 화면이고
+  // (숫자는 마지막 스냅샷 캐시로 즉시 표시), 연동 화면은 키가 없을 때만 뜬다.
+  var boot = { view: 'link', snap: null };
+  try { boot = BM.boot(); } catch (e) { boot = { view: 'link', snap: null }; }
+  if (boot.view !== 'link') {
+    showMain(boot.snap);
+    if (boot.view === 'running') {
+      // 자동 재개 확정 전까지의 잠정 표시 — restore()가 최종 판정한다
+      $('btnRun').classList.add('hidden');
+      $('btnStop').classList.remove('hidden');
+      var bootChip = $('statusChip');
+      bootChip.textContent = '실행 중';
+      bootChip.className = 'chip run';
+    }
+  } else {
+    showLink();
+  }
 
   (async function(){
     try {
       var snap = await BM.restore();
-      if (snap) showMain(snap);
+      if (snap) {
+        showMain(snap);
+      } else if (boot.view !== 'link') {
+        showLink();
+        $('linkErr').textContent = '저장된 연동을 복원하지 못했습니다 — 다시 연동하세요.';
+      }
     } catch (e) {
+      if (boot.view !== 'link') showLink();
       $('linkErr').textContent = '저장된 연동 복원 실패: ' + String(e.message ?? e);
     }
   })();

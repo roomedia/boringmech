@@ -52,6 +52,7 @@ const LS = {
   funder: "bm_funder",
   bought: "bm_bought",
   runIntent: "bm_run_intent",
+  snap: "bm_snap",
 };
 
 const round2 = (x) => Math.round((x + Number.EPSILON) * 100) / 100;
@@ -363,6 +364,80 @@ function makeSigner(privateKey) {
   };
 }
 
+// 부팅 화면 판정 — 저장된 키가 있으면 연동 화면은 어떤 경우에도 첫 화면이
+// 아니다. 실행 의도까지 있으면 실행 중 상태로 복원 표시부터 한다
+// (실제 재개 확정은 restore()가 미러 대조로 다시 판정한다).
+export function bootView(hasKey, runIntent) {
+  if (!hasKey) return "link";
+  return runIntent ? "running" : "stopped";
+}
+
+// 스냅샷 로컬 캐시 — 재진입 시 네트워크 왕복을 기다리지 않고 마지막 숫자를
+// 즉시 표시하기 위한 직렬화 쌍. 핵심 숫자(현금·평가금)가 숫자가 아닌 캐시는
+// 버린다: 깨진 캐시를 그럴듯한 숫자로 보여주는 게 자리표시보다 나쁘다.
+export function snapshotCacheOf(snap) {
+  if (!snap) return null;
+  const num = (v) => (Number.isFinite(v) ? v : null);
+  return {
+    cash: num(snap.cash),
+    positionsValue: num(snap.positionsValue),
+    equity: num(snap.equity),
+    openCount: num(snap.openCount),
+    settledCount: num(snap.settledCount),
+    settledWins: num(snap.settledWins),
+    settledLosses: num(snap.settledLosses),
+    positionsPnlPct: num(snap.positionsPnlPct),
+    heldSlugs: [...(snap.heldSlugs || [])].filter((s) => typeof s === "string"),
+    cashFloor: num(snap.cashFloor),
+    available: num(snap.available),
+    bet: num(snap.bet),
+    slots: num(snap.slots),
+  };
+}
+
+export function snapshotFromCache(raw) {
+  if (!raw) return null;
+  let o = raw;
+  if (typeof raw === "string") {
+    try {
+      o = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!o || typeof o !== "object") return null;
+  if (!Number.isFinite(o.cash) || !Number.isFinite(o.equity)) return null;
+  const numOr = (v, fallback) => (Number.isFinite(v) ? v : fallback);
+  const numOrNull = (v) => (Number.isFinite(v) ? v : null);
+  return {
+    cash: o.cash,
+    positionsValue: numOr(o.positionsValue, 0),
+    equity: o.equity,
+    openCount: numOr(o.openCount, 0),
+    settledCount: numOrNull(o.settledCount),
+    settledWins: numOrNull(o.settledWins),
+    settledLosses: numOrNull(o.settledLosses),
+    positionsPnlPct: numOrNull(o.positionsPnlPct),
+    heldSlugs: new Set(
+      (Array.isArray(o.heldSlugs) ? o.heldSlugs : []).filter(
+        (s) => typeof s === "string",
+      ),
+    ),
+    cashFloor: numOr(o.cashFloor, RESERVE_USD),
+    available: numOr(o.available, 0),
+    bet: numOr(o.bet, betUsdFor(o.equity)),
+    slots: numOr(o.slots, 0),
+  };
+}
+
+function cachedSnapshot() {
+  try {
+    return snapshotFromCache(localStorage.getItem(LS.snap));
+  } catch {
+    return null;
+  }
+}
+
 async function snapshot() {
   const bal = await state.client.getBalanceAllowance({
     asset_type: AssetType.COLLATERAL,
@@ -398,6 +473,10 @@ async function snapshot() {
     ...s,
   };
   state.lastSnapshot = snap;
+  try {
+    const cache = snapshotCacheOf(snap);
+    if (cache) localStorage.setItem(LS.snap, JSON.stringify(cache));
+  } catch {}
   return snap;
 }
 
@@ -690,19 +769,38 @@ function setRunIntent(on) {
   } catch {}
 }
 
-function runIntentSaved() {
+// 실행 의도 판정의 단일 지점 — mirrorOff는 네이티브 미러가 명시적으로
+// 꺼졌을 때만 true다 (브리지 부재·예외는 "모름"이지 "꺼짐"이 아니다).
+function runIntentState() {
   let saved = false;
   try {
     saved = localStorage.getItem(LS.runIntent) === "1";
   } catch {}
-  if (!saved) return false;
+  if (!saved) return { saved: false, mirrorOff: false };
+  let mirrorOff = false;
   try {
-    // 알림에서 정지했으면(네이티브 미러 해제) 재개하지 않고 플래그를 정리한다
-    if (window.AndroidBridge && !window.AndroidBridge.getRunIntent()) {
-      localStorage.removeItem(LS.runIntent);
-      return false;
-    }
+    mirrorOff =
+      Boolean(window.AndroidBridge) && !window.AndroidBridge.getRunIntent();
   } catch {}
+  return { saved: true, mirrorOff };
+}
+
+// 부작용 없는 조회 — 부팅 화면의 잠정 표시 판정에 쓴다.
+function peekRunIntent() {
+  const s = runIntentState();
+  return s.saved && !s.mirrorOff;
+}
+
+function runIntentSaved() {
+  const s = runIntentState();
+  if (!s.saved) return false;
+  if (s.mirrorOff) {
+    // 알림에서 정지했으면(네이티브 미러 해제) 재개하지 않고 플래그를 정리한다
+    try {
+      localStorage.removeItem(LS.runIntent);
+    } catch {}
+    return false;
+  }
   return true;
 }
 
@@ -829,6 +927,31 @@ async function link(privateKeyRaw) {
   return snap;
 }
 
+// 동기 부팅 판정 — 네트워크를 전혀 타지 않는다. 키가 저장돼 있으면
+// 첫 화면은 본 화면이어야 하므로, 화면 결정에 필요한 것(주소·마지막
+// 스냅샷 캐시·실행 의도)만 로컬에서 읽어 돌려준다. 클라이언트 구축과
+// 새 스냅샷은 restore()가 이어서 한다.
+function boot() {
+  let pk = null;
+  try {
+    pk = localStorage.getItem(LS.key);
+  } catch {}
+  if (!pk) return { view: "link", snap: null, eoa: null, funder: null };
+  const { account } = makeSigner(pk);
+  let funder = null;
+  try {
+    funder = localStorage.getItem(LS.funder);
+  } catch {}
+  state.eoa = account.address;
+  state.funder = funder;
+  return {
+    view: bootView(true, peekRunIntent()),
+    snap: cachedSnapshot(),
+    eoa: account.address,
+    funder,
+  };
+}
+
 async function restore() {
   const pk = localStorage.getItem(LS.key);
   if (!pk) return null;
@@ -868,6 +991,7 @@ function unlink() {
 }
 
 window.BM = {
+  boot,
   link,
   restore,
   unlink,
