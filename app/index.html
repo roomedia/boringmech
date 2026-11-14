@@ -183,6 +183,7 @@
     try { hasKey = !!localStorage.getItem('bm_pk'); } catch (e) {}
     var intentOn = false;
     var heartbeatMs = 0;
+    var viewerBootMs = Date.now();
     var bootInfo = { eoa: null, funder: null };
     try {
       var b = BM.boot();
@@ -250,7 +251,10 @@
       $('btnRun').classList.toggle('hidden', intentOn);
       $('btnStop').classList.toggle('hidden', !intentOn);
       var chip = $('statusChip');
-      var stale = intentOn && heartbeatMs > 0 && (Date.now() - heartbeatMs > 200000);
+      // 하트비트가 한 번도 없어도 무응답으로 판정한다 (F2) — 종전 판정은
+      // heartbeatMs > 0일 때만 동작해, 복원에 실패한 엔진이 영영
+      // "실행 중"으로 표시됐다. 유예(60초)는 BM.isEngineUnresponsive 안.
+      var stale = intentOn && BM.isEngineUnresponsive(heartbeatMs, Date.now(), viewerBootMs);
       if (!hasKey){ chip.textContent = '미연동'; chip.className = 'chip warn'; }
       else if (intentOn && stale){ chip.textContent = '실행 중 · 응답 없음'; chip.className = 'chip warn'; }
       else if (intentOn){ chip.textContent = '실행 중'; chip.className = 'chip run'; }

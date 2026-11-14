@@ -10,6 +10,7 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -47,18 +48,13 @@ public class MainActivity extends Activity {
         }
     };
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        web = new WebView(this);
-        setContentView(web);
-
-        WebSettings settings = web.getSettings();
+    private WebView buildWebView() {
+        WebView w = new WebView(this);
+        WebSettings settings = w.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
-        web.addJavascriptInterface(new Bridge(this, viewerHost), "AndroidBridge");
-
-        web.setWebViewClient(new WebViewClient() {
+        w.addJavascriptInterface(new Bridge(this, viewerHost), "AndroidBridge");
+        w.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 if (url.startsWith("file://")) {
@@ -67,7 +63,26 @@ public class MainActivity extends Activity {
                 startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
                 return true;
             }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view,
+                                                RenderProcessGoneDetail detail) {
+                // 렌더러가 죽은 WebView는 버리고 새로 만든다 (F6)
+                view.destroy();
+                web = buildWebView();
+                setContentView(web);
+                web.loadUrl("file:///android_asset/index.html");
+                return true;
+            }
         });
+        return w;
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        web = buildWebView();
+        setContentView(web);
 
         // 업데이트 APK 다운로드 완료 알림 (서비스와 같은 기계장치로 위임 —
         // 완료 처리는 SelfUpdate 안에서 한 번만 실행된다)
@@ -108,6 +123,12 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         if (downloadReceiver != null) {
             unregisterReceiver(downloadReceiver);
+        }
+        // WebView를 파괴하지 않으면 구 뷰어의 타이머·브리지가 액티비티
+        // 컨텍스트를 물고 남는다 (부수5)
+        if (web != null) {
+            web.destroy();
+            web = null;
         }
         super.onDestroy();
     }

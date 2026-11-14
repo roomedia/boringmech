@@ -27,6 +27,28 @@ const {
   buildV2RedeemCall,
   toBytes31,
   scanCandidates,
+  HEARTBEAT_INTERVAL_MS,
+  NO_HEARTBEAT_GRACE_MS,
+  FETCH_TIMEOUT_MS,
+  POSITIONS_PAGE_CAP,
+  SUBMIT_GUARD_MAX_MS,
+  retryAsync,
+  fetchPositions,
+  isEngineUnresponsive,
+  beginSubmit,
+  endSubmit,
+  submitInFlight,
+  parseSettledBaseline,
+  settledNoticeFor,
+  loadSettledBaseline,
+  saveSettledBaseline,
+  normalizeConditionId,
+  redeemBalanceGate,
+  durableWrite,
+  durableRead,
+  stopLossRecords,
+  recordStopLoss,
+  STOPLOSS_RECENT_CAP,
 } = await import("../src/engine.js");
 const { decodeFunctionData, parseAbi } = await import("viem");
 const { readFileSync } = await import("node:fs");
@@ -600,6 +622,242 @@ eq(pickOutcomeIndex(["Yes", "No"], { outcome_index: -1 }), -1, "index: negative 
     ["sort-near-band", "sort-far-band", "sort-near-out", "sort-far-out"],
     "sort: band group first, nearest endDate inside group",
   );
+}
+
+// 29. F1 — 하트비트 주기·타임아웃·페이지 상한 상수 정합
+eq(HEARTBEAT_INTERVAL_MS, 30000, "f1: heartbeat interval");
+eq(HEARTBEAT_INTERVAL_MS < HEARTBEAT_STALE_MS, true, "f1: interval beats well before stale");
+eq(FETCH_TIMEOUT_MS, 20000, "f1: fetch timeout");
+eq(POSITIONS_PAGE_CAP, 50, "f1: positions page cap");
+eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
+
+// 30. F1 — 제출 진행 가드: 카운터가 0↔1일 때만 네이티브 플래그가 바뀐다
+{
+  const flags = [];
+  globalThis.window.AndroidBridge = { setSubmitInFlight: (on) => flags.push(on) };
+  eq(submitInFlight(), false, "f1 guard: initially idle");
+  beginSubmit();
+  beginSubmit();
+  eq(submitInFlight(), true, "f1 guard: in flight");
+  endSubmit();
+  eq(submitInFlight(), true, "f1 guard: nested submit still in flight");
+  endSubmit();
+  eq(submitInFlight(), false, "f1 guard: drained");
+  endSubmit(); // 과잉 해제는 음수로 내려가지 않는다
+  eq(submitInFlight(), false, "f1 guard: over-release clamped");
+  eq(flags, [true, false], "f1 guard: native flag toggles only at edges");
+  delete globalThis.window.AndroidBridge;
+}
+
+// 31. 부수2 — fetchPositions 커서 순환은 상한에서 끊기고, 정상 종료는 모은다
+{
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return {
+      ok: true,
+      json: async () => ({ data: [{ token_id: "x" }], pagination: { next_cursor: "loop" } }),
+    };
+  };
+  let threw = false;
+  try {
+    await fetchPositions("0xfunder");
+  } catch {
+    threw = true;
+  }
+  eq(threw, true, "cursor: cycling cursor throws");
+  eq(calls, POSITIONS_PAGE_CAP, "cursor: stops exactly at cap");
+  let n = 0;
+  globalThis.fetch = async () => {
+    n += 1;
+    return {
+      ok: true,
+      json: async () => ({
+        data: [{ token_id: `t${n}` }],
+        pagination: { next_cursor: n < 2 ? "c2" : null },
+      }),
+    };
+  };
+  const rows = await fetchPositions("0xfunder");
+  eq(rows.length, 2, "cursor: pages accumulate until cursor ends");
+  globalThis.fetch = realFetch;
+}
+
+// 32. F2 — retryAsync: 성공까지 재시도하고, 소진하면 마지막 오류를 던진다
+{
+  const nap = async () => {};
+  let tries = 0;
+  const v = await retryAsync(async () => {
+    tries += 1;
+    if (tries < 3) throw new Error("net down");
+    return "ok";
+  }, 3, 1, nap);
+  eq(v, "ok", "retry: eventual success returned");
+  eq(tries, 3, "retry: attempted until success");
+  let tries2 = 0;
+  let threw = false;
+  try {
+    await retryAsync(async () => {
+      tries2 += 1;
+      throw new Error("still down");
+    }, 2, 1, nap);
+  } catch {
+    threw = true;
+  }
+  eq(threw, true, "retry: exhaustion throws");
+  eq(tries2, 2, "retry: attempts respected");
+}
+
+// 33. F2 — 뷰어 무응답 판정: 무하트비트도 유예 뒤에는 무응답이다
+{
+  const now = 1_000_000;
+  eq(isEngineUnresponsive(now - 1000, now, 0), false, "f2 chip: fresh heartbeat responsive");
+  eq(isEngineUnresponsive(now - 200001, now, 0), true, "f2 chip: stale heartbeat unresponsive");
+  eq(isEngineUnresponsive(0, now, now - 1000), false, "f2 chip: no heartbeat within grace");
+  eq(
+    isEngineUnresponsive(0, now, now - NO_HEARTBEAT_GRACE_MS - 1),
+    true,
+    "f2 chip: no heartbeat past grace is unresponsive",
+  );
+  eq(isEngineUnresponsive(0, now, NaN), false, "f2 chip: unknown observation start is not unresponsive");
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  eq(
+    html.includes("BM.isEngineUnresponsive(heartbeatMs"),
+    true,
+    "f2 chip: viewer uses shared unresponsive verdict",
+  );
+}
+
+// 34. F5 — 정산 기준선 파싱·알림 판정·영속 라운드트립
+{
+  eq(parseSettledBaseline(null), null, "f5: null raw");
+  eq(parseSettledBaseline("{broken"), null, "f5: broken json");
+  eq(parseSettledBaseline('{"count":3,"realized":12.5}'), { count: 3, realized: 12.5 }, "f5: valid baseline");
+  eq(parseSettledBaseline('{"count":null,"realized":null}'), { count: null, realized: null }, "f5: null fields kept");
+  eq(parseSettledBaseline('{"count":"3","realized":1}'), null, "f5: string count rejected");
+  eq(parseSettledBaseline('{"count":3}'), null, "f5: missing field rejected");
+
+  const snap = { settledCount: 5, settledRealizedPnl: 20 };
+  eq(settledNoticeFor(null, snap), null, "f5: no baseline no notice");
+  eq(
+    settledNoticeFor({ count: 3, realized: 12.5 }, snap),
+    { count: 2, realizedDelta: 7.5 },
+    "f5: downtime settlements surface as notice",
+  );
+  eq(settledNoticeFor({ count: 5, realized: 20 }, snap), null, "f5: no new settlements no notice");
+  eq(
+    settledNoticeFor({ count: 3, realized: null }, snap),
+    null,
+    "f5: unknown realized in baseline blocks notice",
+  );
+  eq(
+    settledNoticeFor({ count: 3, realized: 1 }, { settledCount: null, settledRealizedPnl: null }),
+    null,
+    "f5: unknown snapshot blocks notice",
+  );
+
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
+  saveSettledBaseline({ count: 7, realized: -3.25 });
+  eq(loadSettledBaseline(), { count: 7, realized: -3.25 }, "f5: persisted baseline roundtrip");
+}
+
+// 35. F3 — 이미 상환됨 판정 게이트와 condition_id 정규화
+{
+  eq(redeemBalanceGate([0n, 0n]), "already", "f3: all zero balances already redeemed");
+  eq(redeemBalanceGate([0n, 5n]), "submit", "f3: remaining balance submits");
+  eq(redeemBalanceGate([]), "unknown", "f3: no balances is unknown");
+  eq(redeemBalanceGate(null), "unknown", "f3: null balances is unknown");
+
+  const lower = "ab".repeat(32);
+  eq(normalizeConditionId(`0x${lower.toUpperCase()}`), lower, "f3: cid normalized to lowercase");
+  eq(normalizeConditionId(lower), lower, "f3: cid without prefix");
+  eq(normalizeConditionId("0x1234"), null, "f3: short cid rejected");
+  eq(normalizeConditionId(null), null, "f3: null cid rejected");
+  eq(normalizeConditionId(`0x${"zz".repeat(32)}`), null, "f3: non-hex cid rejected");
+
+  // 대문자 condition_id도 계획에서 같은 condition으로 묶인다 (정규화 회귀)
+  const plan = planRedeems([
+    { condition_id: `0x${"CD".repeat(32)}`, token_id: "t9", status: "REDEEMABLE", current_value: 4 },
+  ]);
+  eq(plan.targets.length, 1, "f3: uppercase cid still plans");
+  eq(plan.targets[0].condition_id, `0x${"cd".repeat(32)}`, "f3: plan key normalized");
+}
+
+// 36. 부수1 — 영속 미러: localStorage가 비어도 미러에서 되살아난다
+{
+  const ls = new Map();
+  const mirror = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (ls.has(k) ? ls.get(k) : null),
+    setItem: (k, v) => ls.set(k, String(v)),
+    removeItem: (k) => ls.delete(k),
+  };
+  globalThis.window.AndroidBridge = {
+    putDurable: (k, v) => mirror.set(k, v),
+    getDurable: (k) => (mirror.has(k) ? mirror.get(k) : null),
+    removeDurable: (k) => mirror.delete(k),
+  };
+  durableWrite("bm_bought", '["m1","m2"]');
+  eq(ls.get("bm_bought"), '["m1","m2"]', "durable: written to localStorage");
+  eq(mirror.get("bm_bought"), '["m1","m2"]', "durable: written to mirror");
+  ls.clear(); // 프로세스 급사로 localStorage 반영이 사라진 상황
+  eq(durableRead("bm_bought"), '["m1","m2"]', "durable: mirror revives lost write");
+  eq(ls.get("bm_bought"), '["m1","m2"]', "durable: revival restores localStorage");
+  eq(durableRead("bm_missing"), null, "durable: missing key stays missing");
+  delete globalThis.window.AndroidBridge;
+}
+
+// 37. 부수4 — 손절 원장 아카이브: 캡을 넘어도 정산 분류가 유지된다
+{
+  const ls = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (ls.has(k) ? ls.get(k) : null),
+    setItem: (k, v) => ls.set(k, String(v)),
+    removeItem: (k) => ls.delete(k),
+  };
+  const total = STOPLOSS_RECENT_CAP + 5;
+  for (let i = 0; i < total; i += 1) {
+    recordStopLoss({ token_id: `SLT${i}`, realized_pnl: -1 });
+  }
+  const recs = stopLossRecords();
+  eq(recs.length, total, "archive: records beyond cap survive");
+  const book = summarizeBook([], [], [], [], recs);
+  eq(book.settledCount, total, "archive: settled count keeps archived records");
+  eq(book.settledStopLoss, total, "archive: all classified as stoploss");
+  eq(book.settledRealizedPnl, -total, "archive: realized sum keeps archived records");
+}
+
+// 38. 구조 가드 — F1/F3/F4/F6 수정이 소스에 실제로 박혀 있다
+{
+  const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+  eq(src.includes("setInterval(beatHeartbeat, HEARTBEAT_INTERVAL_MS)"), true, "guard: heartbeat interval runs while engine runs");
+  eq(src.includes("new AbortController()"), true, "guard: fetches carry timeouts");
+  eq(src.includes("리딤 계획 제외"), true, "guard: redeem plan errors are logged");
+  eq(src.includes("already_redeemed"), true, "guard: already-redeemed termination recorded");
+  const bridge = readFileSync(
+    new URL("../../android/src/com/roomedia/boringmech/Bridge.java", import.meta.url),
+    "utf8",
+  );
+  eq(bridge.includes("synchronized (SECRET_KEY_LOCK)"), true, "guard: keystore key creation synchronized");
+  eq(bridge.includes("putDurable"), true, "guard: durable mirror bridge exists");
+  const svc = readFileSync(
+    new URL("../../android/src/com/roomedia/boringmech/EngineService.java", import.meta.url),
+    "utf8",
+  );
+  eq(svc.includes("getSubmitInFlight"), true, "guard: watchdog consults submit guard");
+  eq(svc.includes("onRenderProcessGone"), true, "guard: engine recreates webview on renderer death");
+  const act = readFileSync(
+    new URL("../../android/src/com/roomedia/boringmech/MainActivity.java", import.meta.url),
+    "utf8",
+  );
+  eq(act.includes("web.destroy()"), true, "guard: viewer webview destroyed in onDestroy");
+  eq(act.includes("onRenderProcessGone"), true, "guard: viewer recreates webview on renderer death");
 }
 
 console.log(`book tests: ${passed} passed, ${failed} failed`);

@@ -18,6 +18,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -42,12 +43,16 @@ public class EngineService extends Service {
     private static final String KEY_HEARTBEAT_CYCLE = "heartbeat_cycle";
     private static final String KEY_WD_RELOADS = "wd_reloads";
     private static final String KEY_SNAP_CACHE = "snap_cache";
+    private static final String KEY_SUBMIT_IN_FLIGHT = "submit_in_flight";
     private static final String CHANNEL_ID = "bm_engine";
     private static final int NOTIFICATION_ID = 1;
 
     private static final long WATCHDOG_PERIOD_MS = 30_000;
     private static final long HEARTBEAT_STALE_MS = 200_000;
     private static final long LOAD_GRACE_MS = 240_000;
+    // 제출 가드의 상한 (F1, JS SUBMIT_GUARD_MAX_MS와 같은 값) — 하트비트가
+    // 이보다 오래됐으면 제출이 끝난 것으로 보고 가드를 무시하고 재로드한다.
+    private static final long SUBMIT_GUARD_MAX_MS = 600_000;
 
     private PowerManager.WakeLock wakeLock;
     private WebView engineWeb;
@@ -103,6 +108,14 @@ public class EngineService extends Service {
 
     static int getWatchdogReloads(Context ctx) {
         return prefs(ctx).getInt(KEY_WD_RELOADS, 0);
+    }
+
+    static void setSubmitInFlight(Context ctx, boolean on) {
+        prefs(ctx).edit().putBoolean(KEY_SUBMIT_IN_FLIGHT, on).apply();
+    }
+
+    static boolean getSubmitInFlight(Context ctx) {
+        return prefs(ctx).getBoolean(KEY_SUBMIT_IN_FLIGHT, false);
     }
 
     static void putSnapCache(Context ctx, String json) {
@@ -205,6 +218,20 @@ public class EngineService extends Service {
                 }
                 return true;
             }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view,
+                                                RenderProcessGoneDetail detail) {
+                // 렌더러가 죽은 WebView는 reload로 되살릴 수 없다 (F6) —
+                // 버리고 새로 만들어 페이지를 다시 띄운다.
+                if (engineWeb != null) {
+                    engineWeb.destroy();
+                    engineWeb = null;
+                }
+                engineLoadedAtMs = System.currentTimeMillis();
+                ensureEngine();
+                return true;
+            }
         });
         engineWeb = web;
         engineLoadedAtMs = System.currentTimeMillis();
@@ -219,10 +246,15 @@ public class EngineService extends Service {
                 ? now - hb > HEARTBEAT_STALE_MS
                 : now - engineLoadedAtMs > LOAD_GRACE_MS;
         if (!stale) return;
+        // 제출 진행 중이면 재로드를 미룬다 (F1) — 재로드가 제출 대기를
+        // 끊으면 체결 기록이 남지 않아 중복 체결 창이 열린다. 단,
+        // 하트비트가 가드 상한보다 오래됐으면 제출이 끝난 것으로 본다.
+        if (getSubmitInFlight(this) && now - hb <= SUBMIT_GUARD_MAX_MS) return;
         SharedPreferences p = prefs(this);
         p.edit()
                 .putInt(KEY_WD_RELOADS, p.getInt(KEY_WD_RELOADS, 0) + 1)
                 .remove(KEY_HEARTBEAT_MS)
+                .putBoolean(KEY_SUBMIT_IN_FLIGHT, false)
                 .apply();
         engineLoadedAtMs = now;
         engineWeb.reload();

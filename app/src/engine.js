@@ -39,6 +39,18 @@ const SLIPPAGE_CAP = 0.015;
 const SNAPSHOT_MATCH_TOL = 0.03;
 const VERIFY_CAP = 60;
 const CYCLE_MS = 60_000;
+// 요청 타임아웃 (F1) — 무응답 fetch가 사이클을 무한정 붙잡지 않게 한다.
+export const FETCH_TIMEOUT_MS = 20_000;
+// 워치독 하트비트 주기 (F1) — 사이클 진행 중에도 이 간격으로 비트를 남겨
+// 긴 정상 사이클이 stale로 오인돼 재로드되지 않게 한다.
+export const HEARTBEAT_INTERVAL_MS = 30_000;
+// 하트비트가 한 번도 없을 때 뷰어가 "응답 없음"으로 판정하기까지의 유예 (F2)
+export const NO_HEARTBEAT_GRACE_MS = 60_000;
+// 포지션 페이지네이션 상한 (부수2) — 커서가 순환해도 스냅샷이 끝나지 않게 한다
+export const POSITIONS_PAGE_CAP = 50;
+// 제출 진행 중 워치독 유예의 상한 (F1) — 하트비트가 이보다 오래됐으면
+// 제출 가드가 걸려 있어도 재로드를 허용한다 (제출이 이만큼 걸릴 수는 없다)
+export const SUBMIT_GUARD_MAX_MS = 600_000;
 
 const SHORT_TERM_RE = /(bitcoin|ethereum|solana|xrp|dogecoin|cardano)-up-or-down|up-or-down-/;
 const FAILSAFE_KEYWORDS = [
@@ -57,6 +69,8 @@ const LS = {
   updateInfo: "bm_update",
   wdSeen: "bm_wd_seen",
   stopLoss: "bm_stoploss",
+  stopLossArchive: "bm_stoploss_archive",
+  settledBase: "bm_settled_base",
   relayer: "bm_relayer",
   redeemPending: "bm_redeem_pending",
   redeemHistory: "bm_redeem_history",
@@ -73,6 +87,40 @@ export const DECIDED_LOW = 0.03;
 
 const round2 = (x) => Math.round((x + Number.EPSILON) * 100) / 100;
 const round4 = (x) => Math.round((x + Number.EPSILON) * 10000) / 10000;
+
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+// 실패를 간격을 두고 다시 시도한다 (F2 — 복원 경로 전용. 매매 경로는 쓰지 않는다)
+export async function retryAsync(fn, attempts = 3, delayMs = 2000, nap = sleep) {
+  let last;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      if (i < attempts - 1) await nap(delayMs);
+    }
+  }
+  throw last;
+}
+
+// 타임아웃 있는 fetch (F1) — AbortController로 끊고 시간 초과를 일반 오류로 바꾼다
+async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: ctl.signal });
+  } catch (e) {
+    if (e?.name === "AbortError") {
+      throw new Error(
+        `요청 시간 초과 (${Math.round(timeoutMs / 1000)}초) ${String(url).split("?")[0]}`,
+      );
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export function betUsdFor(equity) {
   return round2(Math.max(BET_MIN_USD, (equity || 0) * BET_PCT));
@@ -95,11 +143,11 @@ async function rpcCall(method, params) {
   let lastError;
   for (const url of POLYGON_RPCS) {
     try {
-      const resp = await fetch(url, {
+      const resp = await fetchWithTimeout(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      });
+      }, 15_000);
       const data = await resp.json();
       if (data.error) throw new Error(data.error.message || "rpc error");
       return data.result;
@@ -143,21 +191,27 @@ async function detectFunder(eoa) {
 }
 
 async function fetchJson(url) {
-  const resp = await fetch(url, { headers: { "User-Agent": "boringmech-app/0.3" } });
+  const resp = await fetchWithTimeout(url, {
+    headers: { "User-Agent": "boringmech-app/0.3" },
+  });
   if (!resp.ok) throw new Error(`HTTP ${resp.status} ${url.split("?")[0]}`);
   return resp.json();
 }
 
-async function fetchPositions(funder, status) {
+export async function fetchPositions(funder, status) {
   const out = [];
   let cursor = null;
-  for (;;) {
+  for (let page = 0; ; page += 1) {
+    // 커서가 순환하면 스냅샷이 영영 끝나지 않는다 — 상한에서 오류로 끊는다 (부수2)
+    if (page >= POSITIONS_PAGE_CAP) {
+      throw new Error("포지션 조회 페이지 상한 초과 — 커서 순환 의심");
+    }
     const params = new URLSearchParams({ user: funder, limit: "100" });
     if (status) params.set("status", status);
     if (cursor) params.set("cursor", cursor);
-    const page = await fetchJson(`${DATA_API_V2}/positions?${params}`);
-    out.push(...(page.data || []));
-    cursor = page.pagination?.next_cursor;
+    const data = await fetchJson(`${DATA_API_V2}/positions?${params}`);
+    out.push(...(data.data || []));
+    cursor = data.pagination?.next_cursor;
     if (!cursor) return out;
   }
 }
@@ -392,6 +446,9 @@ const state = {
   lastLostRows: null,
   redeemKeyWarned: false,
   settledBaseline: null,
+  settledBaselineLoaded: false,
+  submitCount: 0,
+  hbTimer: null,
 };
 
 function log(line) {
@@ -400,9 +457,50 @@ function log(line) {
   state.onLog(`[${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}] ${line}`);
 }
 
+// ── 영속 미러 (부수1) ────────────────────────────────────────
+// localStorage의 디스크 반영은 비동기라 프로세스 급사 시 직전 쓰기가
+// 사라질 수 있다. 돈이 걸린 기록(매수·손절·리딤·정산 기준선)은 네이티브
+// SharedPreferences에도 동기(commit)로 이중 기록하고, localStorage가
+// 비어 있을 때만 미러에서 되살린다.
+export function durableWrite(lsKey, value) {
+  try {
+    localStorage.setItem(lsKey, value);
+  } catch {}
+  try {
+    window.AndroidBridge?.putDurable?.(lsKey, value);
+  } catch {}
+}
+
+export function durableRead(lsKey) {
+  let v = null;
+  try {
+    v = localStorage.getItem(lsKey);
+  } catch {}
+  if (v) return v;
+  try {
+    const m = window.AndroidBridge?.getDurable?.(lsKey);
+    if (typeof m === "string" && m) {
+      try {
+        localStorage.setItem(lsKey, m);
+      } catch {}
+      return m;
+    }
+  } catch {}
+  return v;
+}
+
+function loadDurableJsonList(key) {
+  try {
+    const a = JSON.parse(durableRead(key) || "[]");
+    return Array.isArray(a) ? a : [];
+  } catch {
+    return [];
+  }
+}
+
 function boughtSlugs() {
   try {
-    return new Set(JSON.parse(localStorage.getItem(LS.bought) || "[]"));
+    return new Set(JSON.parse(durableRead(LS.bought) || "[]"));
   } catch {
     return new Set();
   }
@@ -411,7 +509,7 @@ function boughtSlugs() {
 function markBought(slug) {
   const set = boughtSlugs();
   set.add(slug);
-  localStorage.setItem(LS.bought, JSON.stringify([...set]));
+  durableWrite(LS.bought, JSON.stringify([...set]));
 }
 
 // ── 비밀 저장 (Android Keystore 암호화) ─────────────────────
@@ -506,7 +604,7 @@ function makeSigner(privateKey) {
     wallet: createWalletClient({
       account,
       chain: polygon,
-      transport: http(POLYGON_RPCS[0]),
+      transport: http(POLYGON_RPCS[0], { timeout: 15_000 }),
     }),
   };
 }
@@ -810,6 +908,35 @@ export function isSubmitLocked(key) {
   return submitLocks.has(key);
 }
 
+// ── 제출 진행 가드 (F1) ─────────────────────────────────────
+// 제출(서명·전송·확정)이 진행 중인 동안은 워치독이 페이지를 재로드하지
+// 않게 네이티브에 알린다. 재로드가 postOrder 대기를 끊으면 체결 기록이
+// 남지 않아 중복 체결 창이 다시 열리기 때문이다. 카운터가 0↔1로 바뀔
+// 때만 브리지를 부르고, 페이지가 (재)로드되면 restore가 가드를 해제한다.
+function setNativeSubmitFlag(on) {
+  try {
+    window.AndroidBridge?.setSubmitInFlight?.(on);
+  } catch {}
+}
+
+export function beginSubmit() {
+  state.submitCount += 1;
+  if (state.submitCount === 1) setNativeSubmitFlag(true);
+}
+
+export function endSubmit() {
+  if (state.submitCount <= 0) {
+    state.submitCount = 0;
+    return;
+  }
+  state.submitCount -= 1;
+  if (state.submitCount === 0) setNativeSubmitFlag(false);
+}
+
+export function submitInFlight() {
+  return state.submitCount > 0;
+}
+
 // ── 돈 이벤트 알림 ───────────────────────────────────────────
 // 종목명·마켓명은 넣지 않는다 — 금액·가격·실현손익만.
 function signedUsd(v) {
@@ -867,9 +994,15 @@ async function fetchGammaPrices(slug) {
 
 // 손절 실행 원장 — 사후 판정용 영속 기록. 정산 집계(summarizeBook)가
 // token_id로 대조해 현재가가 아닌 매도 실현손익으로 승패를 가른다.
-function stopLossRecords() {
+// 최근 STOPLOSS_RECENT_CAP건은 전체 기록을 유지하고, 그보다 오래된 건은
+// 정산 분류에 필요한 {token_id, realized_pnl}만 아카이브로 옮긴다 (부수4 —
+// 캡으로 밀려난 건이 CLOSED 행의 현재가로 재분류돼 회계가 뒤집히지 않게).
+export const STOPLOSS_RECENT_CAP = 200;
+export const STOPLOSS_ARCHIVE_CAP = 10_000;
+
+function parseStopLossList(raw) {
   try {
-    const arr = JSON.parse(localStorage.getItem(LS.stopLoss) || "[]");
+    const arr = JSON.parse(raw || "[]");
     if (!Array.isArray(arr)) return [];
     return arr.filter(
       (r) => r && typeof r.token_id === "string" && Number.isFinite(Number(r.realized_pnl)),
@@ -879,16 +1012,26 @@ function stopLossRecords() {
   }
 }
 
-function recordStopLoss(rec) {
-  let arr = [];
-  try {
-    arr = JSON.parse(localStorage.getItem(LS.stopLoss) || "[]");
-    if (!Array.isArray(arr)) arr = [];
-  } catch {
-    arr = [];
+export function stopLossRecords() {
+  return [
+    ...parseStopLossList(durableRead(LS.stopLossArchive)),
+    ...parseStopLossList(durableRead(LS.stopLoss)),
+  ];
+}
+
+export function recordStopLoss(rec) {
+  const recent = parseStopLossList(durableRead(LS.stopLoss));
+  recent.push(rec);
+  let archive = parseStopLossList(durableRead(LS.stopLossArchive));
+  while (recent.length > STOPLOSS_RECENT_CAP) {
+    const old = recent.shift();
+    archive.push({ token_id: old.token_id, realized_pnl: Number(old.realized_pnl) });
   }
-  arr.push(rec);
-  localStorage.setItem(LS.stopLoss, JSON.stringify(arr.slice(-200)));
+  if (archive.length > STOPLOSS_ARCHIVE_CAP) {
+    archive = archive.slice(-STOPLOSS_ARCHIVE_CAP);
+  }
+  durableWrite(LS.stopLoss, JSON.stringify(recent));
+  durableWrite(LS.stopLossArchive, JSON.stringify(archive));
 }
 
 async function executeStopLossSell(row, current) {
@@ -897,7 +1040,12 @@ async function executeStopLossSell(row, current) {
     return false;
   }
   try {
-    return await executeStopLossSellLocked(row, current);
+    beginSubmit();
+    try {
+      return await executeStopLossSellLocked(row, current);
+    } finally {
+      endSubmit();
+    }
   } finally {
     releaseSubmitLock(row.slug);
   }
@@ -1007,6 +1155,7 @@ async function runStopLoss(gen) {
   let sold = 0;
   for (const row of state.lastOpenRows) {
     if (!state.running || gen !== state.gen) break;
+    beatHeartbeat();
     try {
       if (await checkStopLossPosition(row)) sold += 1;
     } catch (e) {
@@ -1017,6 +1166,47 @@ async function runStopLoss(gen) {
   return sold;
 }
 
+// ── 정산 기준선 (F5) ────────────────────────────────────────
+// 정산 확정 알림의 비교 기준선은 영속 저장한다 — 페이지 메모리에만 두면
+// 재로드·재시작 때마다 첫 사이클이 그 시점 누계를 조용히 흡수해, 엔진이
+// 죽어 있던 동안의 정산은 알림이 영영 가지 않았다.
+export function parseSettledBaseline(raw) {
+  if (!raw) return null;
+  let o = raw;
+  if (typeof raw === "string") {
+    try {
+      o = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!o || typeof o !== "object") return null;
+  const field = (v) => (v === null || Number.isFinite(v) ? v : undefined);
+  const count = field(o.count);
+  const realized = field(o.realized);
+  if (count === undefined || realized === undefined) return null;
+  return { count, realized };
+}
+
+export function settledNoticeFor(base, snap) {
+  if (!base || !snap) return null;
+  if (snap.settledCount == null || base.count == null) return null;
+  if (snap.settledCount <= base.count) return null;
+  if (snap.settledRealizedPnl == null || base.realized == null) return null;
+  return {
+    count: snap.settledCount - base.count,
+    realizedDelta: round2(snap.settledRealizedPnl - base.realized),
+  };
+}
+
+export function loadSettledBaseline() {
+  return parseSettledBaseline(durableRead(LS.settledBase));
+}
+
+export function saveSettledBaseline(base) {
+  durableWrite(LS.settledBase, JSON.stringify(base));
+}
+
 async function runCycle(gen) {
   let snap = await snapshot();
   state.onState(snap);
@@ -1024,29 +1214,25 @@ async function runCycle(gen) {
     `사이클 ${state.cycle} · 잔고 $${snap.cash} · 평가 $${snap.equity} · ` +
     `건당 $${snap.bet} · 슬롯 ${snap.slots} · 보유 ${snap.openCount}`,
   );
-  // 정산 확정 감지 — 전 사이클 최종 스냅샷(기준선) 대비 신규 정산분.
+  // 정산 확정 감지 — 기준선(영속) 대비 신규 정산분.
   // 손절 기록분은 이 스냅샷에 이미 들어 있고 기준선에도 반영되므로 여기서
   // 다시 세지 않는다 (손절 알림은 실행 시점에 따로 간다).
-  let settleNotice = null;
-  const base = state.settledBaseline;
-  if (
-    base && snap.settledCount != null && base.count != null &&
-    snap.settledCount > base.count &&
-    snap.settledRealizedPnl != null && base.realized != null
-  ) {
-    settleNotice = {
-      count: snap.settledCount - base.count,
-      realizedDelta: round2(snap.settledRealizedPnl - base.realized),
-    };
+  if (!state.settledBaselineLoaded) {
+    state.settledBaseline = loadSettledBaseline();
+    state.settledBaselineLoaded = true;
   }
+  const settleNotice = settledNoticeFor(state.settledBaseline, snap);
+  beatHeartbeat();
   // 손절은 신규 매수보다 먼저 — 팔린 건이 있으면 잔고·슬롯을 다시 읽는다
   const soldCount = await runStopLoss(gen);
+  beatHeartbeat();
   if (soldCount > 0) {
     snap = await snapshot();
     state.onState(snap);
   }
   // 리딤은 손절 다음·신규 매수 이전 — 회수액이 생기면 잔고를 다시 읽는다
   const recovered = await runRedeems(gen);
+  beatHeartbeat();
   if (recovered > 0) {
     snap = await snapshot();
     state.onState(snap);
@@ -1057,7 +1243,12 @@ async function runCycle(gen) {
       `실현 ${signedUsd(settleNotice.realizedDelta)}${recovered > 0 ? ` · 회수 $${recovered}` : ""}`,
     );
   }
-  state.settledBaseline = { count: snap.settledCount, realized: snap.settledRealizedPnl };
+  // 정산을 읽지 못한 사이클은 기준선을 건드리지 않는다 — 모르는 값으로
+  // 덮으면 다음 사이클이 그 구간 정산을 흡수해 버린다 (F5).
+  if (snap.settledCount != null) {
+    state.settledBaseline = { count: snap.settledCount, realized: snap.settledRealizedPnl };
+    saveSettledBaseline(state.settledBaseline);
+  }
   // 체결로 기록한 건은 다음 사이클 스냅샷에 포지션으로 실재해야 한다 —
   // 어긋나면 조용히 넘기지 않고 경고로 드러낸다 (실행당 1회).
   if (state.sessionFills > 0 && !state.posGapWarned) {
@@ -1085,6 +1276,7 @@ async function runCycle(gen) {
   for (const cand of candidates) {
     if (!state.running || gen !== state.gen) return;
     if (slotsLeft < 1 || verified >= VERIFY_CAP) break;
+    beatHeartbeat();
     verified += 1;
     let detail;
     try {
@@ -1112,72 +1304,78 @@ async function runCycle(gen) {
       log(`제출 직전 재확인 — 이미 매수 기록 있음 ${cand.slug}`);
       continue;
     }
-    let signed;
+    // 제출 진행 가드 (F1) — 서명부터 체결 기록까지 워치독 재로드를 막는다
+    beginSubmit();
     try {
-      signed = await state.client.createMarketOrder(
-        {
-          tokenID: detail.tokenId,
-          side: Side.BUY,
-          amount: snap.bet,
-          price: detail.limitPrice,
-          orderType: OrderType.FOK,
-        },
-        { tickSize: detail.tickSize, negRisk: detail.negRisk },
-      );
-    } catch (e) {
-      failedCount += 1;
-      log(`주문 서명 실패 ${cand.slug}: ${String(e.message ?? e).slice(0, 120)}`);
-      continue;
-    }
-    let resp;
-    try {
-      resp = await state.client.postOrder(signed, OrderType.FOK);
-    } catch (e) {
-      // 제출됐으나 결과를 모르는 상태 — 체결됐을 수 있어 중복 매수 방지를 위해
-      // 매수한 것으로 기록한다 (결과 불명 건은 로그로 드러나게 남긴다)
-      failedCount += 1;
+      let signed;
+      try {
+        signed = await state.client.createMarketOrder(
+          {
+            tokenID: detail.tokenId,
+            side: Side.BUY,
+            amount: snap.bet,
+            price: detail.limitPrice,
+            orderType: OrderType.FOK,
+          },
+          { tickSize: detail.tickSize, negRisk: detail.negRisk },
+        );
+      } catch (e) {
+        failedCount += 1;
+        log(`주문 서명 실패 ${cand.slug}: ${String(e.message ?? e).slice(0, 120)}`);
+        continue;
+      }
+      let resp;
+      try {
+        resp = await state.client.postOrder(signed, OrderType.FOK);
+      } catch (e) {
+        // 제출됐으나 결과를 모르는 상태 — 체결됐을 수 있어 중복 매수 방지를 위해
+        // 매수한 것으로 기록한다 (결과 불명 건은 로그로 드러나게 남긴다)
+        failedCount += 1;
+        markBought(cand.slug);
+        const msg = String(e.message ?? e);
+        log(`주문 결과 불명 ${cand.slug}: ${msg.slice(0, 120)} — 중복 방지 기록`);
+        if (isFailsafe(msg)) {
+          stop();
+          log("failsafe 감지 — 엔진 정지. 정지 사유를 확인한 뒤 다시 실행하세요.");
+          return;
+        }
+        continue;
+      }
+      const verdict = judgeFill(resp);
+      if (!verdict.filled && verdict.kind !== "unfilled") {
+        failedCount += 1;
+        const msg = verdict.error || "주문 거부 (success=false)";
+        // 다음 진단이 추측이 되지 않게 원본 응답을 같은 줄에 남긴다.
+        // failsafe는 메시지 외에 HTTP 코드(예: 지역 제한 403)도 검사한다.
+        log(`주문 실패 ${cand.slug}: ${String(msg).slice(0, 120)} · 응답 원문: ${JSON.stringify(resp).slice(0, 200)}`);
+        if (isFailsafe(String(msg)) || isFailsafe(verdict.status)) {
+          stop();
+          log("failsafe 감지 — 엔진 정지. 정지 사유를 확인한 뒤 다시 실행하세요.");
+          return;
+        }
+        continue;
+      }
+      if (!verdict.filled) {
+        // 미체결 (unmatched·delayed·live 등) — 매수 기록을 남기지 않고 슬롯도 쓰지 않는다
+        unfilledCount += 1;
+        log(`미체결 ${cand.slug} · 응답 status: ${resp.status ?? "(없음)"} · 응답 원문: ${JSON.stringify(resp).slice(0, 200)}`);
+        continue;
+      }
       markBought(cand.slug);
-      const msg = String(e.message ?? e);
-      log(`주문 결과 불명 ${cand.slug}: ${msg.slice(0, 120)} — 중복 방지 기록`);
-      if (isFailsafe(msg)) {
-        stop();
-        log("failsafe 감지 — 엔진 정지. 정지 사유를 확인한 뒤 다시 실행하세요.");
-        return;
-      }
-      continue;
+      state.sessionFills += 1;
+      filledCount += 1;
+      slotsLeft -= 1;
+      const fill = resp.makingAmount && resp.takingAmount
+        ? ` 체결가 ${round2(Number(resp.makingAmount) / Number(resp.takingAmount))}`
+        : "";
+      log(`매수 ${cand.slug} · $${snap.bet} @ ${detail.limitPrice}${fill} · 상태 ${resp.status ?? "matched"}`);
+      notifyMoney(
+        "매수 체결",
+        `건당 $${snap.bet} · 체결가 ${resp.makingAmount && resp.takingAmount ? round2(Number(resp.makingAmount) / Number(resp.takingAmount)) : detail.limitPrice}`,
+      );
+    } finally {
+      endSubmit();
     }
-    const verdict = judgeFill(resp);
-    if (!verdict.filled && verdict.kind !== "unfilled") {
-      failedCount += 1;
-      const msg = verdict.error || "주문 거부 (success=false)";
-      // 다음 진단이 추측이 되지 않게 원본 응답을 같은 줄에 남긴다.
-      // failsafe는 메시지 외에 HTTP 코드(예: 지역 제한 403)도 검사한다.
-      log(`주문 실패 ${cand.slug}: ${String(msg).slice(0, 120)} · 응답 원문: ${JSON.stringify(resp).slice(0, 200)}`);
-      if (isFailsafe(String(msg)) || isFailsafe(verdict.status)) {
-        stop();
-        log("failsafe 감지 — 엔진 정지. 정지 사유를 확인한 뒤 다시 실행하세요.");
-        return;
-      }
-      continue;
-    }
-    if (!verdict.filled) {
-      // 미체결 (unmatched·delayed·live 등) — 매수 기록을 남기지 않고 슬롯도 쓰지 않는다
-      unfilledCount += 1;
-      log(`미체결 ${cand.slug} · 응답 status: ${resp.status ?? "(없음)"} · 응답 원문: ${JSON.stringify(resp).slice(0, 200)}`);
-      continue;
-    }
-    markBought(cand.slug);
-    state.sessionFills += 1;
-    filledCount += 1;
-    slotsLeft -= 1;
-    const fill = resp.makingAmount && resp.takingAmount
-      ? ` 체결가 ${round2(Number(resp.makingAmount) / Number(resp.takingAmount))}`
-      : "";
-    log(`매수 ${cand.slug} · $${snap.bet} @ ${detail.limitPrice}${fill} · 상태 ${resp.status ?? "matched"}`);
-    notifyMoney(
-      "매수 체결",
-      `건당 $${snap.bet} · 체결가 ${resp.makingAmount && resp.takingAmount ? round2(Number(resp.makingAmount) / Number(resp.takingAmount)) : detail.limitPrice}`,
-    );
     } finally {
       releaseSubmitLock(cand.slug);
     }
@@ -1279,6 +1477,18 @@ export function isHeartbeatStale(lastBeatMs, nowMs) {
   return nowMs - lastBeatMs > HEARTBEAT_STALE_MS;
 }
 
+// 뷰어의 "응답 없음" 판정 (F2) — 하트비트가 있으면 stale 기준을 쓰고,
+// 한 번도 없으면(<=0) 관찰 시작(뷰어 부팅) 후 유예를 넘겼을 때만
+// 무응답으로 본다. 하트비트가 없다는 이유만으로 거짓 "실행 중"을
+// 유지하던 종전 판정의 반대쪽 거짓(막 켠 엔진의 오탐)은 유예가 막는다.
+export function isEngineUnresponsive(heartbeatMs, nowMs, observedSinceMs) {
+  if (Number.isFinite(heartbeatMs) && heartbeatMs > 0) {
+    return nowMs - heartbeatMs > HEARTBEAT_STALE_MS;
+  }
+  if (!Number.isFinite(observedSinceMs)) return false;
+  return nowMs - observedSinceMs > NO_HEARTBEAT_GRACE_MS;
+}
+
 function beatHeartbeat() {
   try {
     window.AndroidBridge?.heartbeat?.(state.cycle);
@@ -1311,6 +1521,8 @@ const COLLATERAL_ADAPTER = "0xAdA100Db00Ca00073811820692005400218FcE1f";
 const NEG_RISK_COLLATERAL_ADAPTER = "0xadA2005600Dec949baf300f4C6120000bDB6eAab";
 const PROTOCOL_V2_ROUTER = "0x12121212006e4CD160D18e3f00711DA5c3372600";
 const POSITION_MANAGER = "0x006F54F7f9A22e0000CC2AB60031000000ae9fEF";
+// v1(CTF) 포지션 토큰의 ERC1155 발행처 — 잔고 0 확인(이미 상환됨 판정)에 쓴다
+const CTF_CONTRACT = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045";
 const ZERO_BYTES32 = `0x${"0".repeat(64)}`;
 const REDEEM_TOL_ABS = 0.05;
 const REDEEM_TOL_REL = 0.02;
@@ -1360,6 +1572,13 @@ export function buildV2RedeemCall(conditionId, outcomeIndex, amount) {
   };
 }
 
+// condition_id 정규화 — 0x 없는 64자리 hex 소문자로. 형식이 아니면 null.
+export function normalizeConditionId(raw) {
+  let cid = String(raw || "").toLowerCase();
+  if (cid.startsWith("0x")) cid = cid.slice(2);
+  return /^[0-9a-f]{64}$/.test(cid) ? cid : null;
+}
+
 // 정산 행 → condition 단위 계획 (live_executor.plan_redeems 이식).
 // 승자 행(REDEEMABLE·가치>0)이 있는 condition만 회수 대상이고,
 // 패배 행만 남은 condition은 worthless로 종결한다.
@@ -1368,9 +1587,8 @@ export function planRedeems(entries) {
   const order = [];
   const errors = [];
   for (const e of entries || []) {
-    let cid = String(e?.condition_id || "").toLowerCase();
-    if (cid.startsWith("0x")) cid = cid.slice(2);
-    if (!/^[0-9a-f]{64}$/.test(cid)) {
+    const cid = normalizeConditionId(e?.condition_id);
+    if (!cid) {
       errors.push({ entry: e, reason: "condition_id 형식 오류" });
       continue;
     }
@@ -1411,31 +1629,20 @@ export function verifyRecovery(beforeCash, afterCash, expectedUsd) {
   };
 }
 
-function loadJsonList(key) {
-  try {
-    const a = JSON.parse(localStorage.getItem(key) || "[]");
-    return Array.isArray(a) ? a : [];
-  } catch {
-    return [];
-  }
-}
-
 function loadRedeemPending() {
-  return loadJsonList(LS.redeemPending);
+  return loadDurableJsonList(LS.redeemPending);
 }
 
 function saveRedeemPending(list) {
-  try {
-    localStorage.setItem(LS.redeemPending, JSON.stringify(list.slice(-300)));
-  } catch {}
+  durableWrite(LS.redeemPending, JSON.stringify(list.slice(-300)));
 }
 
 // 스냅샷의 정산 행(REDEEMABLE/REDEEMABLE_LOST)을 pending에 수집한다.
 // 이미 회수했거나 worthless로 종결한 condition은 다시 넣지 않는다.
 function ingestRedeemPending() {
   const done = new Set([
-    ...loadJsonList(LS.redeemHistory).map((h) => h.condition_id),
-    ...loadJsonList(LS.redeemClosed),
+    ...loadDurableJsonList(LS.redeemHistory).map((h) => h.condition_id),
+    ...loadDurableJsonList(LS.redeemClosed),
   ]);
   const pending = loadRedeemPending();
   const seen = new Set(pending.map((e) => `${e.condition_id}|${e.token_id}`));
@@ -1466,25 +1673,21 @@ function removeRedeemPending(conditionId) {
 }
 
 function closeWorthless(entries) {
-  const closed = loadJsonList(LS.redeemClosed);
+  const closed = loadDurableJsonList(LS.redeemClosed);
   const set = new Set(closed);
   for (const e of entries) {
     set.add(e.condition_id);
     log(`리딤 종결 (전액 손실) ${String(e.condition_id).slice(0, 10)}…`);
   }
-  try {
-    localStorage.setItem(LS.redeemClosed, JSON.stringify([...set].slice(-500)));
-  } catch {}
+  durableWrite(LS.redeemClosed, JSON.stringify([...set].slice(-500)));
   const ids = new Set(entries.map((e) => e.condition_id));
   saveRedeemPending(loadRedeemPending().filter((e) => !ids.has(e.condition_id)));
 }
 
 function recordRedeemHistory(rec) {
-  const list = loadJsonList(LS.redeemHistory);
+  const list = loadDurableJsonList(LS.redeemHistory);
   list.push(rec);
-  try {
-    localStorage.setItem(LS.redeemHistory, JSON.stringify(list.slice(-100)));
-  } catch {}
+  durableWrite(LS.redeemHistory, JSON.stringify(list.slice(-100)));
 }
 
 function relayerHeaders(creds) {
@@ -1525,18 +1728,32 @@ async function relayerPost(path, bodyObj, creds) {
   return JSON.parse(text || "{}");
 }
 
-// Gamma에서 마켓 컨텍스트(negRisk·version·positionIds)를 읽는다 (closed 포함)
+// Gamma에서 마켓 컨텍스트(negRisk·version·positionIds·clobTokenIds)를 읽는다 (closed 포함)
 async function fetchMarketContext(conditionId) {
   const page = await fetchJson(
     `${GAMMA_MARKETS_URL}?${new URLSearchParams({ condition_ids: conditionId, closed: "true" })}`,
   );
   const m = Array.isArray(page) ? page[0] : null;
   if (!m) return null;
+  let tokenIds = null;
+  try {
+    const t = JSON.parse(m.clobTokenIds || "[]");
+    if (Array.isArray(t) && t.length >= 2) tokenIds = t.map(String);
+  } catch {}
   return {
     negRisk: Boolean(m.negRisk),
     version: m.version || null,
     positionIds: Array.isArray(m.positionIds) ? m.positionIds : null,
+    tokenIds,
   };
+}
+
+// 온체인 잔고 목록으로 상환 제출 여부를 가른다 (F3) — 전부 0이면 이미
+// 상환이 끝난 건이라 제출 없이 종결할 수 있다. 잔고를 하나도 못 읽은
+// 경우(빈 목록)는 단정하지 않고 "unknown" — 호출자가 제출 쪽으로 기운다.
+export function redeemBalanceGate(balances) {
+  if (!Array.isArray(balances) || !balances.length) return "unknown";
+  return balances.every((b) => BigInt(b) === 0n) ? "already" : "submit";
 }
 
 async function erc1155Balance(token, owner, tokenId) {
@@ -1632,25 +1849,48 @@ async function submitRedeemBatch(conditionId, calls, creds) {
 async function executeRedeemTarget(target, creds) {
   const ctx = await fetchMarketContext(target.condition_id);
   if (!ctx) throw new Error("마켓 컨텍스트 조회 실패");
-  let calls;
   if (ctx.version === "v2") {
     if (!ctx.positionIds || ctx.positionIds.length < 2) throw new Error("v2 포지션 ID 없음");
-    calls = [];
+    const balances = [];
     for (let i = 0; i < 2; i += 1) {
-      const bal = await erc1155Balance(POSITION_MANAGER, state.funder, ctx.positionIds[i]);
-      if (bal > 0n) calls.push(buildV2RedeemCall(target.condition_id, i, bal));
+      balances.push(await erc1155Balance(POSITION_MANAGER, state.funder, ctx.positionIds[i]));
     }
-    if (!calls.length) throw new Error("상환할 잔고 없음");
-  } else {
-    calls = [buildCtfRedeemCall(target.condition_id, ctx.negRisk)];
+    // 잔고가 전부 0이면 이미 상환된 건 — 제출 없이 종결한다 (F3).
+    // 종전에는 "상환할 잔고 없음" 오류로 빠져 매 사이클 재시도됐다.
+    if (redeemBalanceGate(balances) === "already") return { alreadyRedeemed: true };
+    const calls = [];
+    for (let i = 0; i < 2; i += 1) {
+      if (balances[i] > 0n) calls.push(buildV2RedeemCall(target.condition_id, i, balances[i]));
+    }
+    return submitRedeemBatch(target.condition_id, calls, creds);
   }
-  return submitRedeemBatch(target.condition_id, calls, creds);
+  // v1(CTF) — 토큰 잔고를 읽을 수 있으면 같은 종결 판정을 적용한다 (F3).
+  // 식별자가 없으면 종전대로 제출해 판단을 미룬다 (지급 0 상환은 무해하다).
+  if (ctx.tokenIds) {
+    const balances = [];
+    for (const tid of ctx.tokenIds.slice(0, 2)) {
+      balances.push(await erc1155Balance(CTF_CONTRACT, state.funder, tid));
+    }
+    if (redeemBalanceGate(balances) === "already") return { alreadyRedeemed: true };
+  }
+  return submitRedeemBatch(
+    target.condition_id,
+    [buildCtfRedeemCall(target.condition_id, ctx.negRisk)],
+    creds,
+  );
 }
 
 // 사이클 단계: 손절 다음·신규 매수 이전. 돌려주는 값은 이번 사이클 회수액 합계.
 async function runRedeems(gen) {
   ingestRedeemPending();
   const plan = planRedeems(loadRedeemPending());
+  if (plan.errors.length) {
+    // 형식 오류 항목은 영원히 유효해지지 않는다 — 로그를 남기고 대기
+    // 목록에서 제거한다 (부수3: 종전에는 무로깅으로 매 사이클 재파싱됐다)
+    const bad = new Set(plan.errors.map((x) => x.entry));
+    saveRedeemPending(loadRedeemPending().filter((e) => !bad.has(e)));
+    log(`리딤 계획 제외 ${plan.errors.length}건 — condition_id 형식 오류로 대기 목록에서 제거`);
+  }
   if (plan.worthless.length) closeWorthless(plan.worthless);
   if (!plan.targets.length) return 0;
   const creds = readRelayerCreds();
@@ -1666,9 +1906,26 @@ async function runRedeems(gen) {
     if (!state.running || gen !== state.gen) break;
     const lockKey = `redeem:${target.condition_id}`;
     if (!tryAcquireSubmitLock(lockKey)) continue;
+    beginSubmit();
     try {
       const before = await clobCash();
       const res = await executeRedeemTarget(target, creds);
+      if (res?.alreadyRedeemed) {
+        // 제출은 됐으나 확인이 늦어 실제로는 확정됐던 건 — 이중 회수는
+        // 온체인 잔고 0이 막고, 여기서는 종결 기록만 남긴다 (F3)
+        recordRedeemHistory({
+          ts: new Date().toISOString(),
+          condition_id: target.condition_id,
+          expected_usd: target.expected_usd,
+          recovered_usd: 0,
+          tx_hash: null,
+          transaction_id: null,
+          verify_status: "already_redeemed",
+        });
+        removeRedeemPending(target.condition_id);
+        log(`리딤 종결 ${target.condition_id.slice(0, 10)}… · 이미 상환됨 (온체인 잔고 0 확인)`);
+        continue;
+      }
       let recovered = null;
       let verifyStatus;
       try {
@@ -1698,6 +1955,7 @@ async function runRedeems(gen) {
       // 건별 실패는 pending을 유지하고 다음 사이클에 재시도한다 (영구 래치 없음)
       log(`리딤 실패 ${target.condition_id.slice(0, 10)}…: ${String(e.message ?? e).slice(0, 140)} — 다음 사이클에 재시도`);
     } finally {
+      endSubmit();
       releaseSubmitLock(lockKey);
     }
   }
@@ -1787,6 +2045,11 @@ function start() {
   state.gen += 1;
   state.cycle = 0;
   state.posGapWarned = false;
+  // 사이클 진행 중에도 주기적으로 하트비트를 남긴다 (F1) — 긴 사이클이
+  // stale로 오인돼 건강한 페이지가 재로드되는 것을 막는 본체.
+  // JS 메인 스레드가 진짜로 멈추면 이 타이머도 멈추므로 워치독은 여전히 유효하다.
+  if (state.hbTimer) clearInterval(state.hbTimer);
+  state.hbTimer = setInterval(beatHeartbeat, HEARTBEAT_INTERVAL_MS);
   log("엔진 실행 시작");
   state.onState(state.lastSnapshot);
   loop(state.gen);
@@ -1799,6 +2062,8 @@ function stop() {
   state.running = false;
   if (state.timer) clearTimeout(state.timer);
   state.timer = null;
+  if (state.hbTimer) clearInterval(state.hbTimer);
+  state.hbTimer = null;
   log("엔진 정지");
   state.onState(state.lastSnapshot);
 }
@@ -1861,11 +2126,26 @@ function boot() {
 
 async function restore() {
   migrateSecrets();
+  // (재)로드된 페이지는 제출 중이 아니다 — 이전 페이지가 남긴 워치독
+  // 제출 가드를 해제해 워치독이 다시 일할 수 있게 한다 (F1)
+  setNativeSubmitFlag(false);
   const pk = readSecret(LS.key);
   if (!pk) return null;
   const { account, wallet } = makeSigner(pk);
-  const funder = localStorage.getItem(LS.funder) || (await detectFunder(account.address));
-  if (!funder) return null;
+  // 복원 단계는 네트워크 오류 1회에 무너지지 않게 단계마다 재시도한다 (F2).
+  // 끝내 실패하면 시작 판정에 도달하지 못한 채 조용히 죽지 않고,
+  // 사유를 로그로 남기고 null을 돌려준다 (복구는 워치독 재로드가 이어받는다).
+  let funder = null;
+  try {
+    funder = localStorage.getItem(LS.funder);
+  } catch {}
+  if (!funder) {
+    funder = await retryAsync(() => detectFunder(account.address)).catch(() => null);
+  }
+  if (!funder) {
+    log("복원 실패 — deposit wallet을 찾지 못했습니다 (네트워크 상태 확인 필요)");
+    return null;
+  }
   let creds = null;
   try {
     creds = JSON.parse(readSecret(LS.creds) || "null");
@@ -1874,14 +2154,23 @@ async function restore() {
   }
   if (!creds) {
     const l1 = new ClobClient({ host: CLOB_HOST, chain: Chain.POLYGON, signer: wallet });
-    creds = await l1.createOrDeriveApiKey();
+    creds = await retryAsync(() => l1.createOrDeriveApiKey()).catch(() => null);
+    if (!creds) {
+      log("복원 실패 — API 키를 만들지 못했습니다 (네트워크 상태 확인 필요)");
+      return null;
+    }
     storeSecret(LS.creds, JSON.stringify(creds));
   }
   state.client = buildClient(wallet, creds, funder);
   state.account = account;
   state.eoa = account.address;
   state.funder = funder;
-  const snap = await snapshot();
+  // 스냅샷이 끝내 실패해도 클라이언트가 있으면 엔진은 시작할 수 있다 —
+  // 첫 사이클이 스냅샷부터 다시 시도하므로 복원 전체를 막지 않는다 (F2).
+  const snap = await retryAsync(() => snapshot()).catch((e) => {
+    log(`복원 중 스냅샷 실패: ${String(e.message ?? e).slice(0, 120)} — 사이클에서 재시도합니다`);
+    return null;
+  });
   void checkForUpdate();
   reportWatchdogRecovery();
   const intent = runIntentState();
@@ -1904,7 +2193,17 @@ function unlink() {
   state.eoa = null;
   state.funder = null;
   state.lastSnapshot = null;
-  for (const k of Object.values(LS)) localStorage.removeItem(k);
+  state.settledBaseline = null;
+  state.settledBaselineLoaded = false;
+  // 영속 미러(부수1)까지 비운다 — localStorage만 지우면 미러에서 되살아난다
+  for (const k of Object.values(LS)) {
+    try {
+      localStorage.removeItem(k);
+    } catch {}
+    try {
+      window.AndroidBridge?.removeDurable?.(k);
+    } catch {}
+  }
 }
 
 window.BM = {
@@ -1920,6 +2219,7 @@ window.BM = {
   checkForUpdate,
   startUpdate,
   hostMode,
+  isEngineUnresponsive,
   compareVersions,
   parseSnapCache: snapshotFromCache,
   readSnapCache: cachedSnapshot,

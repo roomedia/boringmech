@@ -257,26 +257,65 @@ public class Bridge {
         });
     }
 
+    // 영속 미러 (부수1) — localStorage의 비동기 디스크 반영으로 사라질 수
+    // 있는 돈 관련 기록(매수·손절·리딤·정산 기준선)을 SharedPreferences에
+    // 동기(commit)로 이중 기록한다. 키는 bm_ 접두사인 것만 받는다.
+    private static final String DURABLE_PREFS = "bm_durable";
+
+    @JavascriptInterface
+    public void putDurable(final String key, final String value) {
+        if (key == null || value == null || !key.startsWith("bm_")) return;
+        ctx.getSharedPreferences(DURABLE_PREFS, Context.MODE_PRIVATE)
+                .edit().putString(key, value).commit();
+    }
+
+    @JavascriptInterface
+    public String getDurable(final String key) {
+        if (key == null || !key.startsWith("bm_")) return null;
+        return ctx.getSharedPreferences(DURABLE_PREFS, Context.MODE_PRIVATE)
+                .getString(key, null);
+    }
+
+    @JavascriptInterface
+    public void removeDurable(final String key) {
+        if (key == null || !key.startsWith("bm_")) return;
+        ctx.getSharedPreferences(DURABLE_PREFS, Context.MODE_PRIVATE)
+                .edit().remove(key).commit();
+    }
+
+    // 제출 진행 가드 (F1) — 제출이 도는 동안 워치독이 엔진 페이지를
+    // 재로드하지 않게 서비스와 공유하는 플래그.
+    @JavascriptInterface
+    public void setSubmitInFlight(final boolean on) {
+        EngineService.setSubmitInFlight(ctx, on);
+    }
+
     // 비밀 암호화 — Android Keystore의 AES-GCM 키로 암호화해 base64(IV‖암호문)로
     // 돌려준다. 저장소(localStorage)에는 암호문만 남고, 키 자체는 Keystore 밖으로
     // 나오지 않는다. 실패하면 null — 호출자는 평문 저장으로 떨어지지 않는다.
     private static final String SECRET_ALIAS = "bm_secret_key";
+    // 키 확인-생성의 동기화 (F4) — 두 WebView의 브리지 스레드가 동시에
+    // 첫 마이그레이션을 돌려도 키가 두 번 생성·교체되지 않게 한다.
+    // 프로세스 단위 static 락이라 서비스·액티비티의 Bridge 인스턴스가 공유한다.
+    private static final Object SECRET_KEY_LOCK = new Object();
 
     private SecretKey secretKey() throws Exception {
-        KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
-        ks.load(null);
-        if (ks.containsAlias(SECRET_ALIAS)) {
-            return ((KeyStore.SecretKeyEntry) ks.getEntry(SECRET_ALIAS, null)).getSecretKey();
+        synchronized (SECRET_KEY_LOCK) {
+            KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
+            ks.load(null);
+            if (ks.containsAlias(SECRET_ALIAS)) {
+                return ((KeyStore.SecretKeyEntry) ks.getEntry(SECRET_ALIAS, null)).getSecretKey();
+            }
+            KeyGenerator kg = KeyGenerator.getInstance(
+                    KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+            kg.init(new KeyGenParameterSpec.Builder(
+                    SECRET_ALIAS,
+                    KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .build());
+            return kg.generateKey();
         }
-        KeyGenerator kg = KeyGenerator.getInstance(
-                KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
-        kg.init(new KeyGenParameterSpec.Builder(
-                SECRET_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .build());
-        return kg.generateKey();
     }
 
     @JavascriptInterface
