@@ -1,13 +1,16 @@
 {
-  "name": "boringmech-app",
-  "private": true,
-  "version": "0.3.5",
-  "description": "engine.js 번들 재생성: npm install 후 npx esbuild src/engine.js --bundle --platform=browser --format=iife --target=es2020 --minify --outfile=engine.js",
   "dependencies": {
     "@polymarket/clob-client-v2": "1.2.1",
     "viem": "2.57.19"
   },
+  "description": "engine.js 번들 재생성: node_modules가 있는 사본에서 npm install 후 npm run bundle (bundle.mjs가 버전을 esbuild define으로 주입)",
   "devDependencies": {
     "esbuild": "0.28.2"
-  }
+  },
+  "name": "boringmech-app",
+  "private": true,
+  "scripts": {
+    "bundle": "node bundle.mjs"
+  },
+  "version": "0.3.6"
 }

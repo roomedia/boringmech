@@ -67,6 +67,13 @@
   </div>
 
   <div id="viewMain" class="hidden">
+    <div class="card hidden" id="updateCard">
+      <div class="row" style="border-bottom:none;padding:0">
+        <span class="k">새 버전 <b id="updateTag"></b></span>
+        <button class="btn accent" id="btnUpdate" style="width:auto;padding:10px 20px;font-size:14.5px">업데이트</button>
+      </div>
+    </div>
+
     <div class="card">
       <h2>잔고 (pUSD)</h2>
       <div class="bignum" id="cashBig">$—</div>
@@ -141,12 +148,20 @@
     else { chip.textContent = '연동됨 · 정지'; chip.className = 'chip'; }
   }
 
+  var pendingUpdate = null;
+  function applyUpdate(){
+    if (!pendingUpdate) return;
+    $('updateTag').textContent = pendingUpdate.tag;
+    $('updateCard').classList.remove('hidden');
+  }
+
   function showMain(snap){
     $('viewLink').classList.add('hidden');
     $('viewMain').classList.remove('hidden');
     $('eoaAddr').textContent = short(BM.eoa);
     $('funderAddr').textContent = short(BM.funder);
     render(snap);
+    applyUpdate();
   }
 
   BM.onLog = function(line){
@@ -155,6 +170,9 @@
     $('logBox').textContent = logs.slice(-5).join('\n');
   };
   BM.onState = function(snap){ render(snap); };
+  BM.onUpdate = function(info){ pendingUpdate = info; applyUpdate(); };
+
+  $('btnUpdate').addEventListener('click', function(){ BM.startUpdate(); });
 
   $('btnLink').addEventListener('click', async function(){
     var btn = $('btnLink');

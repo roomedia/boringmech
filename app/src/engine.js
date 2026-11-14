@@ -11,6 +11,10 @@ import { privateKeyToAccount } from "viem/accounts";
 import { polygon } from "viem/chains";
 import { deriveBeaconDepositWallet, deriveUupsDepositWallet } from "./depositWallet.js";
 
+// 빌드 시 esbuild define으로 주입되는 앱 버전 (app/bundle.mjs가 package.json에서 읽어 박는다).
+// 미주입 환경에서는 null이 되어 업데이트 확인 전체가 조용히 비활성화된다.
+const APP_VERSION = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : null;
+
 const CLOB_HOST = "https://clob.polymarket.com";
 const GAMMA_MARKETS_URL = "https://gamma-api.polymarket.com/markets";
 const DATA_API_V2 = "https://data-api.polymarket.com/v2";
@@ -213,8 +217,11 @@ const state = {
   gen: 0,
   sessionFills: 0,
   posGapWarned: false,
+  updateInfo: null,
+  updateNotifiedTag: "",
   onLog: () => {},
   onState: () => {},
+  onUpdate: () => {},
   lastSnapshot: null,
 };
 
@@ -538,6 +545,7 @@ async function loop(gen) {
   } catch (e) {
     log(`사이클 오류: ${String(e.message ?? e).slice(0, 160)}`);
   }
+  if (state.cycle % UPDATE_CHECK_EVERY_CYCLES === 0) void checkForUpdate();
   if (state.running && gen === state.gen) {
     state.timer = setTimeout(() => loop(gen), CYCLE_MS);
   }
@@ -569,6 +577,82 @@ function runIntentSaved() {
     }
   } catch {}
   return true;
+}
+
+// ── 셀프 업데이트 ─────────────────────────────────────────────
+// 감지는 GitHub 최신 릴리즈 조회뿐이고, 설치는 네이티브 브리지가
+// DownloadManager로 받아 패키지 인스톨러를 띄우는 지점이 마지막이다.
+// 자동 설치는 안드로이드 정책상 불가하므로 그 이상 우회하지 않는다.
+// 감지 실패(네트워크·레이트리밋 등)는 전부 조용히 삼킨다 — 업데이트
+// 확인이 엔진 동작에 영향을 주면 안 된다.
+const RELEASES_LATEST_URL =
+  "https://api.github.com/repos/roomedia/boringmech/releases/latest";
+const RELEASES_PAGE_URL = "https://github.com/roomedia/boringmech/releases/latest";
+const UPDATE_CHECK_EVERY_CYCLES = 30;
+
+export function parseVersion(v) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(String(v ?? "").trim());
+  if (!m) return null;
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+// a가 b보다 크면 1, 같으면 0, 작으면 -1. 어느 한쪽이라도 형식이 깨지면 null.
+export function compareVersions(a, b) {
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  if (!pa || !pb) return null;
+  for (let i = 0; i < 3; i += 1) {
+    if (pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
+  }
+  return 0;
+}
+
+// GitHub releases/latest 응답에서 설치에 필요한 것만 뽑는다.
+// digest는 "sha256:<hex>" 형식으로 오며, 없으면 빈 문자열 (대조 생략).
+export function parseLatestRelease(json) {
+  if (!json || typeof json !== "object") return null;
+  const tag = String(json.tag_name || "");
+  if (!parseVersion(tag)) return null;
+  const assets = Array.isArray(json.assets) ? json.assets : [];
+  const apk = assets.find((a) => /^boringmech-v.+\.apk$/.test(a?.name || ""));
+  if (!apk?.browser_download_url) return null;
+  return {
+    tag,
+    assetName: apk.name,
+    url: apk.browser_download_url,
+    digest: typeof apk.digest === "string" ? apk.digest : "",
+  };
+}
+
+async function checkForUpdate() {
+  try {
+    if (!APP_VERSION) return;
+    const rel = parseLatestRelease(await fetchJson(RELEASES_LATEST_URL));
+    if (!rel) return;
+    if (compareVersions(rel.tag, APP_VERSION) !== 1) return;
+    state.updateInfo = rel;
+    state.onUpdate(rel);
+    if (state.updateNotifiedTag !== rel.tag) {
+      state.updateNotifiedTag = rel.tag;
+      log(`새 버전 ${rel.tag} 사용 가능 — 업데이트 버튼으로 설치하세요`);
+    }
+  } catch {
+    // 조용히 넘어간다
+  }
+}
+
+function startUpdate() {
+  const info = state.updateInfo;
+  if (!info) return;
+  try {
+    if (window.AndroidBridge?.downloadAndInstall) {
+      window.AndroidBridge.downloadAndInstall(info.url, info.assetName, info.digest);
+      log(`업데이트 다운로드 시작 · ${info.tag}`);
+      return;
+    }
+  } catch {}
+  // 네이티브 브리지가 없는 환경(브라우저 미리보기)에서는 릴리즈 페이지를 연다
+  window.open(RELEASES_PAGE_URL, "_blank");
 }
 
 function start() {
@@ -614,6 +698,7 @@ async function link(privateKeyRaw) {
   localStorage.setItem(LS.creds, JSON.stringify(creds));
   localStorage.setItem(LS.funder, funder);
   log(`연동 완료 · funder ${funder.slice(0, 10)}…`);
+  void checkForUpdate();
   return snap;
 }
 
@@ -638,6 +723,7 @@ async function restore() {
   state.eoa = account.address;
   state.funder = funder;
   const snap = await snapshot();
+  void checkForUpdate();
   if (runIntentSaved()) {
     log("이전 실행 의도 복원 — 엔진 자동 재개");
     start();
@@ -663,6 +749,11 @@ window.BM = {
   stop,
   sizing,
   betUsdFor,
+  checkForUpdate,
+  startUpdate,
+  get updateInfo() {
+    return state.updateInfo;
+  },
   get running() {
     return state.running;
   },
@@ -680,5 +771,8 @@ window.BM = {
   },
   set onState(fn) {
     state.onState = fn;
+  },
+  set onUpdate(fn) {
+    state.onUpdate = fn;
   },
 };
