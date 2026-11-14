@@ -59,9 +59,9 @@
       <button class="btn accent" id="btnLink">연동하기</button>
       <div class="err" id="linkErr"></div>
       <p class="note" style="margin-top:14px">
-        개인키는 이 기기의 앱 내부 저장소에만 저장되고, 주문 서명 외에는 어디에도 전송되지 않습니다.
+        개인키는 이 기기에서 암호화되어 저장되고(Keystore), 주문 서명 외에는 어디에도 전송되지 않습니다.
         연동하면 Polymarket deposit wallet이 자동 탐지되고 그 잔고로 매매합니다.
-        실행 중에 앱을 닫았으면 다시 열 때 자동으로 이어서 실행됩니다.
+        엔진은 백그라운드 서비스에서 돕니다 — 앱을 닫아도 실행이 이어집니다.
       </p>
     </div>
   </div>
@@ -106,6 +106,23 @@
     </div>
 
     <div class="card">
+      <h2>자동 상환 (리딤)</h2>
+      <div class="row"><span class="k">Relayer API 키</span><span class="v" id="relayerState">—</span></div>
+      <div id="relayerForm">
+        <input type="text" id="relayerKey" placeholder="Relayer API 키" autocomplete="off" spellcheck="false">
+        <input type="text" id="relayerAddr" placeholder="키 주소 (0x…)" autocomplete="off" spellcheck="false">
+        <div class="stack" style="margin-top:10px">
+          <button class="btn ghost" id="btnRelayerSave">키 저장</button>
+        </div>
+        <div class="err" id="relayerErr"></div>
+        <p class="note">정산된 포지션을 자동으로 현금으로 바꾸는 데 필요합니다. 키가 없으면 상환만 보류되고 매매는 계속됩니다.</p>
+      </div>
+      <div class="stack hidden" id="relayerSaved">
+        <button class="btn ghost" id="btnRelayerClear">키 삭제</button>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>최근 로그</h2>
       <div class="log" id="logBox">—</div>
       <div class="stack" style="margin-top:10px">
@@ -115,188 +132,303 @@
   </div>
 
   <footer>
-    밴드 0.60–0.90 · 건당 평가금 1% · 현금 30% 유지 · 최대 70건 · 손절 없음, 만기 보유<br>
+    밴드 0.60–0.90 · 건당 평가금 1% · 현금 30% 유지 · 최대 70건 · 손절 진입가 −0.25, 그 외 만기 보유<br>
     <a href="https://github.com/roomedia/boringmech">github.com/roomedia/boringmech</a> · MIT
   </footer>
 </div>
 
 <script src="engine.js"></script>
 <script>
-  var $ = function(id){ return document.getElementById(id); };
-  var logs = [];
-  function fmt(n){ return '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
-  function short(a){ return a ? a.slice(0, 10) + '…' + a.slice(-6) : '—'; }
+  // 호스트 모드 — 서비스 WebView면 엔진 호스트, 액티비티 WebView면 뷰어.
+  // 판정은 네이티브 브리지의 동기 반환이 정본이고, 모르면 뷰어(안전한 쪽).
+  var HOST = 'viewer';
+  try { HOST = BM.hostMode(); } catch (e) { HOST = 'viewer'; }
 
-  function fmtPct(p){ return (p > 0 ? '+' : '') + p.toFixed(1) + '%'; }
-
-  function render(snap){
-    if (snap){
-      $('equityBig').textContent = fmt(snap.equity);
-      var pv = fmt(snap.positionsValue);
-      if (snap.positionsPnlPct != null && isFinite(snap.positionsPnlPct)) {
-        var color = snap.positionsPnlPct < 0 ? 'var(--danger)' : 'var(--accent)';
-        $('posValue').innerHTML = pv + ' · <span style="color:' + color + '">' + fmtPct(snap.positionsPnlPct) + '</span>';
-      } else {
-        $('posValue').textContent = pv;
-      }
-      $('cash').textContent = fmt(snap.cash);
-      $('openCount').textContent = snap.openCount + '건';
-      if (snap.settledCount == null) {
-        $('settledCount').textContent = '—';
-      } else if (snap.settledWins != null && snap.settledLosses != null) {
-        var settledText = snap.settledCount + '건 · ' + snap.settledWins + '승 ' + snap.settledLosses + '패';
-        if (snap.settledRealizedPnl != null && isFinite(snap.settledRealizedPnl)) {
-          settledText += ' · 실현 ' + (snap.settledRealizedPnl < 0 ? '-' : '+') + fmt(Math.abs(snap.settledRealizedPnl));
-        }
-        $('settledCount').textContent = settledText;
-      } else {
-        $('settledCount').textContent = snap.settledCount + '건';
-      }
-      $('bet').textContent = fmt(snap.bet);
-      $('floor').textContent = fmt(snap.cashFloor);
-      $('available').textContent = fmt(snap.available);
-      $('slots').textContent = snap.slots + '건';
-    }
-    var running = BM.running;
-    $('btnRun').classList.toggle('hidden', running);
-    $('btnStop').classList.toggle('hidden', !running);
-    var chip = $('statusChip');
-    if (!BM.linked){ chip.textContent = '미연동'; chip.className = 'chip warn'; }
-    else if (running){ chip.textContent = '실행 중'; chip.className = 'chip run'; }
-    else { chip.textContent = '연동됨 · 정지'; chip.className = 'chip'; }
-  }
-
-  var pendingUpdate = null;
-  function applyUpdate(){
-    if (!pendingUpdate) return;
-    $('updateTag').textContent = pendingUpdate.tag;
-    $('updateCard').classList.remove('hidden');
-  }
-
-  function showMain(snap){
-    $('viewLink').classList.add('hidden');
-    $('viewMain').classList.remove('hidden');
-    $('eoaAddr').textContent = short(BM.eoa);
-    $('funderAddr').textContent = short(BM.funder);
-    render(snap);
-    applyUpdate();
-  }
-
-  function showLink(){
-    $('viewMain').classList.add('hidden');
-    $('viewLink').classList.remove('hidden');
-    var chip = $('statusChip');
-    chip.textContent = '미연동';
-    chip.className = 'chip warn';
-  }
-
-  BM.onLog = function(line){
-    logs.push(line);
-    if (logs.length > 50) logs.shift();
-    $('logBox').textContent = logs.slice(-5).join('\n');
-  };
-  BM.onState = function(snap){ render(snap); };
-  BM.onUpdate = function(info){ pendingUpdate = info; applyUpdate(); };
-
-  $('btnUpdate').addEventListener('click', function(){ BM.startUpdate(); });
-
-  $('btnLink').addEventListener('click', async function(){
-    var btn = $('btnLink');
-    $('linkErr').textContent = '';
-    btn.disabled = true;
-    btn.textContent = '연동 중…';
+  if (HOST === 'engine') {
+    // ── 엔진 호스트 부팅 (서비스 WebView) ──
+    // DOM은 만지지 않는다. 로그와 업데이트 정보는 뷰어가 읽을 수 있게
+    // localStorage에 남기고, 복원(필요 시 자동 재개)은 엔진이 알아서 한다.
+    var engineLogs = [];
     try {
-      var snap = await BM.link($('pk').value);
-      $('pk').value = '';
-      showMain(snap);
-    } catch (e) {
-      $('linkErr').textContent = String(e.message ?? e);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '연동하기';
-    }
-  });
-
-  $('btnRun').addEventListener('click', function(){ BM.start(); render(null); });
-  $('btnStop').addEventListener('click', function(){ BM.stop(); render(null); });
-  $('btnRefresh').addEventListener('click', async function(){
-    try { render(await BM.snapshot()); } catch (e) { BM.onLog('새로고침 실패: ' + String(e.message ?? e)); }
-  });
-  $('btnCopyLog').addEventListener('click', async function(){
-    var btn = $('btnCopyLog');
-    var text = logs.join('\n');
-    var result = '';
-    if (!text) {
-      result = '복사할 로그 없음';
-    } else {
-      var ok = false;
-      try { await navigator.clipboard.writeText(text); ok = true; } catch (e) {}
-      if (!ok) {
-        var ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        try { ok = document.execCommand('copy'); } catch (e) {}
-        document.body.removeChild(ta);
-      }
-      if (ok) {
-        result = '복사됨';
-      } else {
-        // 복사 API가 전부 막힌 환경 — 로그를 선택 상태로 두고 직접 복사하게 한다
-        var range = document.createRange();
-        range.selectNodeContents($('logBox'));
-        var sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
-        result = '선택됨 — 길게 눌러 복사하세요';
-      }
-    }
-    btn.textContent = result;
-    setTimeout(function(){ btn.textContent = '로그 복사'; }, 2500);
-  });
-  $('btnUnlink').addEventListener('click', function(){
-    BM.unlink();
-    logs = [];
-    $('logBox').textContent = '—';
-    showLink();
-    render(null);
-  });
-
-  // 부팅 — 동기 판정부터 한다. 저장된 키가 있으면 첫 화면은 본 화면이고
-  // (숫자는 마지막 스냅샷 캐시로 즉시 표시), 연동 화면은 키가 없을 때만 뜬다.
-  var boot = { view: 'link', snap: null };
-  try { boot = BM.boot(); } catch (e) { boot = { view: 'link', snap: null }; }
-  if (boot.view !== 'link') {
-    showMain(boot.snap);
-    if (boot.view === 'running') {
-      // 자동 재개 확정 전까지의 잠정 표시 — restore()가 최종 판정한다
-      $('btnRun').classList.add('hidden');
-      $('btnStop').classList.remove('hidden');
-      var bootChip = $('statusChip');
-      bootChip.textContent = '실행 중';
-      bootChip.className = 'chip run';
-    }
+      engineLogs = JSON.parse(localStorage.getItem('bm_log') || '[]');
+      if (!Array.isArray(engineLogs)) engineLogs = [];
+    } catch (e) { engineLogs = []; }
+    var pushEngineLog = function(line){
+      engineLogs.push(line);
+      if (engineLogs.length > 200) engineLogs.shift();
+      try { localStorage.setItem('bm_log', JSON.stringify(engineLogs)); } catch (e) {}
+    };
+    BM.onLog = pushEngineLog;
+    // 재시작 경계가 보이게 부팅 지점에 구분선 한 줄을 남긴다 (이전 로그는 복원됨)
+    var bootTime = new Date().toLocaleTimeString('ko-KR', { hour12: false });
+    pushEngineLog('[' + bootTime + '] ── 앱 시작 — 이전 로그 복원 ──');
+    BM.onUpdate = function(info){
+      try { localStorage.setItem('bm_update', JSON.stringify(info)); } catch (e) {}
+    };
+    BM.onState = function(){};
+    BM.restore().catch(function(e){
+      pushEngineLog('연동 복원 실패: ' + String(e && e.message || e));
+    });
   } else {
-    showLink();
-  }
+    // ── 뷰어 부팅 (액티비티 WebView) ──
+    // 엔진 루프는 서비스가 소유한다. 뷰어는 엔진이 남긴 상태(스냅샷 캐시·
+    // 로그·업데이트 정보)를 읽어 표시하고, 실행/정지는 네이티브 미러를
+    // 통해서만 바꾼다 — 이 WebView에서는 루프를 시작하지 않는다.
+    var $ = function(id){ return document.getElementById(id); };
+    function fmt(n){ return '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+    function short(a){ return a ? a.slice(0, 10) + '…' + a.slice(-6) : '—'; }
+    function fmtPct(p){ return (p > 0 ? '+' : '') + p.toFixed(1) + '%'; }
 
-  (async function(){
+    var hasKey = false;
+    try { hasKey = !!localStorage.getItem('bm_pk'); } catch (e) {}
+    var intentOn = false;
+    var heartbeatMs = 0;
+    var bootInfo = { eoa: null, funder: null };
     try {
-      var snap = await BM.restore();
-      if (snap) {
-        showMain(snap);
-      } else if (boot.view !== 'link') {
-        showLink();
-        $('linkErr').textContent = '저장된 연동을 복원하지 못했습니다 — 다시 연동하세요.';
-      }
-    } catch (e) {
-      if (boot.view !== 'link') showLink();
-      $('linkErr').textContent = '저장된 연동 복원 실패: ' + String(e.message ?? e);
+      var b = BM.boot();
+      bootInfo = { eoa: b.eoa, funder: b.funder };
+    } catch (e) {}
+
+    function bridgeIntent(){
+      try { return !!(window.AndroidBridge && AndroidBridge.getRunIntent()); } catch (e) { return false; }
     }
-  })();
+    function bridgeHeartbeat(){
+      try { return Number(AndroidBridge.getHeartbeatMs()) || 0; } catch (e) { return 0; }
+    }
+    function readSnap(){
+      try {
+        var viaBridge = AndroidBridge.getSnapCache();
+        var snap = BM.parseSnapCache(viaBridge);
+        if (snap) return snap;
+      } catch (e) {}
+      try { return BM.readSnapCache(); } catch (e) { return null; }
+    }
+    function readLogs(){
+      try {
+        var arr = JSON.parse(localStorage.getItem('bm_log') || '[]');
+        return Array.isArray(arr) ? arr : [];
+      } catch (e) { return []; }
+    }
+    function readUpdateInfo(){
+      try {
+        var info = JSON.parse(localStorage.getItem('bm_update') || 'null');
+        if (!info || !info.tag || !info.url) return null;
+        if (BM.version && BM.compareVersions(info.tag, BM.version) !== 1) return null;
+        return info;
+      } catch (e) { return null; }
+    }
+
+    function render(snap){
+      if (snap){
+        $('equityBig').textContent = fmt(snap.equity);
+        var pv = fmt(snap.positionsValue);
+        if (snap.positionsPnlPct != null && isFinite(snap.positionsPnlPct)) {
+          var color = snap.positionsPnlPct < 0 ? 'var(--danger)' : 'var(--accent)';
+          $('posValue').innerHTML = pv + ' · <span style="color:' + color + '">' + fmtPct(snap.positionsPnlPct) + '</span>';
+        } else {
+          $('posValue').textContent = pv;
+        }
+        $('cash').textContent = fmt(snap.cash);
+        $('openCount').textContent = snap.openCount + '건';
+        if (snap.settledCount == null) {
+          $('settledCount').textContent = '—';
+        } else if (snap.settledWins != null && snap.settledLosses != null) {
+          var settledText = snap.settledCount + '건 · ' + snap.settledWins + '승 ' + snap.settledLosses + '패';
+          if (snap.settledRealizedPnl != null && isFinite(snap.settledRealizedPnl)) {
+            settledText += ' · 실현 ' + (snap.settledRealizedPnl < 0 ? '-' : '+') + fmt(Math.abs(snap.settledRealizedPnl));
+          }
+          if (snap.settledStopLoss) settledText += ' · 손절 ' + snap.settledStopLoss + '건';
+          $('settledCount').textContent = settledText;
+        } else {
+          $('settledCount').textContent = snap.settledCount + '건';
+        }
+        $('bet').textContent = fmt(snap.bet);
+        $('floor').textContent = fmt(snap.cashFloor);
+        $('available').textContent = fmt(snap.available);
+        $('slots').textContent = snap.slots + '건';
+      }
+      $('btnRun').classList.toggle('hidden', intentOn);
+      $('btnStop').classList.toggle('hidden', !intentOn);
+      var chip = $('statusChip');
+      var stale = intentOn && heartbeatMs > 0 && (Date.now() - heartbeatMs > 200000);
+      if (!hasKey){ chip.textContent = '미연동'; chip.className = 'chip warn'; }
+      else if (intentOn && stale){ chip.textContent = '실행 중 · 응답 없음'; chip.className = 'chip warn'; }
+      else if (intentOn){ chip.textContent = '실행 중'; chip.className = 'chip run'; }
+      else { chip.textContent = '연동됨 · 정지'; chip.className = 'chip'; }
+    }
+
+    function renderLogs(){
+      var logs = readLogs();
+      $('logBox').textContent = logs.length ? logs.slice(-5).join('\n') : '—';
+    }
+
+    function renderUpdate(){
+      var info = readUpdateInfo();
+      if (info) {
+        $('updateTag').textContent = info.tag;
+        $('updateCard').classList.remove('hidden');
+      } else {
+        $('updateCard').classList.add('hidden');
+      }
+    }
+
+    function renderRelayer(){
+      var has = false;
+      try { has = BM.hasRelayerKey(); } catch (e) {}
+      $('relayerState').textContent = has ? '저장됨' : '없음 — 상환 보류 중';
+      $('relayerForm').classList.toggle('hidden', has);
+      $('relayerSaved').classList.toggle('hidden', !has);
+    }
+
+    // 뷰어에서 연동할 때 도는 업데이트 확인 결과도 엔진과 같은 저장소에 남긴다
+    BM.onUpdate = function(info){
+      try { localStorage.setItem('bm_update', JSON.stringify(info)); } catch (e) {}
+      renderUpdate();
+    };
+
+    function showMain(){
+      $('viewLink').classList.add('hidden');
+      $('viewMain').classList.remove('hidden');
+      $('eoaAddr').textContent = short(bootInfo.eoa || BM.eoa);
+      $('funderAddr').textContent = short(bootInfo.funder || BM.funder);
+    }
+
+    function showLink(){
+      $('viewMain').classList.add('hidden');
+      $('viewLink').classList.remove('hidden');
+      var chip = $('statusChip');
+      chip.textContent = '미연동';
+      chip.className = 'chip warn';
+    }
+
+    function refresh(){
+      try { hasKey = !!localStorage.getItem('bm_pk'); } catch (e) { hasKey = false; }
+      intentOn = bridgeIntent();
+      heartbeatMs = bridgeHeartbeat();
+      var view = 'link';
+      try {
+        var b = BM.boot();
+        bootInfo = { eoa: b.eoa, funder: b.funder };
+        view = b.view;
+      } catch (e) { view = 'link'; }
+      if (view === 'link') {
+        showLink();
+        // 저장분은 있는데 열 수 없으면(복호화 실패 등) 그 사실을 드러낸다
+        if (hasKey) $('linkErr').textContent = '저장된 키를 복호화하지 못했습니다 — 개인키를 다시 입력해 연동하세요.';
+        return;
+      }
+      showMain();
+      render(readSnap());
+      renderLogs();
+      renderUpdate();
+      renderRelayer();
+    }
+
+    $('btnUpdate').addEventListener('click', function(){
+      var info = readUpdateInfo();
+      if (!info) return;
+      try {
+        if (window.AndroidBridge && AndroidBridge.downloadAndInstall) {
+          AndroidBridge.downloadAndInstall(info.url, info.assetName, info.digest || '');
+          return;
+        }
+      } catch (e) {}
+      window.open('https://github.com/roomedia/boringmech/releases/latest', '_blank');
+    });
+
+    $('btnLink').addEventListener('click', async function(){
+      var btn = $('btnLink');
+      $('linkErr').textContent = '';
+      btn.disabled = true;
+      btn.textContent = '연동 중…';
+      try {
+        var snap = await BM.link($('pk').value);
+        $('pk').value = '';
+        hasKey = true;
+        bootInfo = { eoa: BM.eoa, funder: BM.funder };
+        // 서비스 엔진이 떠 있으면 새 자격증명으로 다시 읽게 한다
+        try { AndroidBridge.reloadEngine(); } catch (e) {}
+        showMain();
+        render(snap);
+      } catch (e) {
+        $('linkErr').textContent = String(e.message ?? e);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '연동하기';
+      }
+    });
+
+    $('btnRun').addEventListener('click', function(){
+      try { AndroidBridge.setRunIntent(true); } catch (e) {}
+      intentOn = true;
+      render(null);
+    });
+    $('btnStop').addEventListener('click', function(){
+      try { AndroidBridge.setRunIntent(false); } catch (e) {}
+      intentOn = false;
+      render(null);
+    });
+    $('btnRefresh').addEventListener('click', function(){ refresh(); });
+    $('btnCopyLog').addEventListener('click', async function(){
+      var btn = $('btnCopyLog');
+      var text = readLogs().join('\n');
+      var result = '';
+      if (!text) {
+        result = '복사할 로그 없음';
+      } else {
+        var ok = false;
+        try { await navigator.clipboard.writeText(text); ok = true; } catch (e) {}
+        if (!ok) {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          try { ok = document.execCommand('copy'); } catch (e) {}
+          document.body.removeChild(ta);
+        }
+        if (ok) {
+          result = '복사됨';
+        } else {
+          var range = document.createRange();
+          range.selectNodeContents($('logBox'));
+          var sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          result = '선택됨 — 길게 눌러 복사하세요';
+        }
+      }
+      btn.textContent = result;
+      setTimeout(function(){ btn.textContent = '로그 복사'; }, 2500);
+    });
+    $('btnUnlink').addEventListener('click', function(){
+      BM.unlink();
+      hasKey = false;
+      intentOn = false;
+      showLink();
+    });
+    $('btnRelayerSave').addEventListener('click', function(){
+      $('relayerErr').textContent = '';
+      var ok = false;
+      try { ok = BM.setRelayerKey($('relayerKey').value, $('relayerAddr').value); } catch (e) {}
+      if (!ok) {
+        $('relayerErr').textContent = '저장 실패 — 키와 키 주소(0x…)를 확인하세요.';
+        return;
+      }
+      $('relayerKey').value = '';
+      $('relayerAddr').value = '';
+      renderRelayer();
+    });
+    $('btnRelayerClear').addEventListener('click', function(){
+      try { BM.clearRelayerKey(); } catch (e) {}
+      renderRelayer();
+    });
+
+    refresh();
+    setInterval(refresh, 10000);
+  }
 </script>
 </body>
 </html>

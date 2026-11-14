@@ -9,7 +9,27 @@ const {
   bootView,
   snapshotCacheOf,
   snapshotFromCache,
+  resolveHostMode,
+  shouldAutoStart,
+  isHeartbeatStale,
+  HEARTBEAT_STALE_MS,
+  stopLossVerdict,
+  pickOutcomeIndex,
+  tryAcquireSubmitLock,
+  releaseSubmitLock,
+  isSubmitLocked,
+  storeSecret,
+  readSecret,
+  migrateSecrets,
+  planRedeems,
+  verifyRecovery,
+  buildCtfRedeemCall,
+  buildV2RedeemCall,
+  toBytes31,
+  scanCandidates,
 } = await import("../src/engine.js");
+const { decodeFunctionData, parseAbi } = await import("viem");
+const { readFileSync } = await import("node:fs");
 
 let passed = 0;
 let failed = 0;
@@ -301,6 +321,286 @@ eq(snapshotFromCache('{"cash":18.83}'), null, "cache: missing equity rejected");
 // 정산 미상이면 실현도 미상, 정산 0건이면 실현 0이 사실이다
 eq(summarizeBook([], [], [], null).settledRealizedPnl, null, "realized: unknown propagates");
 eq(summarizeBook([], [], [], []).settledRealizedPnl, 0, "realized: empty settled is zero");
+
+// 18. 호스트 모드 판정 — "engine"만 엔진, 나머지는 전부 뷰어(안전한 쪽)
+eq(resolveHostMode("engine"), "engine", "host: engine");
+eq(resolveHostMode("viewer"), "viewer", "host: viewer");
+eq(resolveHostMode(undefined), "viewer", "host: undefined is viewer");
+eq(resolveHostMode(""), "viewer", "host: empty is viewer");
+eq(resolveHostMode("ENGINE"), "viewer", "host: unknown value is viewer");
+
+// 19. 자동 재개 판정 — 엔진 호스트는 네이티브 미러가 정본
+eq(shouldAutoStart("engine", false, true), true, "start: engine mirror on without LS flag");
+eq(shouldAutoStart("engine", true, true), true, "start: engine mirror on");
+eq(shouldAutoStart("engine", true, false), false, "start: engine mirror off beats LS flag");
+eq(shouldAutoStart("engine", false, false), false, "start: engine mirror off");
+eq(shouldAutoStart("engine", true, null), false, "start: engine without bridge never auto-starts");
+eq(shouldAutoStart("viewer", true, null), true, "start: viewer legacy saved");
+eq(shouldAutoStart("viewer", true, false), false, "start: viewer mirror explicitly off");
+eq(shouldAutoStart("viewer", true, true), true, "start: viewer saved and mirror on");
+eq(shouldAutoStart("viewer", false, true), false, "start: viewer not saved");
+
+// 20. 워치독 stale 판정 — 사이클 3개 + 여유가 기준, 무하트비트는 stale 아님
+eq(HEARTBEAT_STALE_MS, 200000, "stale: threshold is 3 cycles + slack");
+eq(isHeartbeatStale(1000, 1000 + 200000), false, "stale: exactly at threshold is fresh");
+eq(isHeartbeatStale(1000, 1000 + 200001), true, "stale: past threshold");
+eq(isHeartbeatStale(0, 999999999), false, "stale: no heartbeat is not stale");
+eq(isHeartbeatStale(-5, 999999999), false, "stale: negative is not stale");
+eq(isHeartbeatStale(NaN, 1000), false, "stale: NaN is not stale");
+
+// 21. 손절 판정 — 발화 경계·결정 구간 제외·결측 스킵
+eq(stopLossVerdict(0.75, 0.5), "triggered", "stoploss: boundary triggers");
+eq(stopLossVerdict(0.75, 0.49), "triggered", "stoploss: below line triggers");
+eq(stopLossVerdict(0.75, 0.51), "holding", "stoploss: above line holds");
+eq(stopLossVerdict(0.9, 0.97), "decided", "stoploss: decided high excluded");
+eq(stopLossVerdict(0.9, 0.99), "decided", "stoploss: near-resolved excluded");
+eq(stopLossVerdict(0.28, 0.03), "decided", "stoploss: decided low excluded even below line");
+eq(stopLossVerdict(0.28, 0.02), "decided", "stoploss: crashed to zero excluded");
+eq(stopLossVerdict(0.75, NaN), "skip", "stoploss: missing price skips");
+eq(stopLossVerdict(NaN, 0.4), "skip", "stoploss: missing entry skips");
+eq(stopLossVerdict(0.62, 0.37), "triggered", "stoploss: low band triggers");
+
+// 22. outcome 인덱스 — Gamma 이름 대조 1순위, outcome_index 폴백
+eq(pickOutcomeIndex(["Yes", "No"], { outcome: "No" }), 1, "index: name match");
+eq(pickOutcomeIndex(["Yes", "No"], { outcome: "yes" }), 0, "index: name case-insensitive");
+eq(pickOutcomeIndex(["Yes", "No"], { outcome: "Maybe", outcome_index: 1 }), 1, "index: fallback to outcome_index");
+eq(pickOutcomeIndex(["Yes", "No"], { outcome_index: 0 }), 0, "index: outcome_index only");
+eq(pickOutcomeIndex(["Yes", "No"], {}), -1, "index: nothing usable");
+eq(pickOutcomeIndex([], { outcome_index: 2 }), 2, "index: fallback without outcomes list");
+eq(pickOutcomeIndex(["Yes", "No"], { outcome_index: 1.5 }), -1, "index: non-integer rejected");
+eq(pickOutcomeIndex(["Yes", "No"], { outcome_index: -1 }), -1, "index: negative rejected");
+
+// 23. 손절 기록의 정산 분류 — 현재가가 아닌 매도 실현손익으로 가른다
+{
+  // 손절로 판 토큰이 나중에 승으로 정산돼 CLOSED current_price가 1이어도
+  // 판정은 기록의 실현손익(-30 → 패)을 따라야 한다
+  const closedWouldBeWin = row({
+    token_id: "SL1",
+    status: "CLOSED",
+    current_price: 1,
+    realized_pnl: 55,
+    entry_cost_usdc: 100,
+    current_value: 0,
+  });
+  const book = summarizeBook([], [], [], [closedWouldBeWin], [
+    { token_id: "SL1", realized_pnl: -30 },
+  ]);
+  eq(settled(book), [1, 0, 1], "stoploss settled: record verdict beats final price");
+  eq(book.settledRealizedPnl, -30, "stoploss settled: record pnl beats row pnl");
+  eq(book.settledStopLoss, 1, "stoploss settled: counted as stoploss");
+}
+{
+  // CLOSED 행이 아직 없어도 손절 기록만으로 정산에 잡힌다
+  const book = summarizeBook([], [], [], [], [{ token_id: "SL2", realized_pnl: -12.5 }]);
+  eq(settled(book), [1, 0, 1], "stoploss settled: record alone counts");
+  eq(book.settledRealizedPnl, -12.5, "stoploss settled: record alone pnl");
+  eq(book.settledStopLoss, 1, "stoploss settled: record alone flagged");
+}
+{
+  // 손절이 이긴 경우(실현 양수)도 부호로 판정한다
+  const book = summarizeBook([], [], [], [], [{ token_id: "SL3", realized_pnl: 4 }]);
+  eq(settled(book), [1, 1, 0], "stoploss settled: positive record is a win");
+}
+{
+  // 기록이 없으면 기존 집계와 동일하고 손절 건수는 0이다
+  const book = summarizeBook([], [row({ token_id: "W1" })], [], [], []);
+  eq(settled(book), [1, 1, 0], "stoploss settled: no records regression");
+  eq(book.settledStopLoss, 0, "stoploss settled: zero without records");
+  eq(summarizeBook([], [], [], []).settledStopLoss, 0, "stoploss settled: omitted arg is zero");
+}
+{
+  // 깨진 기록은 건너뛴다 — 토큰 없는 기록이 집계를 오염시키지 않는다
+  const book = summarizeBook([], [], [], [], [
+    { realized_pnl: -5 },
+    { token_id: "OK1", realized_pnl: -5 },
+    null,
+  ]);
+  eq(settled(book), [1, 0, 1], "stoploss settled: malformed records skipped");
+  eq(book.settledStopLoss, 1, "stoploss settled: only valid record flagged");
+}
+{
+  // 정산 미상이면 손절 건수도 미상이다
+  eq(summarizeBook([], null, [], [], []).settledStopLoss, null, "stoploss settled: unknown propagates");
+}
+
+// 24. 페이지 구조 가드 — 뷰어 블록은 루프를 시작하지 않고,
+// 엔진 호스트 블록은 DOM을 만지지 않는다
+{
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  const marker = "뷰어 부팅 (액티비티 WebView)";
+  const cut = html.indexOf(marker);
+  eq(cut > 0, true, "guard: viewer boot block exists");
+  const enginePart = html.slice(0, cut);
+  const viewerPart = html.slice(cut);
+  eq(enginePart.includes("BM.restore("), true, "guard: engine host restores");
+  eq(enginePart.includes("getElementById"), false, "guard: engine host touches no DOM");
+  eq(viewerPart.includes("BM.start("), false, "guard: viewer never starts loop");
+  eq(viewerPart.includes("BM.restore("), false, "guard: viewer never restores engine");
+  eq(viewerPart.includes("BM.stop("), false, "guard: viewer never stops loop directly");
+  eq(viewerPart.includes("setRunIntent(true)"), true, "guard: viewer starts via run intent");
+}
+
+// 25. 제출 잠금 — 중복 체결 방지 (2026-11-14 실계좌 결함 수정)
+// 같은 slug는 제출 시작부터 결과 확정까지 한 번만 임계 구간에 들어간다.
+{
+  eq(tryAcquireSubmitLock("lock-a"), true, "lock: first acquire succeeds");
+  eq(tryAcquireSubmitLock("lock-a"), false, "lock: second acquire blocked");
+  eq(isSubmitLocked("lock-a"), true, "lock: held state visible");
+  eq(tryAcquireSubmitLock("lock-b"), true, "lock: other slug unaffected");
+  releaseSubmitLock("lock-a");
+  eq(isSubmitLocked("lock-a"), false, "lock: released");
+  eq(tryAcquireSubmitLock("lock-a"), true, "lock: re-acquire after release");
+  releaseSubmitLock("lock-a");
+  releaseSubmitLock("lock-b");
+
+  // 동시 제출 시뮬레이션 — 두 워커가 같은 slug로 겹쳐 들어와도 진입은 1회
+  const entries = [];
+  async function worker(slug) {
+    if (!tryAcquireSubmitLock(slug)) return "blocked";
+    try {
+      entries.push(slug);
+      await new Promise((r) => setTimeout(r, 5));
+      return "entered";
+    } finally {
+      releaseSubmitLock(slug);
+    }
+  }
+  const [r1, r2] = await Promise.all([worker("race-slug"), worker("race-slug")]);
+  eq([r1, r2].sort(), ["blocked", "entered"], "lock: concurrent submit — exactly one enters");
+  eq(entries.length, 1, "lock: critical section entered once");
+  eq(isSubmitLocked("race-slug"), false, "lock: released after race");
+
+  // 구조 가드 — 매수 경로는 잠금 획득 뒤에만 서명하고, 제출 직전 bought를 재확인한다
+  const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+  const cycleSrc = src.slice(src.indexOf("async function runCycle"));
+  const lockIdx = cycleSrc.indexOf("tryAcquireSubmitLock(cand.slug)");
+  const signIdx = cycleSrc.indexOf("createMarketOrder(");
+  eq(lockIdx > 0 && signIdx > lockIdx, true, "guard: buy path locks before signing");
+  eq(
+    cycleSrc.slice(lockIdx, signIdx).includes("boughtSlugs().has(cand.slug)"),
+    true,
+    "guard: bought re-checked inside the lock, right before submit",
+  );
+  eq(src.includes("if (!state.client || state.running) return;"), true, "guard: start() refuses double start");
+}
+
+// 26. 비밀 저장 — Keystore 암호화 저장·마이그레이션·복호화 실패 낙하
+{
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
+  // 가짜 브리지 — 접두사를 붙였다 떼는 가역 스텁 (실제 AES는 네이티브 담당)
+  globalThis.window.AndroidBridge = {
+    encryptSecret: (plain) => `stub:${Buffer.from(plain, "utf8").toString("base64")}`,
+    decryptSecret: (enc) =>
+      enc.startsWith("stub:")
+        ? Buffer.from(enc.slice(5), "base64").toString("utf8")
+        : null,
+  };
+  eq(storeSecret("bm_pk", "0xdeadbeef"), true, "secret: store ok");
+  eq(store.get("bm_pk").startsWith("enc1:stub:"), true, "secret: stored as ciphertext only");
+  eq(store.get("bm_pk").includes("deadbeef"), false, "secret: no plaintext in storage");
+  eq(readSecret("bm_pk"), "0xdeadbeef", "secret: roundtrip decrypts");
+
+  // 레거시 평문은 그대로 읽히고, 마이그레이션이 암호문으로 덮는다
+  store.set("bm_creds", JSON.stringify({ api_key: "k" }));
+  eq(readSecret("bm_creds"), JSON.stringify({ api_key: "k" }), "secret: legacy plaintext readable");
+  migrateSecrets();
+  eq(store.get("bm_creds").startsWith("enc1:"), true, "secret: migration encrypts plaintext");
+  eq(readSecret("bm_creds"), JSON.stringify({ api_key: "k" }), "secret: migrated value still readable");
+  eq(store.get("bm_pk").startsWith("enc1:"), true, "secret: migration leaves ciphertext alone");
+
+  // 복호화 실패는 null — 호출자가 연동 화면으로 안전하게 떨어지는 근거
+  store.set("bm_pk", "enc1:garbage-not-stub");
+  eq(readSecret("bm_pk"), null, "secret: decrypt failure returns null");
+
+  // 브리지가 있는데 암호화가 실패하면 평문으로 저장하지 않는다
+  globalThis.window.AndroidBridge = { encryptSecret: () => null, decryptSecret: () => null };
+  eq(storeSecret("bm_pk", "0xbeef"), false, "secret: encrypt failure refuses store");
+  eq(store.get("bm_pk"), "enc1:garbage-not-stub", "secret: failed store writes nothing");
+  delete globalThis.window.AndroidBridge;
+}
+
+// 27. 리딤 — 계획·검증·콜 구성 (live_executor 방식 이식)
+{
+  const cidA = `0x${"aa".repeat(32)}`;
+  const cidB = `0x${"bb".repeat(32)}`;
+  const plan = planRedeems([
+    { condition_id: cidA, token_id: "t1", status: "REDEEMABLE", current_value: 12.5 },
+    { condition_id: cidA, token_id: "t2", status: "REDEEMABLE_LOST", current_value: 0 },
+    { condition_id: cidB, token_id: "t3", status: "REDEEMABLE_LOST", current_value: 0 },
+    { condition_id: "not-a-cid", token_id: "t4", status: "REDEEMABLE", current_value: 3 },
+  ]);
+  eq(plan.targets.length, 1, "redeem: one recoverable target");
+  eq(plan.targets[0].condition_id, cidA, "redeem: target grouped by condition");
+  eq(plan.targets[0].expected_usd, 12.5, "redeem: expected is win value sum");
+  eq(plan.worthless.length, 1, "redeem: loss-only condition is worthless");
+  eq(plan.worthless[0].condition_id, cidB, "redeem: worthless condition id");
+  eq(plan.errors.length, 1, "redeem: malformed condition id reported");
+
+  eq(verifyRecovery(100, 105, 5).status, "verified", "redeem: exact recovery verified");
+  eq(verifyRecovery(100, 103, 5).status, "mismatch", "redeem: short recovery mismatched");
+  eq(verifyRecovery(0, 1015, 1000).status, "verified", "redeem: 2% relative tolerance");
+  eq(verifyRecovery(0, 1030, 1000).status, "mismatch", "redeem: beyond tolerance mismatched");
+
+  const ctfAbi = parseAbi(["function redeemPositions(address,bytes32,bytes32,uint256[])"]);
+  const call = buildCtfRedeemCall(cidA, false);
+  eq(call.target.toLowerCase(), "0xada100db00ca00073811820692005400218fce1f", "redeem: ctf adapter target");
+  const dec = decodeFunctionData({ abi: ctfAbi, data: call.data });
+  eq(dec.args[1], `0x${"0".repeat(64)}`, "redeem: parent collection is zero bytes32");
+  eq(dec.args[2], cidA, "redeem: condition id in call");
+  eq(dec.args[3].map(String), ["1", "2"], "redeem: binary index sets");
+  eq(
+    buildCtfRedeemCall(cidA, true).target.toLowerCase(),
+    "0xada2005600dec949baf300f4c6120000bdb6eaab",
+    "redeem: neg-risk adapter target",
+  );
+
+  // v2 bytes31 — 끝 바이트(00/01)를 떼고, 이미 31바이트면 그대로
+  eq(toBytes31(`0x${"ab".repeat(31)}01`), `0x${"ab".repeat(31)}`, "redeem: bytes31 strips outcome byte");
+  eq(toBytes31(`0x${"ab".repeat(31)}`), `0x${"ab".repeat(31)}`, "redeem: bytes31 passthrough");
+  let threw = false;
+  try {
+    toBytes31("0x1234");
+  } catch {
+    threw = true;
+  }
+  eq(threw, true, "redeem: bytes31 rejects malformed id");
+  const v2Abi = parseAbi(["function redeem(bytes31,uint256,uint256)"]);
+  const v2 = buildV2RedeemCall(`0x${"ab".repeat(31)}01`, 1, 12345n);
+  eq(v2.target.toLowerCase(), "0x12121212006e4cd160d18e3f00711da5c3372600", "redeem: v2 router target");
+  const v2dec = decodeFunctionData({ abi: v2Abi, data: v2.data });
+  eq(v2dec.args[0], `0x${"ab".repeat(31)}`, "redeem: v2 call carries bytes31");
+  eq(String(v2dec.args[1]), "1", "redeem: v2 outcome index");
+  eq(String(v2dec.args[2]), "12345", "redeem: v2 amount is measured balance");
+}
+
+// 28. 후보 정렬 — 구간(0.70–0.80) 우선 유지 + 그룹 내 만기 가까운 순
+{
+  const day = 86400_000;
+  const isoIn = (days) => new Date(Date.now() + days * day).toISOString();
+  const mkt = (slug, price, days) => ({
+    active: true,
+    closed: false,
+    slug,
+    endDate: isoIn(days),
+    volume: 20000,
+    outcomePrices: JSON.stringify([price, 1 - price]),
+  });
+  const out = scanCandidates(
+    [mkt("sort-far-band", 0.75, 10), mkt("sort-near-band", 0.75, 3), mkt("sort-near-out", 0.65, 2), mkt("sort-far-out", 0.85, 5)],
+    new Set(),
+    new Set(),
+  );
+  eq(
+    out.map((c) => c.slug),
+    ["sort-near-band", "sort-far-band", "sort-near-out", "sort-far-out"],
+    "sort: band group first, nearest endDate inside group",
+  );
+}
 
 console.log(`book tests: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

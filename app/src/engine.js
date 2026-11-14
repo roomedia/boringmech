@@ -6,7 +6,7 @@ import {
   Side,
   SignatureTypeV2,
 } from "@polymarket/clob-client-v2";
-import { createWalletClient, http } from "viem";
+import { createWalletClient, encodeFunctionData, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { polygon } from "viem/chains";
 import { deriveBeaconDepositWallet, deriveUupsDepositWallet } from "./depositWallet.js";
@@ -53,9 +53,26 @@ const LS = {
   bought: "bm_bought",
   runIntent: "bm_run_intent",
   snap: "bm_snap",
+  log: "bm_log",
+  updateInfo: "bm_update",
+  wdSeen: "bm_wd_seen",
+  stopLoss: "bm_stoploss",
+  relayer: "bm_relayer",
+  redeemPending: "bm_redeem_pending",
+  redeemHistory: "bm_redeem_history",
+  redeemClosed: "bm_redeem_closed",
 };
 
+// 손절 (2026-11-14 사용자 결정 — 페이퍼 boringmech와 동일 규칙):
+// 보유 포지션 현재가(Gamma outcomePrices) ≤ 진입가 − 0.25면 전량 매도.
+// 사실상 결정된 마켓(≥0.97·≤0.03)은 정산이 처리하므로 제외하고,
+// 가격 조회 실패는 0으로 취급하지 않고 그 건만 스킵한다.
+export const STOP_DROP = 0.25;
+export const DECIDED_HIGH = 0.97;
+export const DECIDED_LOW = 0.03;
+
 const round2 = (x) => Math.round((x + Number.EPSILON) * 100) / 100;
+const round4 = (x) => Math.round((x + Number.EPSILON) * 10000) / 10000;
 
 export function betUsdFor(equity) {
   return round2(Math.max(BET_MIN_USD, (equity || 0) * BET_PCT));
@@ -205,7 +222,11 @@ function realizedOf(kind, p) {
 // 없는데 정산 건만 있으면 settledRealizedPnl은 null — 0으로 지어내지 않는다.
 // 정산 조회를 하나라도 못 읽으면 settled*는 null —
 // 화면은 숫자를 지어내지 않고 미표시로 남긴다.
-export function summarizeBook(allRows, winRows, lostRows, closedRows) {
+// 손절 실행 기록(stopLossRecords: {token_id, realized_pnl})은 CLOSED 행보다
+// 먼저 합집합에 넣는다 — 손절로 닫힌 건은 현재가로 승패를 가르지 않고
+// 매도 실현손익 부호로 가르고, 실현도 기록값을 쓴다. 같은 토큰의 CLOSED
+// 행은 dedupe로 걸러져 기록을 덮지 못한다.
+export function summarizeBook(allRows, winRows, lostRows, closedRows, stopLossRecords) {
   const open = (allRows || []).filter((p) => p.status === "OPEN");
   let value = 0;
   let cost = 0;
@@ -224,6 +245,7 @@ export function summarizeBook(allRows, winRows, lostRows, closedRows) {
   let settledLosses = null;
   let settledRealizedPnl = null;
   let settledRealizedExcluded = null;
+  let settledStopLoss = null;
   if (settledKnown) {
     const entries = new Map();
     let seq = 0;
@@ -231,22 +253,36 @@ export function summarizeBook(allRows, winRows, lostRows, closedRows) {
       for (const p of rows) {
         const key = positionKey(p) ?? `u:${seq++}`;
         if (!entries.has(key)) {
-          entries.set(key, { verdict: verdictOf(p), pnl: realizedOf(kind, p) });
+          entries.set(key, { verdict: verdictOf(p), pnl: realizedOf(kind, p), kind });
         }
       }
     };
     add(winRows, "win", () => "win");
     add(lostRows, "loss", () => "loss");
+    for (const r of stopLossRecords || []) {
+      if (!r || typeof r.token_id !== "string" || !r.token_id) continue;
+      const key = `t:${r.token_id}`;
+      if (entries.has(key)) continue;
+      const rp = Number(r.realized_pnl);
+      const known = Number.isFinite(rp);
+      entries.set(key, {
+        verdict: known ? (rp > 0 ? "win" : rp < 0 ? "loss" : null) : null,
+        pnl: known ? rp : null,
+        kind: "stoploss",
+      });
+    }
     add(closedRows, "closed", judgeClosedRow);
     settledCount = entries.size;
     settledWins = 0;
     settledLosses = 0;
+    settledStopLoss = 0;
     settledRealizedExcluded = 0;
     let pnlSum = 0;
     let pnlKnown = 0;
     for (const e of entries.values()) {
       if (e.verdict === "win") settledWins += 1;
       else if (e.verdict === "loss") settledLosses += 1;
+      if (e.kind === "stoploss") settledStopLoss += 1;
       if (e.pnl == null) settledRealizedExcluded += 1;
       else {
         pnlSum += e.pnl;
@@ -263,6 +299,7 @@ export function summarizeBook(allRows, winRows, lostRows, closedRows) {
     settledLosses,
     settledRealizedPnl,
     settledRealizedExcluded,
+    settledStopLoss,
     heldSlugs: new Set(open.map((p) => p.slug).filter(Boolean)),
   };
 }
@@ -291,7 +328,7 @@ async function fetchMarkets(total = 1000, pageSize = 100) {
   return markets.slice(0, total);
 }
 
-function scanCandidates(markets, heldSlugs, boughtSlugs) {
+export function scanCandidates(markets, heldSlugs, boughtSlugs) {
   const today = new Date();
   const iso = (d) => d.toISOString().slice(0, 10);
   const todayIso = iso(today);
@@ -319,11 +356,12 @@ function scanCandidates(markets, heldSlugs, boughtSlugs) {
     if (price < BAND_LO || price > BAND_HI) continue;
     out.push({ slug, question: m.question || "", side, price, endDate: m.endDate || "" });
   }
-  // 매수 우선순위: 0.70–0.80 구간 먼저, 그 안에서 만기 먼 순 (동률은 입력 순서 유지)
+  // 매수 우선순위: 0.70–0.80 구간 먼저, 그 안에서 만기 가까운 순
+  // (동률은 입력 순서 유지 — Array.sort는 안정 정렬이다)
   const bandGroup = (p) => (p >= 0.7 && p < 0.8 ? 0 : 1);
   out.sort((a, b) =>
     bandGroup(a.price) - bandGroup(b.price) ||
-    b.endDate.localeCompare(a.endDate));
+    a.endDate.localeCompare(b.endDate));
   return out;
 }
 
@@ -334,6 +372,7 @@ function roundTick(price, tick) {
 
 const state = {
   client: null,
+  account: null,
   eoa: null,
   funder: null,
   running: false,
@@ -348,6 +387,11 @@ const state = {
   onState: () => {},
   onUpdate: () => {},
   lastSnapshot: null,
+  lastOpenRows: [],
+  lastWinRows: null,
+  lastLostRows: null,
+  redeemKeyWarned: false,
+  settledBaseline: null,
 };
 
 function log(line) {
@@ -368,6 +412,72 @@ function markBought(slug) {
   const set = boughtSlugs();
   set.add(slug);
   localStorage.setItem(LS.bought, JSON.stringify([...set]));
+}
+
+// ── 비밀 저장 (Android Keystore 암호화) ─────────────────────
+// 개인키·CLOB creds·Relayer 키는 localStorage에 암호문만 남긴다.
+// 암호화/복호화는 네이티브 브리지(Android Keystore AES-GCM)가 하고,
+// JS는 접두사 "enc1:"로 암호문과 레거시 평문을 구분한다.
+// v0.3.14 첫 부팅 때 평문 저장분을 읽어 암호문으로 덮는다(마이그레이션) —
+// 복호화 실패는 null로만 돌려주고, 연동 화면으로 안전하게 떨어지게 한다.
+const SECRET_PREFIX = "enc1:";
+
+export function storeSecret(lsKey, plain) {
+  try {
+    const bridge = window.AndroidBridge;
+    if (bridge?.encryptSecret) {
+      const enc = bridge.encryptSecret(String(plain));
+      if (typeof enc === "string" && enc) {
+        localStorage.setItem(lsKey, SECRET_PREFIX + enc);
+        return true;
+      }
+      return false; // 브리지가 있는데 암호화에 실패 — 평문으로 저장하지 않는다
+    }
+    localStorage.setItem(lsKey, String(plain)); // 브라우저 미리보기·테스트 전용 폴백
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function readSecret(lsKey) {
+  let raw = null;
+  try {
+    raw = localStorage.getItem(lsKey);
+  } catch {}
+  if (!raw) return null;
+  if (raw.startsWith(SECRET_PREFIX)) {
+    try {
+      const dec = window.AndroidBridge?.decryptSecret?.(raw.slice(SECRET_PREFIX.length));
+      return typeof dec === "string" && dec ? dec : null;
+    } catch {
+      return null;
+    }
+  }
+  return raw; // 레거시 평문 (마이그레이션 전 또는 브리지 없는 환경)
+}
+
+// 평문으로 남은 비밀을 암호문으로 덮는다. 이미 암호문이거나 없으면 무동작.
+export function migrateSecrets() {
+  for (const lsKey of [LS.key, LS.creds, LS.relayer]) {
+    try {
+      const raw = localStorage.getItem(lsKey);
+      if (raw && !raw.startsWith(SECRET_PREFIX)) storeSecret(lsKey, raw);
+    } catch {}
+  }
+}
+
+// Relayer API 키 (자동 상환 제출 인증) — {key, address}를 암호화 저장한다.
+function readRelayerCreds() {
+  const raw = readSecret(LS.relayer);
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw);
+    if (o && typeof o.key === "string" && o.key && typeof o.address === "string") {
+      return { key: o.key, address: o.address };
+    }
+  } catch {}
+  return null;
 }
 
 function buildClient(signer, creds, funder) {
@@ -423,6 +533,7 @@ export function snapshotCacheOf(snap) {
     settledCount: num(snap.settledCount),
     settledWins: num(snap.settledWins),
     settledLosses: num(snap.settledLosses),
+    settledStopLoss: num(snap.settledStopLoss),
     settledRealizedPnl: num(snap.settledRealizedPnl),
     positionsPnlPct: num(snap.positionsPnlPct),
     heldSlugs: [...(snap.heldSlugs || [])].filter((s) => typeof s === "string"),
@@ -455,6 +566,7 @@ export function snapshotFromCache(raw) {
     settledCount: numOrNull(o.settledCount),
     settledWins: numOrNull(o.settledWins),
     settledLosses: numOrNull(o.settledLosses),
+    settledStopLoss: numOrNull(o.settledStopLoss),
     settledRealizedPnl: numOrNull(o.settledRealizedPnl),
     positionsPnlPct: numOrNull(o.positionsPnlPct),
     heldSlugs: new Set(
@@ -477,11 +589,15 @@ function cachedSnapshot() {
   }
 }
 
-async function snapshot() {
+async function clobCash() {
   const bal = await state.client.getBalanceAllowance({
     asset_type: AssetType.COLLATERAL,
   });
-  const cash = round2(Number(BigInt(bal.balance || "0")) / 1e6);
+  return round2(Number(BigInt(bal.balance || "0")) / 1e6);
+}
+
+async function snapshot() {
+  const cash = await clobCash();
   const positions = await fetchPositions(state.funder);
   const positionsValue = round2(await fetchPositionsValue(state.funder));
   const equity = round2(cash + positionsValue);
@@ -497,7 +613,7 @@ async function snapshot() {
   } catch {
     // 정산 집계를 못 읽으면 settled*는 null로 남아 화면이 미표시한다
   }
-  const book = summarizeBook(positions, winRows, lostRows, closedRows);
+  const book = summarizeBook(positions, winRows, lostRows, closedRows, stopLossRecords());
   const s = sizing(cash, equity, book.openCount);
   const snap = {
     cash,
@@ -507,15 +623,26 @@ async function snapshot() {
     settledCount: book.settledCount,
     settledWins: book.settledWins,
     settledLosses: book.settledLosses,
+    settledStopLoss: book.settledStopLoss,
     settledRealizedPnl: book.settledRealizedPnl,
     positionsPnlPct: book.positionsPnlPct,
     heldSlugs: book.heldSlugs,
     ...s,
   };
   state.lastSnapshot = snap;
+  state.lastOpenRows = positions.filter((p) => p.status === "OPEN");
+  state.lastWinRows = winRows;
+  state.lastLostRows = lostRows;
   try {
     const cache = snapshotCacheOf(snap);
-    if (cache) localStorage.setItem(LS.snap, JSON.stringify(cache));
+    if (cache) {
+      const json = JSON.stringify(cache);
+      localStorage.setItem(LS.snap, json);
+      // 서비스 엔진과 뷰어 액티비티가 확실히 공유하는 통로로도 남긴다
+      try {
+        window.AndroidBridge?.putSnapCache?.(json);
+      } catch {}
+    }
   } catch {}
   return snap;
 }
@@ -662,13 +789,275 @@ export function judgeFill(resp) {
     : { filled: false, kind: "unfilled", status };
 }
 
+// ── 제출 잠금 (중복 체결 방지) ───────────────────────────────
+// 2026-11-14 실계좌에서 같은 후보에 건당 주문이 2번 체결된 결함의 수정.
+// 제출 시작(서명)부터 결과 확정(체결/미체결/불명 판정)까지 slug 단위로 잠가
+// 재진입을 막는다. 세대 가드와 별개로 동작하므로, 서명·전송 await 사이에
+// 재시작·재개가 끼어 루프가 겹쳐도 두 번째 제출은 잠금에서 걸린다.
+const submitLocks = new Set();
+
+export function tryAcquireSubmitLock(key) {
+  if (submitLocks.has(key)) return false;
+  submitLocks.add(key);
+  return true;
+}
+
+export function releaseSubmitLock(key) {
+  submitLocks.delete(key);
+}
+
+export function isSubmitLocked(key) {
+  return submitLocks.has(key);
+}
+
+// ── 돈 이벤트 알림 ───────────────────────────────────────────
+// 종목명·마켓명은 넣지 않는다 — 금액·가격·실현손익만.
+function signedUsd(v) {
+  return `${v < 0 ? "-$" : "+$"}${Math.abs(v)}`;
+}
+
+function notifyMoney(title, body) {
+  try {
+    window.AndroidBridge?.notify?.(title, body);
+  } catch {}
+}
+
+// ── 손절 ─────────────────────────────────────────────────────
+// 판정은 순수 함수로 분리한다 (테스트 대상). 가격은 Gamma outcomePrices만
+// 쓴다 — 조회 실패·빈 응답이면 null을 돌려 그 건을 스킵하게 한다.
+// 포지션의 outcome 인덱스는 페이퍼와 같이 Gamma outcomes 이름 대조가
+// 1순위, 실패하면 Data API 행의 outcome_index로 폴백한다.
+export function stopLossVerdict(entry, current) {
+  if (!Number.isFinite(entry) || !Number.isFinite(current)) return "skip";
+  if (current >= DECIDED_HIGH || current <= DECIDED_LOW) return "decided";
+  if (current <= entry - STOP_DROP) return "triggered";
+  return "holding";
+}
+
+export function pickOutcomeIndex(outcomes, row) {
+  if (Array.isArray(outcomes) && outcomes.length) {
+    const name = String(row?.outcome ?? "").trim().toLowerCase();
+    if (name) {
+      const i = outcomes.findIndex((o) => String(o).trim().toLowerCase() === name);
+      if (i >= 0) return i;
+    }
+  }
+  const idx = Number(row?.outcome_index);
+  return Number.isInteger(idx) && idx >= 0 ? idx : -1;
+}
+
+async function fetchGammaPrices(slug) {
+  const page = await fetchJson(
+    `${GAMMA_MARKETS_URL}?${new URLSearchParams({ slug })}`,
+  );
+  const m = Array.isArray(page) ? page[0] : null;
+  if (!m) return null;
+  let outcomes, prices;
+  try {
+    outcomes = JSON.parse(m.outcomes || "[]");
+    prices = JSON.parse(m.outcomePrices || "[]").map(Number);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(outcomes) || !outcomes.length) return null;
+  if (outcomes.length !== prices.length) return null;
+  if (prices.some((p) => !Number.isFinite(p))) return null;
+  return { outcomes, prices };
+}
+
+// 손절 실행 원장 — 사후 판정용 영속 기록. 정산 집계(summarizeBook)가
+// token_id로 대조해 현재가가 아닌 매도 실현손익으로 승패를 가른다.
+function stopLossRecords() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(LS.stopLoss) || "[]");
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(
+      (r) => r && typeof r.token_id === "string" && Number.isFinite(Number(r.realized_pnl)),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function recordStopLoss(rec) {
+  let arr = [];
+  try {
+    arr = JSON.parse(localStorage.getItem(LS.stopLoss) || "[]");
+    if (!Array.isArray(arr)) arr = [];
+  } catch {
+    arr = [];
+  }
+  arr.push(rec);
+  localStorage.setItem(LS.stopLoss, JSON.stringify(arr.slice(-200)));
+}
+
+async function executeStopLossSell(row, current) {
+  if (!tryAcquireSubmitLock(row.slug)) {
+    log(`손절 제출 잠금 중 — 건너뜀 ${row.slug}`);
+    return false;
+  }
+  try {
+    return await executeStopLossSellLocked(row, current);
+  } finally {
+    releaseSubmitLock(row.slug);
+  }
+}
+
+async function executeStopLossSellLocked(row, current) {
+  const slug = row.slug;
+  const entry = Number(row.avg_price);
+  // 매도 수량은 CLOB 조건부 토큰 잔고가 정본 (Data API 수량은 표시값일 수 있다)
+  let shares = Number(row.current_size);
+  try {
+    const bal = await state.client.getBalanceAllowance({
+      asset_type: AssetType.CONDITIONAL,
+      token_id: row.token_id,
+    });
+    const exact = Number(BigInt(bal.balance || "0")) / 1e6;
+    if (Number.isFinite(exact) && exact > 0) shares = exact;
+  } catch {}
+  // 시장가 주문은 SDK가 주식수를 소수 2자리로 내림한다 — 0.01 미만은 먼지라 건너뜐다
+  if (!Number.isFinite(shares) || shares < 0.01) return false;
+  const book = await state.client.getOrderBook(row.token_id);
+  const tick = Number(book.tick_size || (await state.client.getTickSize(row.token_id)));
+  const floorPrice = Math.min(
+    Math.max(tick, roundTick(current - SLIPPAGE_CAP, tick)),
+    1 - tick,
+  );
+  let signed;
+  try {
+    signed = await state.client.createMarketOrder(
+      {
+        tokenID: row.token_id,
+        side: Side.SELL,
+        amount: shares,
+        price: floorPrice,
+        orderType: OrderType.FOK,
+      },
+      { tickSize: String(tick), negRisk: Boolean(book.neg_risk) },
+    );
+  } catch (e) {
+    log(`손절 매도 서명 실패 ${slug}: ${String(e.message ?? e).slice(0, 120)}`);
+    return false;
+  }
+  let resp;
+  try {
+    resp = await state.client.postOrder(signed, OrderType.FOK);
+  } catch (e) {
+    // 제출됐으나 결과를 모른다 — 체결됐을 수 있어도 다음 사이클이 포지션
+    // 실재로 다시 판정한다 (남아 있으면 재시도, 없으면 종료).
+    log(`손절 매도 결과 불명 ${slug}: ${String(e.message ?? e).slice(0, 120)} — 다음 사이클에 재확인`);
+    return false;
+  }
+  const verdict = judgeFill(resp);
+  if (!verdict.filled) {
+    const msg = verdict.error || `미체결 (status: ${verdict.status || "없음"})`;
+    log(`손절 매도 실패 ${slug}: ${String(msg).slice(0, 120)} · 응답 원문: ${JSON.stringify(resp).slice(0, 200)}`);
+    return false;
+  }
+  const soldShares = Number(resp.makingAmount) || shares;
+  const proceeds = round2(Number(resp.takingAmount) || soldShares * current);
+  const exitPrice = soldShares > 0 ? proceeds / soldShares : current;
+  const realized = round2(proceeds - soldShares * entry);
+  recordStopLoss({
+    slug,
+    condition_id: row.condition_id ?? null,
+    token_id: row.token_id,
+    outcome: row.outcome ?? null,
+    entry_price: entry,
+    exit_price: round4(exitPrice),
+    shares: soldShares,
+    proceeds,
+    realized_pnl: realized,
+    ts: new Date().toISOString(),
+  });
+  log(
+    `손절 매도 ${slug} · 진입 ${entry} → 매도 ${round4(exitPrice)} · ` +
+    `회수 $${proceeds} · 손익 ${realized < 0 ? "-" : "+"}$${Math.abs(realized)}`,
+  );
+  notifyMoney("손절 실행", `진입 ${entry} · 청산 ${round4(exitPrice)} · 실현 ${signedUsd(realized)}`);
+  return true;
+}
+
+async function checkStopLossPosition(row) {
+  const slug = row?.slug;
+  const entry = Number(row?.avg_price);
+  const size = Number(row?.current_size);
+  if (!slug || !row?.token_id || !Number.isFinite(entry)) return false;
+  if (!Number.isFinite(size) || size <= 0) return false;
+  const first = await fetchGammaPrices(slug).catch(() => null);
+  if (!first) return false; // 조회 실패 — 0으로 취급하지 않고 스킵
+  const idx = pickOutcomeIndex(first.outcomes, row);
+  if (idx < 0 || idx >= first.prices.length) return false;
+  if (stopLossVerdict(entry, first.prices[idx]) !== "triggered") return false;
+  // 매도 직전 재검증 — 같은 가드로 다시 읽어 여전히 발화 상태일 때만 판다
+  const second = await fetchGammaPrices(slug).catch(() => null);
+  if (!second) return false;
+  const idx2 = pickOutcomeIndex(second.outcomes, row);
+  if (idx2 < 0 || idx2 >= second.prices.length) return false;
+  const current = second.prices[idx2];
+  if (stopLossVerdict(entry, current) !== "triggered") {
+    log(`손절 재검증 탈락 ${slug} · 현재가 ${current} (진입 ${entry})`);
+    return false;
+  }
+  return executeStopLossSell(row, current);
+}
+
+async function runStopLoss(gen) {
+  let sold = 0;
+  for (const row of state.lastOpenRows) {
+    if (!state.running || gen !== state.gen) break;
+    try {
+      if (await checkStopLossPosition(row)) sold += 1;
+    } catch (e) {
+      // 한 건의 실패가 사이클 전체를 죽이지 않는다 — 다음 사이클에 재시도
+      log(`손절 처리 오류 ${row?.slug ?? "?"}: ${String(e.message ?? e).slice(0, 120)}`);
+    }
+  }
+  return sold;
+}
+
 async function runCycle(gen) {
-  const snap = await snapshot();
+  let snap = await snapshot();
   state.onState(snap);
   log(
     `사이클 ${state.cycle} · 잔고 $${snap.cash} · 평가 $${snap.equity} · ` +
     `건당 $${snap.bet} · 슬롯 ${snap.slots} · 보유 ${snap.openCount}`,
   );
+  // 정산 확정 감지 — 전 사이클 최종 스냅샷(기준선) 대비 신규 정산분.
+  // 손절 기록분은 이 스냅샷에 이미 들어 있고 기준선에도 반영되므로 여기서
+  // 다시 세지 않는다 (손절 알림은 실행 시점에 따로 간다).
+  let settleNotice = null;
+  const base = state.settledBaseline;
+  if (
+    base && snap.settledCount != null && base.count != null &&
+    snap.settledCount > base.count &&
+    snap.settledRealizedPnl != null && base.realized != null
+  ) {
+    settleNotice = {
+      count: snap.settledCount - base.count,
+      realizedDelta: round2(snap.settledRealizedPnl - base.realized),
+    };
+  }
+  // 손절은 신규 매수보다 먼저 — 팔린 건이 있으면 잔고·슬롯을 다시 읽는다
+  const soldCount = await runStopLoss(gen);
+  if (soldCount > 0) {
+    snap = await snapshot();
+    state.onState(snap);
+  }
+  // 리딤은 손절 다음·신규 매수 이전 — 회수액이 생기면 잔고를 다시 읽는다
+  const recovered = await runRedeems(gen);
+  if (recovered > 0) {
+    snap = await snapshot();
+    state.onState(snap);
+  }
+  if (settleNotice) {
+    notifyMoney(
+      "정산 확정",
+      `실현 ${signedUsd(settleNotice.realizedDelta)}${recovered > 0 ? ` · 회수 $${recovered}` : ""}`,
+    );
+  }
+  state.settledBaseline = { count: snap.settledCount, realized: snap.settledRealizedPnl };
   // 체결로 기록한 건은 다음 사이클 스냅샷에 포지션으로 실재해야 한다 —
   // 어긋나면 조용히 넘기지 않고 경고로 드러낸다 (실행당 1회).
   if (state.sessionFills > 0 && !state.posGapWarned) {
@@ -710,6 +1099,19 @@ async function runCycle(gen) {
       continue;
     }
     if (!state.running || gen !== state.gen) return;
+    // 제출 잠금 — 서명 시작부터 결과 확정까지 같은 slug 재진입을 막는다.
+    // 세대 가드와 별개로 동작해, 이 지점을 지난 뒤 재시작·재개가 끼어도
+    // 두 번째 루프는 잠금에서 걸려 같은 후보를 다시 제출하지 않는다.
+    if (!tryAcquireSubmitLock(cand.slug)) {
+      log(`제출 잠금 — 중복 제출 차단 ${cand.slug}`);
+      continue;
+    }
+    try {
+    // 제출 직전 bought 재확인 (이중 방어 — 먼저 끝난 제출이 기록했을 수 있다)
+    if (boughtSlugs().has(cand.slug)) {
+      log(`제출 직전 재확인 — 이미 매수 기록 있음 ${cand.slug}`);
+      continue;
+    }
     let signed;
     try {
       signed = await state.client.createMarketOrder(
@@ -772,6 +1174,13 @@ async function runCycle(gen) {
       ? ` 체결가 ${round2(Number(resp.makingAmount) / Number(resp.takingAmount))}`
       : "";
     log(`매수 ${cand.slug} · $${snap.bet} @ ${detail.limitPrice}${fill} · 상태 ${resp.status ?? "matched"}`);
+    notifyMoney(
+      "매수 체결",
+      `건당 $${snap.bet} · 체결가 ${resp.makingAmount && resp.takingAmount ? round2(Number(resp.makingAmount) / Number(resp.takingAmount)) : detail.limitPrice}`,
+    );
+    } finally {
+      releaseSubmitLock(cand.slug);
+    }
   }
   log(summarizeCycle({
     candidates: candidates.length,
@@ -786,6 +1195,7 @@ async function runCycle(gen) {
 async function loop(gen) {
   if (!state.running || gen !== state.gen) return;
   state.cycle += 1;
+  beatHeartbeat();
   try {
     await runCycle(gen);
   } catch (e) {
@@ -809,39 +1219,489 @@ function setRunIntent(on) {
   } catch {}
 }
 
-// 실행 의도 판정의 단일 지점 — mirrorOff는 네이티브 미러가 명시적으로
-// 꺼졌을 때만 true다 (브리지 부재·예외는 "모름"이지 "꺼짐"이 아니다).
+// ── 호스트 모드 ─────────────────────────────────────────────
+// 같은 페이지가 두 곳에서 뜬다: 서비스 WebView(엔진 호스트 — 사이클 구동)와
+// 액티비티 WebView(뷰어 — 표시·조작만). 네이티브 브리지가 모드를 동기 반환
+// 하므로, 페이지 스크립트는 부팅 즉시 자기 역할을 확정할 수 있다.
+// 브리지가 없거나(브라우저 미리보기) 알 수 없는 값이면 뷰어가 기본값이다 —
+// 뷰어는 루프를 시작하지 않으므로 안전한 쪽으로 기운다.
+export function resolveHostMode(bridgeMode) {
+  return bridgeMode === "engine" ? "engine" : "viewer";
+}
+
+function hostMode() {
+  try {
+    return resolveHostMode(window.AndroidBridge?.hostMode?.());
+  } catch {
+    return "viewer";
+  }
+}
+
+// 실행 의도 판정의 단일 지점 — mirror는 네이티브 미러(SharedPreferences)의
+// 삼진 값이다: true/false(브리지로 읽음) 또는 null(브리지 부재 = 모름).
 function runIntentState() {
   let saved = false;
   try {
     saved = localStorage.getItem(LS.runIntent) === "1";
   } catch {}
-  if (!saved) return { saved: false, mirrorOff: false };
-  let mirrorOff = false;
+  let mirror = null;
   try {
-    mirrorOff =
-      Boolean(window.AndroidBridge) && !window.AndroidBridge.getRunIntent();
+    if (window.AndroidBridge) mirror = Boolean(window.AndroidBridge.getRunIntent());
   } catch {}
-  return { saved: true, mirrorOff };
+  return { saved, mirror };
+}
+
+// 자동 재개 판정. 엔진 호스트에서는 네이티브 미러가 정본이다 — 뷰어에서
+// 실행을 눌러 서비스가 처음 뜬 경우처럼 LS 플래그가 아직 없어도 미러가
+// 켜져 있으면 시작하고, 미러가 꺼져 있으면 LS 플래그가 남아 있어도
+// 시작하지 않는다. 그 외 모드에서는 기존 규칙(LS 저장 + 미러 명시 off 아님).
+export function shouldAutoStart(mode, saved, mirror) {
+  if (mode === "engine") return mirror === true;
+  return Boolean(saved) && mirror !== false;
 }
 
 // 부작용 없는 조회 — 부팅 화면의 잠정 표시 판정에 쓴다.
 function peekRunIntent() {
   const s = runIntentState();
-  return s.saved && !s.mirrorOff;
+  return shouldAutoStart("viewer", s.saved, s.mirror);
 }
 
-function runIntentSaved() {
-  const s = runIntentState();
-  if (!s.saved) return false;
-  if (s.mirrorOff) {
-    // 알림에서 정지했으면(네이티브 미러 해제) 재개하지 않고 플래그를 정리한다
-    try {
-      localStorage.removeItem(LS.runIntent);
-    } catch {}
-    return false;
+// ── 워치독 하트비트 ─────────────────────────────────────────
+// JS가 사이클마다 브리지로 하트비트를 남기고(SharedPreferences), 서비스가
+// 30초마다 확인해 stale이면 엔진 페이지를 재로드한다. stale 기준은
+// 사이클 3개분 + 여유 — 네이티브 워치독과 같은 상수를 쓴다.
+// 하트비트가 아예 없는(<=0) 경우는 stale이 아니다: 페이지 로드 직후
+// 복원이 도는 동안은 네이티브가 로드 경과 시간으로 따로 판정한다.
+export const HEARTBEAT_STALE_MS = CYCLE_MS * 3 + 20_000;
+
+export function isHeartbeatStale(lastBeatMs, nowMs) {
+  if (!Number.isFinite(lastBeatMs) || lastBeatMs <= 0) return false;
+  return nowMs - lastBeatMs > HEARTBEAT_STALE_MS;
+}
+
+function beatHeartbeat() {
+  try {
+    window.AndroidBridge?.heartbeat?.(state.cycle);
+  } catch {}
+}
+
+// 워치독이 재로드한 사실은 복원 직후 로그로 남긴다 — 조용한 복구 금지.
+function reportWatchdogRecovery() {
+  try {
+    const n = Number(window.AndroidBridge?.getWatchdogReloads?.() || 0);
+    if (!Number.isFinite(n) || n <= 0) return;
+    const seen = Number(localStorage.getItem(LS.wdSeen) || 0);
+    if (n > seen) {
+      log(`워치독 복구 — 멈춘 엔진 페이지를 재로드했습니다 (누적 ${n}회)`);
+      localStorage.setItem(LS.wdSeen, String(n));
+    }
+  } catch {}
+}
+
+// ── 리딤 (자동 상환) ─────────────────────────────────────────
+// 레포 live/live_executor.py의 검증된 방식을 이식: condition 단위 계획 →
+// deposit wallet 배치 제출(relayer gasless) → pUSD 잔고 델타 검증
+// (허용 오차 max($0.05, 2%)). 건별 실패는 pending 유지·영구 래치 없음,
+// 제출 후 잔고 측정 실패는 submitted_unverified로 남긴다.
+// 제출 인증은 Relayer API 키가 필수다 (공식 SDK가 키 없으면 제출 자체를
+// 거부한다). 앱에 키가 없으면 감지·계획만 돌고 제출은 보류한다 — 우회 없음.
+const RELAYER_URL = "https://relayer-v2.polymarket.com";
+const DEPOSIT_WALLET_FACTORY = "0x00000000000Fb5C9ADea0298D729A0CB3823Cc07";
+const COLLATERAL_ADAPTER = "0xAdA100Db00Ca00073811820692005400218FcE1f";
+const NEG_RISK_COLLATERAL_ADAPTER = "0xadA2005600Dec949baf300f4C6120000bDB6eAab";
+const PROTOCOL_V2_ROUTER = "0x12121212006e4CD160D18e3f00711DA5c3372600";
+const POSITION_MANAGER = "0x006F54F7f9A22e0000CC2AB60031000000ae9fEF";
+const ZERO_BYTES32 = `0x${"0".repeat(64)}`;
+const REDEEM_TOL_ABS = 0.05;
+const REDEEM_TOL_REL = 0.02;
+const REDEEM_SUBMIT_ATTEMPTS = 2;
+const REDEEM_POLL_MS = 2000;
+const REDEEM_POLL_MAX_MS = 120_000;
+
+const CTF_REDEEM_ABI = parseAbi([
+  "function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets)",
+]);
+const ROUTER_REDEEM_ABI = parseAbi([
+  "function redeem(bytes31 conditionId, uint256 outcomeIndex, uint256 amount)",
+]);
+
+export function buildCtfRedeemCall(conditionId, negRisk) {
+  return {
+    target: negRisk ? NEG_RISK_COLLATERAL_ADAPTER : COLLATERAL_ADAPTER,
+    value: "0",
+    data: encodeFunctionData({
+      abi: CTF_REDEEM_ABI,
+      functionName: "redeemPositions",
+      args: [PUSD, ZERO_BYTES32, conditionId, [1n, 2n]],
+    }),
+  };
+}
+
+// protocol v2: bytes31은 32바이트 condition id 끝의 binary outcome 바이트를 뗀 것
+export function toBytes31(conditionId) {
+  let hex = String(conditionId || "").toLowerCase();
+  if (hex.startsWith("0x")) hex = hex.slice(2);
+  if (hex.length === 64 && (hex.endsWith("00") || hex.endsWith("01"))) hex = hex.slice(0, 62);
+  if (hex.length !== 62 || !/^[0-9a-f]+$/.test(hex)) {
+    throw new Error("protocol v2 condition id를 bytes31로 바꿀 수 없음");
   }
-  return true;
+  return `0x${hex}`;
+}
+
+export function buildV2RedeemCall(conditionId, outcomeIndex, amount) {
+  return {
+    target: PROTOCOL_V2_ROUTER,
+    value: "0",
+    data: encodeFunctionData({
+      abi: ROUTER_REDEEM_ABI,
+      functionName: "redeem",
+      args: [toBytes31(conditionId), BigInt(outcomeIndex), BigInt(amount)],
+    }),
+  };
+}
+
+// 정산 행 → condition 단위 계획 (live_executor.plan_redeems 이식).
+// 승자 행(REDEEMABLE·가치>0)이 있는 condition만 회수 대상이고,
+// 패배 행만 남은 condition은 worthless로 종결한다.
+export function planRedeems(entries) {
+  const groups = new Map();
+  const order = [];
+  const errors = [];
+  for (const e of entries || []) {
+    let cid = String(e?.condition_id || "").toLowerCase();
+    if (cid.startsWith("0x")) cid = cid.slice(2);
+    if (!/^[0-9a-f]{64}$/.test(cid)) {
+      errors.push({ entry: e, reason: "condition_id 형식 오류" });
+      continue;
+    }
+    const key = `0x${cid}`;
+    if (!groups.has(key)) {
+      groups.set(key, { condition_id: key, wins: [], losses: [] });
+      order.push(key);
+    }
+    const g = groups.get(key);
+    const won = e.status === "REDEEMABLE" && Number(e.current_value || 0) > 0;
+    (won ? g.wins : g.losses).push(e);
+  }
+  const targets = [];
+  const worthless = [];
+  for (const key of order) {
+    const g = groups.get(key);
+    if (g.wins.length) {
+      targets.push({
+        ...g,
+        expected_usd: round2(g.wins.reduce((s, e) => s + Number(e.current_value || 0), 0)),
+      });
+    } else {
+      worthless.push(...g.losses);
+    }
+  }
+  return { targets, worthless, errors };
+}
+
+export function verifyRecovery(beforeCash, afterCash, expectedUsd) {
+  const delta = round2(afterCash - beforeCash);
+  const expected = expectedUsd || 0;
+  const tolerance = Math.max(REDEEM_TOL_ABS, REDEEM_TOL_REL * expected);
+  return {
+    delta_usd: delta,
+    expected_usd: expected,
+    tolerance: round2(tolerance),
+    status: Math.abs(delta - expected) <= tolerance ? "verified" : "mismatch",
+  };
+}
+
+function loadJsonList(key) {
+  try {
+    const a = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(a) ? a : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadRedeemPending() {
+  return loadJsonList(LS.redeemPending);
+}
+
+function saveRedeemPending(list) {
+  try {
+    localStorage.setItem(LS.redeemPending, JSON.stringify(list.slice(-300)));
+  } catch {}
+}
+
+// 스냅샷의 정산 행(REDEEMABLE/REDEEMABLE_LOST)을 pending에 수집한다.
+// 이미 회수했거나 worthless로 종결한 condition은 다시 넣지 않는다.
+function ingestRedeemPending() {
+  const done = new Set([
+    ...loadJsonList(LS.redeemHistory).map((h) => h.condition_id),
+    ...loadJsonList(LS.redeemClosed),
+  ]);
+  const pending = loadRedeemPending();
+  const seen = new Set(pending.map((e) => `${e.condition_id}|${e.token_id}`));
+  let changed = false;
+  const addRows = (rows, status) => {
+    for (const r of rows || []) {
+      if (!r.condition_id || done.has(r.condition_id)) continue;
+      const k = `${r.condition_id}|${r.token_id}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      pending.push({
+        condition_id: r.condition_id,
+        token_id: r.token_id,
+        slug: r.slug ?? null,
+        status,
+        current_value: Number(r.current_value || 0),
+      });
+      changed = true;
+    }
+  };
+  addRows(state.lastWinRows, "REDEEMABLE");
+  addRows(state.lastLostRows, "REDEEMABLE_LOST");
+  if (changed) saveRedeemPending(pending);
+}
+
+function removeRedeemPending(conditionId) {
+  saveRedeemPending(loadRedeemPending().filter((e) => e.condition_id !== conditionId));
+}
+
+function closeWorthless(entries) {
+  const closed = loadJsonList(LS.redeemClosed);
+  const set = new Set(closed);
+  for (const e of entries) {
+    set.add(e.condition_id);
+    log(`리딤 종결 (전액 손실) ${String(e.condition_id).slice(0, 10)}…`);
+  }
+  try {
+    localStorage.setItem(LS.redeemClosed, JSON.stringify([...set].slice(-500)));
+  } catch {}
+  const ids = new Set(entries.map((e) => e.condition_id));
+  saveRedeemPending(loadRedeemPending().filter((e) => !ids.has(e.condition_id)));
+}
+
+function recordRedeemHistory(rec) {
+  const list = loadJsonList(LS.redeemHistory);
+  list.push(rec);
+  try {
+    localStorage.setItem(LS.redeemHistory, JSON.stringify(list.slice(-100)));
+  } catch {}
+}
+
+function relayerHeaders(creds) {
+  return {
+    "RELAYER_API_KEY": creds.key,
+    "RELAYER_API_KEY_ADDRESS": creds.address,
+    "Content-Type": "application/json",
+  };
+}
+
+async function relayerGet(path, creds) {
+  const url = `${RELAYER_URL}${path}`;
+  const bridge = window.AndroidBridge;
+  if (bridge?.getSync) {
+    const out = JSON.parse(bridge.getSync(url, JSON.stringify(relayerHeaders(creds))));
+    if (out.error) throw new Error(`relayer 조회 실패: ${out.error}`);
+    if (out.status >= 400) throw new Error(`relayer 조회 HTTP ${out.status}: ${String(out.body || "").slice(0, 160)}`);
+    return JSON.parse(out.body || "{}");
+  }
+  const resp = await fetch(url, { headers: relayerHeaders(creds) });
+  if (!resp.ok) throw new Error(`relayer 조회 HTTP ${resp.status}`);
+  return resp.json();
+}
+
+async function relayerPost(path, bodyObj, creds) {
+  const url = `${RELAYER_URL}${path}`;
+  const body = JSON.stringify(bodyObj);
+  const bridge = window.AndroidBridge;
+  if (bridge?.postSync) {
+    const out = JSON.parse(bridge.postSync(url, JSON.stringify(relayerHeaders(creds)), body));
+    if (out.error) throw new Error(String(out.error).slice(0, 200));
+    if (out.status >= 400) throw new Error(`relayer 제출 HTTP ${out.status}: ${String(out.body || "").slice(0, 200)}`);
+    return JSON.parse(out.body || "{}");
+  }
+  const resp = await fetch(url, { method: "POST", headers: relayerHeaders(creds), body });
+  const text = await resp.text();
+  if (!resp.ok) throw new Error(`relayer 제출 HTTP ${resp.status}: ${text.slice(0, 200)}`);
+  return JSON.parse(text || "{}");
+}
+
+// Gamma에서 마켓 컨텍스트(negRisk·version·positionIds)를 읽는다 (closed 포함)
+async function fetchMarketContext(conditionId) {
+  const page = await fetchJson(
+    `${GAMMA_MARKETS_URL}?${new URLSearchParams({ condition_ids: conditionId, closed: "true" })}`,
+  );
+  const m = Array.isArray(page) ? page[0] : null;
+  if (!m) return null;
+  return {
+    negRisk: Boolean(m.negRisk),
+    version: m.version || null,
+    positionIds: Array.isArray(m.positionIds) ? m.positionIds : null,
+  };
+}
+
+async function erc1155Balance(token, owner, tokenId) {
+  const data =
+    `0x00fdd58e${owner.slice(2).toLowerCase().padStart(64, "0")}` +
+    BigInt(tokenId).toString(16).padStart(64, "0");
+  const result = await rpcCall("eth_call", [{ to: token, data }, "latest"]);
+  return BigInt(result);
+}
+
+const BATCH_TYPES = {
+  Batch: [
+    { name: "wallet", type: "address" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+    { name: "calls", type: "Call[]" },
+  ],
+  Call: [
+    { name: "target", type: "address" },
+    { name: "value", type: "uint256" },
+    { name: "data", type: "bytes" },
+  ],
+};
+
+// deposit wallet 배치 1건을 제출하고 종단 상태까지 폴링한다.
+// nonce 불일치 오류가 오면 오류 문구의 on-chain nonce로 1회 재제출한다.
+async function submitRedeemBatch(conditionId, calls, creds) {
+  const params = await relayerGet(
+    `/v1/account/transactions/params?address=${state.eoa}&type=WALLET`,
+    creds,
+  );
+  let nonce = String(params.nonce);
+  let lastError = null;
+  for (let attempt = 0; attempt < REDEEM_SUBMIT_ATTEMPTS; attempt += 1) {
+    const deadline = String(Math.floor(Date.now() / 1000) + 600);
+    const signature = await state.account.signTypedData({
+      domain: { name: "DepositWallet", version: "1", chainId: 137, verifyingContract: state.funder },
+      types: BATCH_TYPES,
+      primaryType: "Batch",
+      message: {
+        wallet: state.funder,
+        nonce: BigInt(nonce),
+        deadline: BigInt(deadline),
+        calls: calls.map((c) => ({ target: c.target, value: 0n, data: c.data })),
+      },
+    });
+    let resp;
+    try {
+      resp = await relayerPost(
+        "/submit",
+        {
+          type: "WALLET",
+          from: state.eoa,
+          to: DEPOSIT_WALLET_FACTORY,
+          nonce,
+          signature,
+          metadata: `Redeem positions for condition ${conditionId}`,
+          depositWalletParams: {
+            depositWallet: state.funder,
+            deadline,
+            calls: calls.map((c) => ({ target: c.target, value: "0", data: c.data })),
+          },
+        },
+        creds,
+      );
+    } catch (e) {
+      lastError = e;
+      const m = /batch nonce (\d+) does not match on-chain nonce (\d+)/.exec(String(e.message ?? e));
+      if (m && BigInt(m[2]) > BigInt(nonce)) {
+        nonce = m[2];
+        continue;
+      }
+      throw e;
+    }
+    const txId = resp.transactionID;
+    const started = Date.now();
+    while (Date.now() - started < REDEEM_POLL_MAX_MS) {
+      await sleep(REDEEM_POLL_MS);
+      const tx = await relayerGet(`/v1/account/transactions/${txId}`, creds).catch(() => null);
+      if (!tx) continue;
+      if (tx.state === "STATE_CONFIRMED") {
+        return { transactionId: txId, txHash: tx.transaction_hash || resp.transactionHash || null };
+      }
+      if (tx.state === "STATE_FAILED" || tx.state === "STATE_INVALID") {
+        throw new Error(`relayer 거래 실패 (${tx.state})${tx.error_msg ? `: ${tx.error_msg}` : ""}`);
+      }
+    }
+    throw new Error("relayer 거래 확인 시간 초과 — 제출은 됐을 수 있어 다음 사이클에 잔고로 재확인");
+  }
+  throw lastError || new Error("relayer 제출 실패");
+}
+
+async function executeRedeemTarget(target, creds) {
+  const ctx = await fetchMarketContext(target.condition_id);
+  if (!ctx) throw new Error("마켓 컨텍스트 조회 실패");
+  let calls;
+  if (ctx.version === "v2") {
+    if (!ctx.positionIds || ctx.positionIds.length < 2) throw new Error("v2 포지션 ID 없음");
+    calls = [];
+    for (let i = 0; i < 2; i += 1) {
+      const bal = await erc1155Balance(POSITION_MANAGER, state.funder, ctx.positionIds[i]);
+      if (bal > 0n) calls.push(buildV2RedeemCall(target.condition_id, i, bal));
+    }
+    if (!calls.length) throw new Error("상환할 잔고 없음");
+  } else {
+    calls = [buildCtfRedeemCall(target.condition_id, ctx.negRisk)];
+  }
+  return submitRedeemBatch(target.condition_id, calls, creds);
+}
+
+// 사이클 단계: 손절 다음·신규 매수 이전. 돌려주는 값은 이번 사이클 회수액 합계.
+async function runRedeems(gen) {
+  ingestRedeemPending();
+  const plan = planRedeems(loadRedeemPending());
+  if (plan.worthless.length) closeWorthless(plan.worthless);
+  if (!plan.targets.length) return 0;
+  const creds = readRelayerCreds();
+  if (!creds) {
+    if (!state.redeemKeyWarned) {
+      state.redeemKeyWarned = true;
+      log(`리딤 대기 ${plan.targets.length}건 — Relayer API 키가 없어 제출을 보류합니다 (키 등록 후 자동 실행)`);
+    }
+    return 0;
+  }
+  let recoveredTotal = 0;
+  for (const target of plan.targets) {
+    if (!state.running || gen !== state.gen) break;
+    const lockKey = `redeem:${target.condition_id}`;
+    if (!tryAcquireSubmitLock(lockKey)) continue;
+    try {
+      const before = await clobCash();
+      const res = await executeRedeemTarget(target, creds);
+      let recovered = null;
+      let verifyStatus;
+      try {
+        const ver = verifyRecovery(before, await clobCash(), target.expected_usd);
+        recovered = ver.delta_usd;
+        verifyStatus = ver.status;
+      } catch (e) {
+        verifyStatus = "submitted_unverified";
+        log(`리딤 제출 후 잔고 측정 실패 ${target.condition_id.slice(0, 10)}…: ${String(e.message ?? e).slice(0, 120)}`);
+      }
+      recordRedeemHistory({
+        ts: new Date().toISOString(),
+        condition_id: target.condition_id,
+        expected_usd: target.expected_usd,
+        recovered_usd: recovered,
+        tx_hash: res.txHash,
+        transaction_id: res.transactionId,
+        verify_status: verifyStatus,
+      });
+      removeRedeemPending(target.condition_id);
+      if (recovered) recoveredTotal = round2(recoveredTotal + recovered);
+      log(
+        `리딤 회수 ${target.condition_id.slice(0, 10)}… · 예상 $${target.expected_usd} · ` +
+        `회수 ${recovered == null ? "미확인" : `$${recovered}`} · ${verifyStatus}`,
+      );
+    } catch (e) {
+      // 건별 실패는 pending을 유지하고 다음 사이클에 재시도한다 (영구 래치 없음)
+      log(`리딤 실패 ${target.condition_id.slice(0, 10)}…: ${String(e.message ?? e).slice(0, 140)} — 다음 사이클에 재시도`);
+    } finally {
+      releaseSubmitLock(lockKey);
+    }
+  }
+  return recoveredTotal;
 }
 
 // ── 셀프 업데이트 ─────────────────────────────────────────────
@@ -956,11 +1816,13 @@ async function link(privateKeyRaw) {
   const l1 = new ClobClient({ host: CLOB_HOST, chain: Chain.POLYGON, signer: wallet });
   const creds = await l1.createOrDeriveApiKey();
   state.client = buildClient(wallet, creds, funder);
+  state.account = account;
   state.eoa = eoa;
   state.funder = funder;
   const snap = await snapshot();
-  localStorage.setItem(LS.key, hex);
-  localStorage.setItem(LS.creds, JSON.stringify(creds));
+  if (!storeSecret(LS.key, hex) || !storeSecret(LS.creds, JSON.stringify(creds))) {
+    throw new Error("키 암호화 저장에 실패했습니다 — 다시 시도하세요.");
+  }
   localStorage.setItem(LS.funder, funder);
   log(`연동 완료 · funder ${funder.slice(0, 10)}…`);
   void checkForUpdate();
@@ -972,12 +1834,17 @@ async function link(privateKeyRaw) {
 // 스냅샷 캐시·실행 의도)만 로컬에서 읽어 돌려준다. 클라이언트 구축과
 // 새 스냅샷은 restore()가 이어서 한다.
 function boot() {
-  let pk = null;
+  migrateSecrets();
+  let raw = null;
   try {
-    pk = localStorage.getItem(LS.key);
+    raw = localStorage.getItem(LS.key);
   } catch {}
+  if (!raw) return { view: "link", snap: null, eoa: null, funder: null };
+  const pk = readSecret(LS.key);
+  // 저장분은 있는데 복호화에 실패하면 지어내지 않고 연동 화면으로 떨어진다
   if (!pk) return { view: "link", snap: null, eoa: null, funder: null };
   const { account } = makeSigner(pk);
+  state.account = account;
   let funder = null;
   try {
     funder = localStorage.getItem(LS.funder);
@@ -993,28 +1860,38 @@ function boot() {
 }
 
 async function restore() {
-  const pk = localStorage.getItem(LS.key);
+  migrateSecrets();
+  const pk = readSecret(LS.key);
   if (!pk) return null;
   const { account, wallet } = makeSigner(pk);
   const funder = localStorage.getItem(LS.funder) || (await detectFunder(account.address));
   if (!funder) return null;
   let creds = null;
   try {
-    creds = JSON.parse(localStorage.getItem(LS.creds) || "null");
+    creds = JSON.parse(readSecret(LS.creds) || "null");
   } catch {
     creds = null;
   }
   if (!creds) {
     const l1 = new ClobClient({ host: CLOB_HOST, chain: Chain.POLYGON, signer: wallet });
     creds = await l1.createOrDeriveApiKey();
-    localStorage.setItem(LS.creds, JSON.stringify(creds));
+    storeSecret(LS.creds, JSON.stringify(creds));
   }
   state.client = buildClient(wallet, creds, funder);
+  state.account = account;
   state.eoa = account.address;
   state.funder = funder;
   const snap = await snapshot();
   void checkForUpdate();
-  if (runIntentSaved()) {
+  reportWatchdogRecovery();
+  const intent = runIntentState();
+  if (intent.mirror === false && intent.saved) {
+    // 알림·뷰어에서 정지했으면(네이티브 미러 해제) LS 플래그를 정리한다
+    try {
+      localStorage.removeItem(LS.runIntent);
+    } catch {}
+  }
+  if (shouldAutoStart(hostMode(), intent.saved, intent.mirror)) {
     log("이전 실행 의도 복원 — 엔진 자동 재개");
     start();
   }
@@ -1042,6 +1919,27 @@ window.BM = {
   betUsdFor,
   checkForUpdate,
   startUpdate,
+  hostMode,
+  compareVersions,
+  parseSnapCache: snapshotFromCache,
+  readSnapCache: cachedSnapshot,
+  hasRelayerKey: () => !!readRelayerCreds(),
+  setRelayerKey(key, address) {
+    const k = String(key || "").trim();
+    const a = String(address || "").trim();
+    if (!k || !/^0x[0-9a-fA-F]{40}$/.test(a)) return false;
+    const ok = storeSecret(LS.relayer, JSON.stringify({ key: k, address: a }));
+    if (ok) state.redeemKeyWarned = false;
+    return ok;
+  },
+  clearRelayerKey() {
+    try {
+      localStorage.removeItem(LS.relayer);
+    } catch {}
+  },
+  get version() {
+    return APP_VERSION;
+  },
   get updateInfo() {
     return state.updateInfo;
   },
