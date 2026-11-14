@@ -175,6 +175,7 @@ function scanCandidates(markets, heldSlugs, boughtSlugs) {
   const out = [];
   for (const m of markets) {
     if (!m.active || m.closed) continue;
+    if (m.acceptingOrders === false || m.archived === true) continue; // 주문 수용 중단·보관 마켓 (문서 Market Details — Market Status)
     const slug = m.slug || "";
     if (SHORT_TERM_RE.test(slug)) continue;
     if (m.sportsMarketType) continue; // 스포츠는 목록 단계에서 제외 (검증 단계에도 가드로 남겨 둠)
@@ -310,9 +311,14 @@ async function verifyCandidate(cand, bet) {
   const m = Array.isArray(page) ? page[0] : null;
   if (!m) return reject("gamma_market_missing");
   if (m.sportsMarketType) return reject("sports");
+  if (m.acceptingOrders === false || m.archived === true) return reject("market_not_accepting");
   let tokens, prices;
   try {
-    tokens = JSON.parse(m.clobTokenIds || "[]");
+    // 거래 식별자는 마켓의 프로토콜 버전으로 고른다 (문서 Market Details — Market Outcomes):
+    // v2는 positionIds 배열을 그대로, v1(CTF)은 clobTokenIds JSON 문자열을 파싱한다.
+    tokens = m.version === "v2" && Array.isArray(m.positionIds) && m.positionIds.length >= 2
+      ? m.positionIds
+      : JSON.parse(m.clobTokenIds || "[]");
     prices = JSON.parse(m.outcomePrices || "[]").map(Number);
   } catch {
     return reject("gamma_parse_error");
@@ -339,14 +345,15 @@ async function verifyCandidate(cand, bet) {
   if (asks[0].size * bestAsk < ASK_DEPTH_MIN_USD) return reject("ask_depth_low");
   const tick = Number(book.tick_size || (await state.client.getTickSize(tokenId)));
   const limitPrice = Math.min(roundTick(bestAsk + SLIPPAGE_CAP, tick), BAND_HI);
-  const shares = Math.floor((bet / limitPrice) * 100) / 100;
+  // 최소 주문 수량 검사용 추정치 — 실제 주식수는 시장가 주문이 금액에서 역산한다
+  const estShares = bet / limitPrice;
   const minSize = Number(book.min_order_size || 0);
-  if (shares < minSize) return reject("below_min_order_size");
+  if (estShares < minSize) return reject("below_min_order_size");
   return {
     ok: true,
     tokenId,
     limitPrice,
-    shares,
+    estShares,
     tickSize: String(tick),
     negRisk: Boolean(book.neg_risk),
   };
@@ -363,6 +370,7 @@ const REJECT_LABELS = {
   ask_depth_low: "호가깊이부족",
   below_min_order_size: "최소수량미달",
   gamma_market_missing: "마켓없음",
+  market_not_accepting: "주문불가",
   gamma_parse_error: "응답파싱오류",
   gamma_shape_error: "응답형식오류",
   verify_error: "검증오류",
@@ -487,12 +495,13 @@ async function runCycle(gen) {
     if (!state.running || gen !== state.gen) return;
     let signed;
     try {
-      signed = await state.client.createOrder(
+      signed = await state.client.createMarketOrder(
         {
           tokenID: detail.tokenId,
-          price: detail.limitPrice,
-          size: detail.shares,
           side: Side.BUY,
+          amount: snap.bet,
+          price: detail.limitPrice,
+          orderType: OrderType.FOK,
         },
         { tickSize: detail.tickSize, negRisk: detail.negRisk },
       );
