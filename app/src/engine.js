@@ -75,6 +75,7 @@ const LS = {
   redeemPending: "bm_redeem_pending",
   redeemHistory: "bm_redeem_history",
   redeemClosed: "bm_redeem_closed",
+  stage: "bm_stage",
 };
 
 // 손절 (2026-11-14 사용자 결정 — 페이퍼 boringmech와 동일 규칙):
@@ -578,15 +579,48 @@ function readRelayerCreds() {
   return null;
 }
 
-function buildClient(signer, creds, funder) {
-  return new ClobClient({
-    host: CLOB_HOST,
-    chain: Chain.POLYGON,
-    signer,
-    creds,
-    signatureType: SignatureTypeV2.POLY_1271,
-    funderAddress: funder,
+// SDK 호출 타임아웃 — SDK 내부 HTTP가 응답 없이 매달리면 그 await를 기다리는
+// 사이클 루프 전체가 영구 정지한다 (다음 사이클 타이머는 runCycle이 끝나야
+// 걸린다). 모든 메서드 호출을 감싸 제한 시간을 넘기면 오류로 끊는다.
+// 제출 계열이 시간 초과로 끊기면 호출부의 기존 catch가 "결과 불명"으로
+// 처리하므로 정합한다.
+export function withClientTimeout(client, timeoutMs = FETCH_TIMEOUT_MS) {
+  return new Proxy(client, {
+    get(target, prop) {
+      const v = Reflect.get(target, prop, target);
+      if (typeof v !== "function") return v;
+      return (...args) => {
+        let timer;
+        const timeout = new Promise((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `SDK 호출 시간 초과 (${Math.round(timeoutMs / 1000)}초) ${String(prop)}`,
+                ),
+              ),
+            timeoutMs,
+          );
+        });
+        return Promise.race([Reflect.apply(v, target, args), timeout]).finally(() =>
+          clearTimeout(timer),
+        );
+      };
+    },
   });
+}
+
+function buildClient(signer, creds, funder) {
+  return withClientTimeout(
+    new ClobClient({
+      host: CLOB_HOST,
+      chain: Chain.POLYGON,
+      signer,
+      creds,
+      signatureType: SignatureTypeV2.POLY_1271,
+      funderAddress: funder,
+    }),
+  );
 }
 
 // 개인키 입력의 유일한 정규화 지점 — 0x 접두사는 있어도 없어도 된다.
@@ -1208,6 +1242,7 @@ export function saveSettledBaseline(base) {
 }
 
 async function runCycle(gen) {
+  setStage("snapshot");
   let snap = await snapshot();
   state.onState(snap);
   log(
@@ -1224,6 +1259,7 @@ async function runCycle(gen) {
   const settleNotice = settledNoticeFor(state.settledBaseline, snap);
   beatHeartbeat();
   // 손절은 신규 매수보다 먼저 — 팔린 건이 있으면 잔고·슬롯을 다시 읽는다
+  setStage("stoploss");
   const soldCount = await runStopLoss(gen);
   beatHeartbeat();
   if (soldCount > 0) {
@@ -1231,6 +1267,7 @@ async function runCycle(gen) {
     state.onState(snap);
   }
   // 리딤은 손절 다음·신규 매수 이전 — 회수액이 생기면 잔고를 다시 읽는다
+  setStage("redeem");
   const recovered = await runRedeems(gen);
   beatHeartbeat();
   if (recovered > 0) {
@@ -1262,6 +1299,7 @@ async function runCycle(gen) {
     log("슬롯 없음 — 이번 사이클 매수 없음");
     return;
   }
+  setStage("scan");
   const markets = await fetchMarkets();
   const candidates = scanCandidates(markets, snap.heldSlugs, boughtSlugs());
   let slotsLeft = snap.slots;
@@ -1390,6 +1428,28 @@ async function runCycle(gen) {
   }));
 }
 
+// 단계 추적 — 사이클이 어느 단계에 있는지를 영속 기록한다. 엔진이 중간에
+// 죽으면(웹뷰 종료·무응답) 평소 로그만으로는 중단 지점을 특정할 수 없어,
+// 다음 복원 때 마지막 기록 단계로 지점을 드러낸다. 정상 정지·정상 사이클
+// 완료는 값을 지우거나 idle로 남겨 오탐을 막는다.
+function setStage(stage) {
+  state.stage = stage;
+  try {
+    localStorage.setItem(
+      LS.stage,
+      JSON.stringify({ stage, cycle: state.cycle, ts: Date.now() }),
+    );
+  } catch {}
+}
+
+function readStage() {
+  try {
+    const o = JSON.parse(localStorage.getItem(LS.stage) || "null");
+    if (o && typeof o.stage === "string") return o;
+  } catch {}
+  return null;
+}
+
 async function loop(gen) {
   if (!state.running || gen !== state.gen) return;
   state.cycle += 1;
@@ -1399,6 +1459,7 @@ async function loop(gen) {
   } catch (e) {
     log(`사이클 오류: ${String(e.message ?? e).slice(0, 160)}`);
   }
+  setStage("idle");
   if (state.cycle % UPDATE_CHECK_EVERY_CYCLES === 0) void checkForUpdate();
   if (state.running && gen === state.gen) {
     state.timer = setTimeout(() => loop(gen), CYCLE_MS);
@@ -1707,7 +1768,7 @@ async function relayerGet(path, creds) {
     if (out.status >= 400) throw new Error(`relayer 조회 HTTP ${out.status}: ${String(out.body || "").slice(0, 160)}`);
     return JSON.parse(out.body || "{}");
   }
-  const resp = await fetch(url, { headers: relayerHeaders(creds) });
+  const resp = await fetchWithTimeout(url, { headers: relayerHeaders(creds) });
   if (!resp.ok) throw new Error(`relayer 조회 HTTP ${resp.status}`);
   return resp.json();
 }
@@ -1722,7 +1783,7 @@ async function relayerPost(path, bodyObj, creds) {
     if (out.status >= 400) throw new Error(`relayer 제출 HTTP ${out.status}: ${String(out.body || "").slice(0, 200)}`);
     return JSON.parse(out.body || "{}");
   }
-  const resp = await fetch(url, { method: "POST", headers: relayerHeaders(creds), body });
+  const resp = await fetchWithTimeout(url, { method: "POST", headers: relayerHeaders(creds), body });
   const text = await resp.text();
   if (!resp.ok) throw new Error(`relayer 제출 HTTP ${resp.status}: ${text.slice(0, 200)}`);
   return JSON.parse(text || "{}");
@@ -2064,6 +2125,7 @@ function stop() {
   state.timer = null;
   if (state.hbTimer) clearInterval(state.hbTimer);
   state.hbTimer = null;
+  setStage("stopped");
   log("엔진 정지");
   state.onState(state.lastSnapshot);
 }
@@ -2078,7 +2140,7 @@ async function link(privateKeyRaw) {
       "Polymarket 웹사이트에서 지갑을 한 번 활성화한 뒤 다시 연동하세요.",
     );
   }
-  const l1 = new ClobClient({ host: CLOB_HOST, chain: Chain.POLYGON, signer: wallet });
+  const l1 = withClientTimeout(new ClobClient({ host: CLOB_HOST, chain: Chain.POLYGON, signer: wallet }));
   const creds = await l1.createOrDeriveApiKey();
   state.client = buildClient(wallet, creds, funder);
   state.account = account;
@@ -2126,6 +2188,14 @@ function boot() {
 
 async function restore() {
   migrateSecrets();
+  // 이전 실행이 사이클 중간 단계에서 끝난 흔적이 있으면 중단 지점을 남긴다
+  const prevStage = readStage();
+  if (prevStage && prevStage.stage !== "idle" && prevStage.stage !== "stopped") {
+    log(
+      `이전 실행 중단 지점: ${prevStage.stage} 단계 (사이클 ${prevStage.cycle ?? "?"}) — ` +
+        "정상 완료 없이 종료된 흔적입니다",
+    );
+  }
   // (재)로드된 페이지는 제출 중이 아니다 — 이전 페이지가 남긴 워치독
   // 제출 가드를 해제해 워치독이 다시 일할 수 있게 한다 (F1)
   setNativeSubmitFlag(false);
@@ -2153,7 +2223,7 @@ async function restore() {
     creds = null;
   }
   if (!creds) {
-    const l1 = new ClobClient({ host: CLOB_HOST, chain: Chain.POLYGON, signer: wallet });
+    const l1 = withClientTimeout(new ClobClient({ host: CLOB_HOST, chain: Chain.POLYGON, signer: wallet }));
     creds = await retryAsync(() => l1.createOrDeriveApiKey()).catch(() => null);
     if (!creds) {
       log("복원 실패 — API 키를 만들지 못했습니다 (네트워크 상태 확인 필요)");

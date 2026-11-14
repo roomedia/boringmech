@@ -35,6 +35,7 @@ const {
   retryAsync,
   fetchPositions,
   isEngineUnresponsive,
+  withClientTimeout,
   beginSubmit,
   endSubmit,
   submitInFlight,
@@ -833,12 +834,35 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   eq(book.settledRealizedPnl, -total, "archive: realized sum keeps archived records");
 }
 
+// 37. SDK 타임아웃 래퍼 — 느린 메서드는 시간 초과로 끊기고, 빠른 메서드는
+// 값·this를 그대로 돌려준다 (사이클 루프 영구 정지 방지)
+{
+  const fast = withClientTimeout({ v: 7, async get() { return this.v; } }, 50);
+  eq(await fast.get(), 7, "clientTimeout: fast call passes value and this");
+  eq(fast.v, 7, "clientTimeout: non-function props pass through");
+  const slow = withClientTimeout({ async get() { return new Promise(() => {}); } }, 30);
+  let threw = null;
+  try {
+    await slow.get();
+  } catch (e) {
+    threw = e;
+  }
+  eq(/SDK 호출 시간 초과/.test(String(threw?.message ?? "")), true, "clientTimeout: hung call is cut by timeout");
+}
+
 // 38. 구조 가드 — F1/F3/F4/F6 수정이 소스에 실제로 박혀 있다
 {
   const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
   eq(src.includes("setInterval(beatHeartbeat, HEARTBEAT_INTERVAL_MS)"), true, "guard: heartbeat interval runs while engine runs");
   eq(src.includes("new AbortController()"), true, "guard: fetches carry timeouts");
   eq(src.includes("리딤 계획 제외"), true, "guard: redeem plan errors are logged");
+  eq(
+    (src.match(/await fetch\(/g) || []).length,
+    1,
+    "guard: only fetch call left is inside fetchWithTimeout itself",
+  );
+  eq(src.includes("withClientTimeout("), true, "guard: SDK client wrapped with timeout");
+  eq(src.includes('setStage("stoploss")'), true, "guard: cycle stage tracking present");
   eq(src.includes("already_redeemed"), true, "guard: already-redeemed termination recorded");
   const bridge = readFileSync(
     new URL("../../android/src/com/roomedia/boringmech/Bridge.java", import.meta.url),
