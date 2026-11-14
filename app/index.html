@@ -184,6 +184,7 @@
     try { hasKey = !!localStorage.getItem('bm_pk'); } catch (e) {}
     var intentOn = false;
     var heartbeatMs = 0;
+    var autoReportSent = false;
     var viewerBootMs = Date.now();
     var bootInfo = { eoa: null, funder: null };
     try {
@@ -256,6 +257,14 @@
       // heartbeatMs > 0일 때만 동작해, 복원에 실패한 엔진이 영영
       // "실행 중"으로 표시됐다. 유예(60초)는 BM.isEngineUnresponsive 안.
       var stale = intentOn && BM.isEngineUnresponsive(heartbeatMs, Date.now(), viewerBootMs);
+      // 무응답이 처음 감지되면 자동으로 1회 제보한다 (에피소드당 1회 —
+      // 엔진이 회복되면 플래그를 풀어 다음 무응답 때 다시 보낸다).
+      if (stale && !autoReportSent){
+        autoReportSent = true;
+        sendReport(true);
+      } else if (!stale){
+        autoReportSent = false;
+      }
       if (!hasKey){ chip.textContent = '미연동'; chip.className = 'chip warn'; }
       else if (intentOn && stale){ chip.textContent = '실행 중 · 응답 없음'; chip.className = 'chip warn'; }
       else if (intentOn){ chip.textContent = '실행 중'; chip.className = 'chip run'; }
@@ -408,27 +417,36 @@
       btn.textContent = result;
       setTimeout(function(){ btn.textContent = '로그 복사'; }, 2500);
     });
-    $('btnReport').addEventListener('click', async function(){
-      var btn = $('btnReport');
-      btn.textContent = '보내는 중…';
-      var payload = { ts: Date.now(), host: HOST };
+    // 제보 전송 (수동 버튼·자동 제보 공용). 성공하면 true.
+    // 실패하면 2초 뒤 1회 재시도한다 — 폰 네트워크 순단으로 버리는 제보를 줄인다.
+    async function sendReport(auto){
+      var payload = { ts: Date.now(), host: HOST, auto: !!auto };
+      if (auto) payload.reason = 'engine_unresponsive';
       try { payload.stage = JSON.parse(localStorage.getItem('bm_stage') || 'null'); } catch (e) {}
       try { payload.snap = JSON.parse(localStorage.getItem('bm_snap') || 'null'); } catch (e) {}
       payload.logs = readLogs();
-      var result = '제보 실패 — 네트워크를 확인하세요';
-      try {
-        var ctl = new AbortController();
-        var timer = setTimeout(function(){ ctl.abort(); }, 15000);
-        var resp = await fetch('https://phoneauto-relay.k45414254.workers.dev/report', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ app: 'boringmech', version: String(BM.version || ''), payload: payload }),
-          signal: ctl.signal,
-        });
-        clearTimeout(timer);
-        if (resp.ok) result = '제보됨 — 구리가 확인합니다';
-      } catch (e) {}
-      btn.textContent = result;
+      for (var attempt = 0; attempt < 2; attempt++){
+        try {
+          var ctl = new AbortController();
+          var timer = setTimeout(function(){ ctl.abort(); }, 15000);
+          var resp = await fetch('https://phoneauto-relay.k45414254.workers.dev/report', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ app: 'boringmech', version: String(BM.version || ''), payload: payload }),
+            signal: ctl.signal,
+          });
+          clearTimeout(timer);
+          if (resp.ok) return true;
+        } catch (e) {}
+        if (attempt === 0) await new Promise(function(r){ setTimeout(r, 2000); });
+      }
+      return false;
+    }
+    $('btnReport').addEventListener('click', async function(){
+      var btn = $('btnReport');
+      btn.textContent = '보내는 중…';
+      var ok = await sendReport(false);
+      btn.textContent = ok ? '제보됨 — 구리가 확인합니다' : '제보 실패 — 네트워크를 확인하세요';
       setTimeout(function(){ btn.textContent = '구리에게 제보'; }, 3000);
     });
     $('btnUnlink').addEventListener('click', function(){

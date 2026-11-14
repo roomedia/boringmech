@@ -895,6 +895,9 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   eq(html.includes("btnReport"), true, "guard: report button present in viewer");
   eq(html.includes("/report"), true, "guard: report posts to relay endpoint");
+  eq(html.includes("async function sendReport"), true, "guard: shared report sender present");
+  eq(html.includes("engine_unresponsive"), true, "guard: auto-report on unresponsive engine");
+  eq(html.includes("autoReportSent"), true, "guard: auto-report once per episode");
   eq(src.includes("already_redeemed"), true, "guard: already-redeemed termination recorded");
   const bridge = readFileSync(
     new URL("../../android/src/com/roomedia/boringmech/Bridge.java", import.meta.url),
