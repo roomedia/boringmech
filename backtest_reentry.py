@@ -150,7 +150,7 @@ def main():
 
     results = {}
     done = 0
-    with ThreadPoolExecutor(max_workers=8) as ex:
+    with ThreadPoolExecutor(max_workers=16) as ex:
         futs = {ex.submit(run_market, c): c for c in targets}
         for fut in as_completed(futs):
             done += 1

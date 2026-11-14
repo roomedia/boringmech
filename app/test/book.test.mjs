@@ -901,6 +901,8 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   eq(html.includes("autoReportSent"), true, "guard: auto-report once per episode");
   eq(html.includes("payload.bought"), true, "guard: report payload carries bought list");
   eq(src.includes("reconcileBoughtOnce"), true, "guard: bought reconciliation wired before scan");
+  eq(src.includes("next_cursor"), true, "guard: activity paging uses cursor, not offset");
+  eq(src.includes("기매수 정화 실패"), true, "guard: reconcile failure is logged, not silent");
   eq(src.includes("already_redeemed"), true, "guard: already-redeemed termination recorded");
   const bridge = readFileSync(
     new URL("../../android/src/com/roomedia/boringmech/Bridge.java", import.meta.url),

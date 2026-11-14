@@ -442,6 +442,7 @@ const state = {
   sessionFills: 0,
   posGapWarned: false,
   boughtReconciled: false,
+  reconcileFailLogged: false,
   updateInfo: null,
   updateNotifiedTag: "",
   onLog: () => {},
@@ -533,29 +534,40 @@ export function reconcileBought(boughtSet, onChainBuySlugs, heldSlugsSet) {
 }
 
 async function fetchBuySlugs(funder) {
+  // Data API v2 activity는 커서 전용이다 — offset을 붙이면 400으로 거부된다
+  // (2026-11-15 실측: "'offset' is not a query param on this API").
+  // positions와 같은 커서 순회 패턴을 쓴다.
   const slugs = new Set();
-  for (let page = 0; page < 5; page++) {
-    const params = new URLSearchParams({
-      user: funder, limit: "200", offset: String(page * 200),
-    });
+  let cursor = null;
+  for (let page = 0; page < 10; page++) {
+    const params = new URLSearchParams({ user: funder, limit: "100" });
+    if (cursor) params.set("cursor", cursor);
     const data = await fetchJson(`${DATA_API_V2}/activity?${params}`);
     const rows = Array.isArray(data) ? data : data?.data;
     if (!Array.isArray(rows) || !rows.length) break;
     for (const r of rows) {
       if (r?.type === "TRADE" && r?.side === "BUY" && r?.slug) slugs.add(r.slug);
     }
-    if (rows.length < 200) break;
+    const next = data?.pagination?.next_cursor;
+    if (!data?.pagination?.has_more || !next || next === cursor) break;
+    cursor = next;
   }
   return slugs;
 }
 
 // 엔진 가동 중 첫 스캔 전에 1회만 정화한다. 이력 조회에 실패하면
-// 플래그를 세우지 않아 다음 사이클에 다시 시도한다.
+// 플래그를 세우지 않아 다음 사이클에 다시 시도한다 — 단, 실패는 조용히
+// 묻지 않고 첫 실패를 로그로 남긴다 (v0.3.19에서 offset 400 실패가
+// 무음으로 묻혀 정화가 영영 안 돈 전적).
 async function reconcileBoughtOnce(snap) {
   let onChain;
   try {
     onChain = await fetchBuySlugs(state.funder);
-  } catch {
+  } catch (e) {
+    if (!state.reconcileFailLogged) {
+      state.reconcileFailLogged = true;
+      log(`기매수 정화 실패 — 매수 이력 조회 오류: ${String(e?.message ?? e).slice(0, 100)} (다음 사이클 재시도)`);
+    }
     return;
   }
   state.boughtReconciled = true;
