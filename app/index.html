@@ -186,6 +186,7 @@
     var heartbeatMs = 0;
     var autoReportSent = false;
     var errorReportSent = false;
+    var stopLossReportSent = false;
     // 사이클 오류가 이 횟수만큼 연속되면 자동 제보한다. 일시 오류 전적은
     // 최대 2회 연속 후 자가 회복(01:36 Gamma 타임아웃)이라 5회로 잡으면
     // 60초 주기 기준 약 5분 지속된 장애만 발화한다.
@@ -280,6 +281,17 @@
         }
       } else {
         errorReportSent = false;
+      }
+      // 손절 실패는 사이클 오류로 세어지지 않아 감시망 밖에 있었다 —
+      // 손절이 영구 사유로 매 사이클 실패해도 조용히 지나간다. 최근
+      // 로그에서 손절 실패가 반복되면 같은 방식으로 1회 제보한다.
+      if (intentOn && countStopLossFailures(readLogs()) >= 3){
+        if (!stopLossReportSent){
+          stopLossReportSent = true;
+          sendReport(true, 'stoploss_failure_streak');
+        }
+      } else if (countStopLossFailures(readLogs()) === 0) {
+        stopLossReportSent = false;
       }
       if (!hasKey){ chip.textContent = '미연동'; chip.className = 'chip warn'; }
       else if (intentOn && stale){ chip.textContent = '실행 중 · 응답 없음'; chip.className = 'chip warn'; }
@@ -442,6 +454,20 @@
       for (var i = logs.length - 1; i >= 0; i--){
         if (logs[i].indexOf('사이클 오류:') >= 0) n++;
         else break;
+      }
+      return n;
+    }
+    // 최근 로그 200줄 안의 손절 실패 횟수. 손절 성공 줄이 사이에 있으면
+    // 실패 연속이 끊긴 것으로 보고 그 지점부터만 센다.
+    function countStopLossFailures(logs){
+      var n = 0;
+      var tail = logs.slice(-200);
+      for (var i = tail.length - 1; i >= 0; i--){
+        var line = tail[i];
+        if (line.indexOf('손절 매도 ') >= 0 && line.indexOf('손절 매도 결과 불명') < 0 &&
+            line.indexOf('손절 매도 실패') < 0 && line.indexOf('손절 매도 서명 실패') < 0) break;
+        if (line.indexOf('손절 매도 실패') >= 0 || line.indexOf('손절 처리 오류') >= 0 ||
+            line.indexOf('손절 매도 결과 불명') >= 0 || line.indexOf('손절 매도 서명 실패') >= 0) n++;
       }
       return n;
     }

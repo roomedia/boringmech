@@ -29,6 +29,8 @@ const {
   toBytes31,
   scanCandidates,
   reconcileBought,
+  judgeFill,
+  boughtCorrupted,
   HEARTBEAT_INTERVAL_MS,
   NO_HEARTBEAT_GRACE_MS,
   FETCH_TIMEOUT_MS,
@@ -958,6 +960,76 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   eq(JSON.stringify(dropped), JSON.stringify(["c", "d"]), "reconcile: drops phantom records");
   const none = reconcileBought(new Set(), onChain, held);
   eq(none.kept.length + none.dropped.length, 0, "reconcile: empty bought stays empty");
+}
+
+// ── v0.3.24 전면 감사 가드 ──
+{
+  // judgeFill: 전송 실패(status 없음·0)는 결과 불명, 명시 거부는 error
+  eq(judgeFill({ error: "Network Error" }).kind, "unknown", "audit: transport error is unknown");
+  eq(judgeFill({ error: "Network Error", status: 0 }).kind, "unknown", "audit: status 0 is unknown");
+  eq(judgeFill({ error: "forbidden", status: 403 }).kind, "error", "audit: http error stays error");
+  eq(judgeFill({ success: false }).kind, "rejected", "audit: rejected unchanged");
+  eq(judgeFill({ success: true, status: "matched" }).filled, true, "audit: filled unchanged");
+
+  // scanCandidates: NaN 거래량·가격은 가드를 통과하지 못하고 탈락한다
+  const soon = new Date(Date.now() + 10 * 86400_000).toISOString();
+  const mk = (over) => ({
+    active: true, closed: false, acceptingOrders: true, archived: false,
+    slug: "nan-x", endDate: soon, volume: 50000,
+    outcomePrices: "[0.75, 0.25]", ...over,
+  });
+  eq(scanCandidates([mk({ volume: "abc" })], new Set(), new Set()).length, 0,
+    "audit: NaN volume dropped");
+  eq(scanCandidates([mk({ outcomePrices: "[\"x\", 0.25]" })], new Set(), new Set()).length, 0,
+    "audit: NaN price dropped");
+  eq(scanCandidates([mk({})], new Set(), new Set()).length, 1,
+    "audit: sane market still passes");
+
+  // summarizeBook: status 누락 + 수량 있는 행은 보유로 본다
+  const noStatus = row({ token_id: "NS1", status: undefined, current_size: 5 });
+  eq(summarizeBook([noStatus], [], [], []).openCount, 1, "audit: status-less row with size is open");
+  const redeemable = row({ token_id: "NS2", status: "REDEEMABLE", current_size: 5 });
+  eq(summarizeBook([redeemable], [], [], []).openCount, 0, "audit: redeemable row is not open");
+
+  // summarizeBook: 필드가 실린 패자 행은 출처가 승 조회여도 패로 가른다
+  const loserRow = row({ token_id: "U1", status: "REDEEMABLE", current_price: 0, realized_pnl: -5, entry_cost_usdc: 5, current_value: 0 });
+  const ub = summarizeBook([], [loserRow], [], []);
+  eq([ub.settledCount, ub.settledWins, ub.settledLosses], [1, 0, 1],
+    "audit: redeemable-listed loser judged by fields, not source");
+  eq(ub.settledRealizedPnl, -5, "audit: loser realized as -cost");
+
+  // summarizeBook: 손절 시도 토큰의 CLOSED 행은 최종가가 아니라 실현손익으로 판정
+  const attempted = row({ token_id: "AT1", status: "CLOSED", current_price: 1, realized_pnl: -4.5 });
+  const ab = summarizeBook([], [], [], [attempted], [], new Set(["AT1"]));
+  eq([ab.settledWins, ab.settledLosses], [0, 1], "audit: attempted stoploss token judged by realized pnl");
+  const ab2 = summarizeBook([], [], [], [attempted], [], new Set());
+  eq([ab2.settledWins, ab2.settledLosses], [1, 0], "audit: same row without attempt mark judged by price");
+
+  // summarizeBook: 손절 기록이 REDEEMABLE 조회보다 우선한다
+  const slRow = row({ token_id: "SL1", status: "REDEEMABLE", current_price: 1, current_value: 9, entry_cost_usdc: 5 });
+  const sb = summarizeBook([], [slRow], [], [], [{ token_id: "SL1", realized_pnl: -3 }]);
+  eq([sb.settledWins, sb.settledLosses, sb.settledStopLoss], [0, 1, 1],
+    "audit: stoploss record wins over redeemable listing");
+
+  // summarizeBook: 손절 원장 slug가 반환에 실린다 (재매수 차단 합류용)
+  const sb2 = summarizeBook([], [], [], [], [{ token_id: "SL2", slug: "sold-mkt", realized_pnl: -1 }]);
+  eq(sb2.stopLossSlugs.has("sold-mkt"), true, "audit: stopLossSlugs carries sold slugs");
+
+  // boughtCorrupted: 손상 원문과 정상 기록을 구분한다
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
+  store.set("bm_bought", '["a","b"]');
+  eq(boughtCorrupted(), false, "audit: intact bought is not corrupted");
+  store.set("bm_bought", "{broken");
+  eq(boughtCorrupted(), true, "audit: broken json is corrupted");
+  store.set("bm_bought", '{"not":"array"}');
+  eq(boughtCorrupted(), true, "audit: non-array json is corrupted");
+  store.delete("bm_bought");
+  eq(boughtCorrupted(), false, "audit: missing bought is not corrupted");
 }
 
 console.log(`book tests: ${passed} passed, ${failed} failed`);
