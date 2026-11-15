@@ -15,6 +15,7 @@ import android.content.pm.ServiceInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -28,11 +29,22 @@ import android.webkit.WebViewClient;
 // 엔진은 여기서 계속 돈다 ("무인 자동화 서버" 요구).
 // 실행 의도의 네이티브 미러(SharedPreferences)도 여기서 관리한다 —
 // 알림에서 정지하면 미러를 먼저 지워 다음 실행 때 자동 재개되지 않게 한다.
-// 워치독: JS가 사이클마다 남기는 하트비트를 30초마다 확인해
-// 200초(사이클 3개 + 여유, JS HEARTBEAT_STALE_MS와 같은 값) 이상
-// stale이면 엔진 페이지를 재로드한다. 하트비트 타이머만 살고 루프가
-// 죽는 경우를 위해 사이클 번호 전진도 함께 본다 — 번호가 240초간
-// 바뀌지 않으면 정체로 보고 재로드한다 (별도 카운터로 구분).
+//
+// 워치독은 전용 스레드에서 돈다. 종전 구조는 틱이 메인 Looper에 붙어
+// onStartCommand 말미(동기 WebView 생성 뒤)에서만 무장돼, WebView
+// 생성이 메인 스레드에서 멈추면 프로세스는 살고 섀도우는 도는데
+// 워치독만 영원히 무장되지 않는 상태가 됐다 (제보 12). 이제 무장은
+// onCreate 즉시, 판정·예약은 워치독 스레드가 소유하고, WebView 조작만
+// 메인 스레드로 post한다. 판정 자체는 WatchdogLogic(순수 Java)이 맡는다.
+// 감시 항목:
+//  - 하트비트 stale 200초 (사이클 3개 + 여유, JS와 같은 값)
+//  - 사이클 정체 240초 — 번호 전진과 사이클 내부 진행 신호 중 늦은
+//    쪽 기준. 검증만 긴 사이클은 진행 신호가 움직여 오재로드하지 않고,
+//    단계 내부까지 멈춘 경우에만 걸린다.
+//  - 부팅 감시 90초 — 로드·재로드·재생성 뒤 첫 하트비트가 없으면
+//    부팅 실패로 세고 WebView를 재생성한다 (로드됐는데 JS가 안 도는
+//    경우 포함). 복원 진행 신호가 오면 기한은 그만큼 미뤄진다.
+//  - WebView 소멸 시 재생성, 지시 무응답(메인 스레드 정지) 추적·반복.
 // 재로드 횟수는 JS가 복원 직후 읽어 로그로 남긴다.
 public class EngineService extends Service {
     public static final String ACTION_STOP = "com.roomedia.boringmech.ACTION_STOP";
@@ -44,8 +56,11 @@ public class EngineService extends Service {
     private static final String KEY_HEARTBEAT_MS = "heartbeat_ms";
     private static final String KEY_HEARTBEAT_CYCLE = "heartbeat_cycle";
     private static final String KEY_HEARTBEAT_CYCLE_CHANGED_MS = "heartbeat_cycle_changed_ms";
+    private static final String KEY_PROGRESS_MS = "progress_ms";
     private static final String KEY_WD_RELOADS = "wd_reloads";
     private static final String KEY_WD_CYCLE_RELOADS = "wd_cycle_reloads";
+    private static final String KEY_BOOT_FAILURES = "boot_failures";
+    private static final String KEY_DIRECTIVE_UNACKED = "directive_unacked";
     private static final String KEY_SNAP_CACHE = "snap_cache";
     private static final String KEY_SUBMIT_IN_FLIGHT = "submit_in_flight";
     // 네이티브 섀도우용 미러 — JS boot/link가 남긴다 (Bridge.setFunderMirror 등)
@@ -58,33 +73,53 @@ public class EngineService extends Service {
     private static final String CHANNEL_ID = "bm_engine";
     private static final int NOTIFICATION_ID = 1;
 
-    private static final long WATCHDOG_PERIOD_MS = 30_000;
-    private static final long HEARTBEAT_STALE_MS = 200_000;
-    private static final long LOAD_GRACE_MS = 240_000;
-    // 사이클 정체 판정 — 하트비트 타이머(30초)만 살아 있고 사이클 루프
-    // 체인이 죽으면 하트비트는 계속 오지만 사이클 번호가 멈춘다. 번호가
-    // 마지막으로 바뀐 뒤 이 시간(사이클 4개분)이 지나도 전진이 없으면
-    // 정체로 보고 재로드한다. 번호 기록이 없으면 페이지 로드 시각을
-    // 기준으로 삼아 LOAD_GRACE_MS와 같은 유예를 준다.
-    private static final long CYCLE_STALL_MS = 240_000;
-    // 제출 가드의 상한 (F1, JS SUBMIT_GUARD_MAX_MS와 같은 값) — 하트비트가
-    // 이보다 오래됐으면 제출이 끝난 것으로 보고 가드를 무시하고 재로드한다.
-    private static final long SUBMIT_GUARD_MAX_MS = 600_000;
-
     private PowerManager.WakeLock wakeLock;
+    // engineWeb은 메인 스레드에서만 만진다 — 워치독 스레드는 직접
+    // 접근하지 않고 메인으로 post한 실행자만 거친다.
     private WebView engineWeb;
-    private long engineLoadedAtMs;
-    private Handler handler;
+    private Handler mainHandler;
     private BroadcastReceiver reloadReceiver;
     private BroadcastReceiver downloadReceiver;
     private Thread shadowThread;
     private volatile boolean shadowRunning;
 
+    // ── 워치독 (전용 스레드) ─────────────────────────────────────
+    private HandlerThread watchdogThread;
+    private Handler watchdogHandler;
+    private volatile boolean watchdogRunning;
+    // 마지막 틱 시각 — 제보 payload의 tick_alive로 실어, 틱 자체가
+    // 멈췄는지를 원격에서 판별할 수 있게 한다.
+    private static volatile long lastTickMs;
+    // 페이지 로드 완료 시각 (메인 스레드 콜백이 쓰고 워치독이 읽는다)
+    private volatile long pageFinishMs;
+    // 유예 앵커 — 서비스 시작 시각. 어떤 복구 동작으로도 움직이지 않는다.
+    private long serviceStartMs;
+    // 아래 상태는 워치독 스레드에서만 읽고 쓴다 (메인 스레드 이벤트는
+    // watchdogHandler로 post해 이 스레드에서 반영한다).
+    private boolean wdWebViewExists;
+    private long wdBootSinceMs;
+    private long wdLastReloadMs;
+    private WatchdogLogic.Action pendingAction;
+    private long pendingIssuedMs;
+    private long pendingLastPostMs;
+    private long wdAckMs;
+
     private final Runnable watchdogTick = new Runnable() {
         @Override
         public void run() {
-            tickWatchdog();
-            if (handler != null) handler.postDelayed(this, WATCHDOG_PERIOD_MS);
+            try {
+                tickWatchdog();
+            } catch (Throwable t) {
+                // 틱 내부 예외로 체인이 끊기지 않게 여기서 삼킨다 —
+                // 종전 구조는 tickWatchdog 뒤 재예약이라 예외 한 번에
+                // 워치독이 영구 정지했다.
+                noteWatchdogError(String.valueOf(t));
+            } finally {
+                Handler h = watchdogHandler;
+                if (h != null && watchdogRunning) {
+                    h.postDelayed(this, WatchdogLogic.PERIOD_MS);
+                }
+            }
         }
     };
 
@@ -129,8 +164,21 @@ public class EngineService extends Service {
         e.apply();
     }
 
+    // 사이클 내부 진행 신호 — 루프가 단계·후보를 처리할 때만 갱신된다.
+    // 30초 타이머 하트비트와 분리해 두는 것이 핵심이다: 타이머는 루프가
+    // 죽어도 살아 있지만, 이 값은 루프가 실제로 전진할 때만 움직인다.
+    static void recordProgress(Context ctx) {
+        prefs(ctx).edit()
+                .putLong(KEY_PROGRESS_MS, System.currentTimeMillis())
+                .apply();
+    }
+
     static long getHeartbeatMs(Context ctx) {
         return prefs(ctx).getLong(KEY_HEARTBEAT_MS, 0);
+    }
+
+    static int getHeartbeatCycle(Context ctx) {
+        return prefs(ctx).getInt(KEY_HEARTBEAT_CYCLE, 0);
     }
 
     static int getWatchdogReloads(Context ctx) {
@@ -139,6 +187,39 @@ public class EngineService extends Service {
 
     static int getWatchdogCycleReloads(Context ctx) {
         return prefs(ctx).getInt(KEY_WD_CYCLE_RELOADS, 0);
+    }
+
+    static int getBootFailures(Context ctx) {
+        return prefs(ctx).getInt(KEY_BOOT_FAILURES, 0);
+    }
+
+    static int getDirectiveUnacked(Context ctx) {
+        return prefs(ctx).getInt(KEY_DIRECTIVE_UNACKED, 0);
+    }
+
+    static long getLastTickMs() {
+        return lastTickMs;
+    }
+
+    // 제보 payload용 네이티브 상태 — 다음 사고 때 "워치독이 돌았는가,
+    // 재로드는 걸렸는가, 부팅은 실패했는가"를 원격으로 가를 재료다.
+    static String getNativeStateJson(Context ctx) {
+        SharedPreferences p = prefs(ctx);
+        try {
+            org.json.JSONObject o = new org.json.JSONObject();
+            o.put("wd_reloads", p.getInt(KEY_WD_RELOADS, 0));
+            o.put("wd_cycle_reloads", p.getInt(KEY_WD_CYCLE_RELOADS, 0));
+            o.put("heartbeat_ms", p.getLong(KEY_HEARTBEAT_MS, 0));
+            o.put("heartbeat_cycle", p.getInt(KEY_HEARTBEAT_CYCLE, 0));
+            o.put("boot_failures", p.getInt(KEY_BOOT_FAILURES, 0));
+            o.put("directive_unacked", p.getInt(KEY_DIRECTIVE_UNACKED, 0));
+            o.put("tick_alive", lastTickMs);
+            return o.toString();
+        } catch (Exception e) {
+            return "{\"wd_reloads\":0,\"wd_cycle_reloads\":0,\"heartbeat_ms\":0,"
+                    + "\"heartbeat_cycle\":0,\"boot_failures\":0,"
+                    + "\"directive_unacked\":0,\"tick_alive\":0}";
+        }
     }
 
     static void setSubmitInFlight(Context ctx, boolean on) {
@@ -260,6 +341,16 @@ public class EngineService extends Service {
         }
     }
 
+    /** 틱 내부 오류의 최후 기록 — 섀도우 기록 파일에 흔적만 남긴다. */
+    private void noteWatchdogError(String message) {
+        try {
+            shadowPrefs(this).edit()
+                    .putString("lastWatchdogError", message)
+                    .apply();
+        } catch (Exception ignored) {
+        }
+    }
+
     private static SharedPreferences prefs(Context ctx) {
         return ctx.getSharedPreferences(PREFS, MODE_PRIVATE);
     }
@@ -272,15 +363,29 @@ public class EngineService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        handler = new Handler(Looper.getMainLooper());
+        mainHandler = new Handler(Looper.getMainLooper());
+        serviceStartMs = System.currentTimeMillis();
 
-        // 뷰어에서 연동이 바뀌면 엔진 페이지를 다시 읽어 자격증명을 맞춘다
+        // 워치독 무장은 여기서 즉시 한다 — onStartCommand의 동기 WebView
+        // 생성보다 먼저 걸려 있어야 그 생성이 멈춰도 틱이 돈다.
+        watchdogRunning = true;
+        watchdogThread = new HandlerThread("bm-watchdog");
+        watchdogThread.start();
+        watchdogHandler = new Handler(watchdogThread.getLooper());
+        watchdogHandler.postDelayed(watchdogTick, WatchdogLogic.PERIOD_MS);
+
+        // 뷰어에서 연동이 바뀌면 엔진 페이지를 다시 읽어 자격증명을 맞춘다.
+        // 이 재로드는 유예 앵커를 움직이지 않는다 — 새 페이지 세대의
+        // 부팅 감시만 워치독 스레드에서 새로 시작한다.
         reloadReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 if (engineWeb != null) {
-                    engineLoadedAtMs = System.currentTimeMillis();
                     engineWeb.reload();
+                    Handler h = watchdogHandler;
+                    if (h != null) {
+                        h.post(() -> wdBootSinceMs = System.currentTimeMillis());
+                    }
                 }
             }
         };
@@ -353,11 +458,11 @@ public class EngineService extends Service {
         startForegroundWithNotification();
         acquireWakeLock();
         ensureEngine();
-        handler.removeCallbacks(watchdogTick);
-        handler.postDelayed(watchdogTick, WATCHDOG_PERIOD_MS);
         return START_STICKY;
     }
 
+    // 메인 스레드 전용 — 엔진 WebView가 없으면 만들어 페이지를 띄우고,
+    // 생성을 워치독 스레드에 알린다 (존재 상태 + 새 세대 부팅 감시 시작).
     private void ensureEngine() {
         if (engineWeb != null) return;
         WebView web = new WebView(this);
@@ -381,57 +486,164 @@ public class EngineService extends Service {
             }
 
             @Override
+            public void onPageFinished(WebView view, String url) {
+                // 로드 신호 — 지시 확인과 부팅 감시의 재료 (volatile 기록)
+                pageFinishMs = System.currentTimeMillis();
+            }
+
+            @Override
             public boolean onRenderProcessGone(WebView view,
                                                 RenderProcessGoneDetail detail) {
                 // 렌더러가 죽은 WebView는 reload로 되살릴 수 없다 (F6) —
-                // 버리고 새로 만들어 페이지를 다시 띄운다.
+                // 버리고 새로 만들어 페이지를 다시 띄운다. 렌더러 사망은
+                // 재로드 사유이지 유예 연장이 아니므로, 종전처럼 로드
+                // 시각 앵커를 리셋하지 않는다. 새 세대의 부팅 감시는
+                // ensureEngine의 생성 통지가 새로 시작한다.
                 if (engineWeb != null) {
-                    engineWeb.destroy();
+                    try {
+                        engineWeb.destroy();
+                    } catch (Exception ignored) {
+                    }
                     engineWeb = null;
                 }
-                engineLoadedAtMs = System.currentTimeMillis();
                 ensureEngine();
                 return true;
             }
         });
         engineWeb = web;
-        engineLoadedAtMs = System.currentTimeMillis();
+        Handler h = watchdogHandler;
+        if (h != null) {
+            h.post(() -> {
+                wdWebViewExists = true;
+                wdBootSinceMs = System.currentTimeMillis();
+            });
+        }
         web.loadUrl("file:///android_asset/index.html");
     }
 
+    // ── 워치독 틱 (워치독 스레드) ─────────────────────────────────
     private void tickWatchdog() {
-        if (engineWeb == null || !getRunIntent(this)) return;
         long now = System.currentTimeMillis();
-        long hb = getHeartbeatMs(this);
-        boolean stale = hb > 0
-                ? now - hb > HEARTBEAT_STALE_MS
-                : now - engineLoadedAtMs > LOAD_GRACE_MS;
-        // 사이클 정체 판정 — 하트비트 판정과 별개로 본다. 번호가 마지막으로
-        // 바뀐 시각과 페이지 로드 시각 중 늦은 쪽을 기준으로 삼는다:
-        // 재로드 직후에는 로드 시각이 기준이라 유예가 걸리고, 이후에는
-        // 전진 시각이 기준이 된다.
-        SharedPreferences p = prefs(this);
-        long cycleChangedMs = p.getLong(KEY_HEARTBEAT_CYCLE_CHANGED_MS, 0);
-        long cycleBase = Math.max(cycleChangedMs, engineLoadedAtMs);
-        boolean cycleStalled = now - cycleBase > CYCLE_STALL_MS;
-        if (!stale && !cycleStalled) return;
-        // 제출 진행 중이면 재로드를 미룬다 (F1) — 재로드가 제출 대기를
-        // 끊으면 체결 기록이 남지 않아 중복 체결 창이 열린다. 단,
-        // 하트비트가 가드 상한보다 오래됐으면 제출이 끝난 것으로 본다.
-        if (getSubmitInFlight(this) && now - hb <= SUBMIT_GUARD_MAX_MS) return;
-        SharedPreferences.Editor e = p.edit()
-                .putInt(KEY_WD_RELOADS, p.getInt(KEY_WD_RELOADS, 0) + 1)
-                .remove(KEY_HEARTBEAT_MS)
-                .remove(KEY_HEARTBEAT_CYCLE)
-                .remove(KEY_HEARTBEAT_CYCLE_CHANGED_MS)
-                .putBoolean(KEY_SUBMIT_IN_FLIGHT, false);
-        if (cycleStalled) {
-            // 정체 재로드는 별도 카운터로 구분해 남긴다 (JS 복원 로그용)
-            e.putInt(KEY_WD_CYCLE_RELOADS, p.getInt(KEY_WD_CYCLE_RELOADS, 0) + 1);
+        lastTickMs = now;
+
+        // 미확인 지시 추적 — 메인 스레드가 멈춰 실행자가 돌지 않으면
+        // 지시를 반복하고 횟수를 남긴다. 확인된 지시가 남아 있는 동안은
+        // 새 판정을 내리지 않는다 (이중 지시로 카운터가 부풀지 않게).
+        if (pendingAction != null) {
+            if (WatchdogLogic.isDirectiveAcked(pendingIssuedMs, wdAckMs,
+                    pageFinishMs, getHeartbeatMs(this))) {
+                pendingAction = null;
+            } else if (WatchdogLogic.shouldRepostDirective(now, pendingLastPostMs)) {
+                SharedPreferences p = prefs(this);
+                p.edit().putInt(KEY_DIRECTIVE_UNACKED,
+                        p.getInt(KEY_DIRECTIVE_UNACKED, 0) + 1).apply();
+                postDirective(pendingAction, pendingIssuedMs);
+                pendingLastPostMs = now;
+                return;
+            } else {
+                return;
+            }
         }
-        e.apply();
-        engineLoadedAtMs = now;
-        engineWeb.reload();
+
+        SharedPreferences p = prefs(this);
+        WatchdogLogic.Input in = new WatchdogLogic.Input();
+        in.now = now;
+        in.runIntent = getRunIntent(this);
+        in.webViewExists = wdWebViewExists;
+        in.serviceStartMs = serviceStartMs;
+        in.lastReloadMs = wdLastReloadMs;
+        in.heartbeatMs = p.getLong(KEY_HEARTBEAT_MS, 0);
+        in.cycleChangedMs = p.getLong(KEY_HEARTBEAT_CYCLE_CHANGED_MS, 0);
+        in.progressMs = p.getLong(KEY_PROGRESS_MS, 0);
+        in.submitInFlight = getSubmitInFlight(this);
+        in.bootSinceMs = wdBootSinceMs;
+
+        WatchdogLogic.Decision d = WatchdogLogic.decide(in);
+        if (d.bootCompleted) {
+            wdBootSinceMs = 0;
+        }
+        if (d.bootFailure) {
+            p.edit().putInt(KEY_BOOT_FAILURES,
+                    p.getInt(KEY_BOOT_FAILURES, 0) + 1).apply();
+        }
+        if (d.action == WatchdogLogic.Action.NONE) return;
+
+        if (d.action == WatchdogLogic.Action.RELOAD) {
+            // 종전 재로드와 같은 부수효과 — 하트비트·제출 가드를 비우고
+            // 재로드 횟수를 남긴다. 정체 사유는 별도 카운터로 구분한다.
+            SharedPreferences.Editor e = p.edit()
+                    .putInt(KEY_WD_RELOADS, p.getInt(KEY_WD_RELOADS, 0) + 1)
+                    .remove(KEY_HEARTBEAT_MS)
+                    .remove(KEY_HEARTBEAT_CYCLE)
+                    .remove(KEY_HEARTBEAT_CYCLE_CHANGED_MS)
+                    .putBoolean(KEY_SUBMIT_IN_FLIGHT, false);
+            if (d.cycleReason) {
+                e.putInt(KEY_WD_CYCLE_RELOADS,
+                        p.getInt(KEY_WD_CYCLE_RELOADS, 0) + 1);
+            }
+            e.apply();
+            wdLastReloadMs = now;
+        }
+        // 새 페이지 세대의 부팅 감시는 지시 시각부터 시작한다. 실행이
+        // 늦어지면 그만큼 부팅 기한이 촉박해지지만, 생성 통지·진행
+        // 신호가 오면 판정이 다시 미뤄진다.
+        wdBootSinceMs = now;
+        issueDirective(d.action, now);
+    }
+
+    private void issueDirective(WatchdogLogic.Action action, long now) {
+        pendingAction = action;
+        pendingIssuedMs = now;
+        pendingLastPostMs = now;
+        postDirective(action, now);
+    }
+
+    // 지시를 메인 스레드로 보낸다. 실행자는 WebView 조작 후 ack를
+    // 워치독 스레드로 돌려준다 — ack가 없으면 틱이 무응답으로 추적한다.
+    private void postDirective(final WatchdogLogic.Action action, final long issuedMs) {
+        Handler m = mainHandler;
+        if (m == null) return;
+        m.post(() -> {
+            try {
+                switch (action) {
+                    case CREATE:
+                        ensureEngine();
+                        break;
+                    case RELOAD:
+                        if (engineWeb != null) {
+                            engineWeb.reload();
+                        } else {
+                            ensureEngine();
+                        }
+                        break;
+                    case RECREATE:
+                        if (engineWeb != null) {
+                            try {
+                                engineWeb.destroy();
+                            } catch (Exception ignored) {
+                            }
+                            engineWeb = null;
+                            Handler h = watchdogHandler;
+                            if (h != null) h.post(() -> wdWebViewExists = false);
+                        }
+                        ensureEngine();
+                        break;
+                    default:
+                        break;
+                }
+            } catch (Throwable ignored) {
+                // 실행 실패는 ack를 보내지 않는 것으로 알리지 않는다 —
+                // 실행자가 돌았다는 사실 자체는 메인 스레드 생존 신호라
+                // 아래에서 ack한다. WebView 상태는 다음 틱의 존재
+                // 상태·부팅 감시가 다시 가른다.
+            }
+            Handler h = watchdogHandler;
+            if (h != null) {
+                h.post(() -> {
+                    if (issuedMs > wdAckMs) wdAckMs = issuedMs;
+                });
+            }
+        });
     }
 
     private void startForegroundWithNotification() {
@@ -483,8 +695,14 @@ public class EngineService extends Service {
             shadowThread.interrupt();
             shadowThread = null;
         }
-        if (handler != null) {
-            handler.removeCallbacks(watchdogTick);
+        watchdogRunning = false;
+        if (watchdogHandler != null) {
+            watchdogHandler.removeCallbacks(watchdogTick);
+            watchdogHandler = null;
+        }
+        if (watchdogThread != null) {
+            watchdogThread.quitSafely();
+            watchdogThread = null;
         }
         if (reloadReceiver != null) {
             unregisterReceiver(reloadReceiver);

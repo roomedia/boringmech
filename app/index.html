@@ -498,6 +498,12 @@
       try { payload.stage = JSON.parse(localStorage.getItem('bm_stage') || 'null'); } catch (e) {}
       try { payload.snap = JSON.parse(localStorage.getItem('bm_snap') || 'null'); } catch (e) {}
       try { payload.bought = JSON.parse(localStorage.getItem('bm_bought') || '[]'); } catch (e) {}
+      // 네이티브 워치독 상태 — 워치독이 돌았는지·재로드가 걸렸는지·
+      // 부팅이 실패했는지를 다음 사고 때 원격으로 가르기 위한 재료.
+      try {
+        var ns = window.AndroidBridge && AndroidBridge.getNativeState && AndroidBridge.getNativeState();
+        if (ns) payload.native = JSON.parse(ns);
+      } catch (e) {}
       payload.logs = readLogs();
       for (var attempt = 0; attempt < 2; attempt++){
         try {

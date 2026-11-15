@@ -1480,7 +1480,7 @@ async function runStopLoss(gen) {
   let sold = 0;
   for (const row of state.lastOpenRows) {
     if (!state.running || gen !== state.gen) break;
-    beatHeartbeat();
+    beatProgress();
     try {
       if (await checkStopLossPosition(row)) sold += 1;
     } catch (e) {
@@ -1566,11 +1566,11 @@ async function runCycle(gen) {
     state.settledBaselineLoaded = true;
   }
   const settleNotice = settledNoticeFor(state.settledBaseline, snap);
-  beatHeartbeat();
+  beatProgress();
   // 손절은 신규 매수보다 먼저 — 팔린 건이 있으면 잔고·슬롯을 다시 읽는다
   setStage("stoploss");
   const soldCount = await runStopLoss(gen);
-  beatHeartbeat();
+  beatProgress();
   if (soldCount > 0) {
     snap = await snapshot();
     state.onState(snap);
@@ -1578,7 +1578,7 @@ async function runCycle(gen) {
   // 리딤은 손절 다음·신규 매수 이전 — 회수액이 생기면 잔고를 다시 읽는다
   setStage("redeem");
   const recovered = await runRedeems(gen);
-  beatHeartbeat();
+  beatProgress();
   if (recovered > 0) {
     snap = await snapshot();
     state.onState(snap);
@@ -1636,7 +1636,7 @@ async function runCycle(gen) {
   for (const cand of candidates) {
     if (!state.running || gen !== state.gen) return;
     if (slotsLeft < 1 || verified >= VERIFY_CAP) break;
-    beatHeartbeat();
+    beatProgress();
     verified += 1;
     let detail;
     try {
@@ -1867,7 +1867,7 @@ async function loop(gen) {
   if (!state.running || gen !== state.gen) return;
   state.cycle += 1;
   state.cycleInFlight = true;
-  beatHeartbeat();
+  beatProgress();
   let cycleFailed = false;
   try {
     await runCycle(gen);
@@ -1982,6 +1982,18 @@ export function isEngineUnresponsive(heartbeatMs, nowMs, observedSinceMs) {
 function beatHeartbeat() {
   try {
     window.AndroidBridge?.heartbeat?.(state.cycle);
+  } catch {}
+}
+
+// 사이클 내부 진행 신호 — 30초 타이머 하트비트와 달리, 루프가 실제로
+// 단계를 전진할 때(사이클 시작·단계 사이·손절 행별·검증 후보별)만
+// 나간다. 네이티브 워치독은 이 신호가 최근이면 사이클 번호가 바뀌지
+// 않아도 정체로 판정하지 않는다 — 검증만 긴 단일 사이클의 오재로드
+// 방지. 단계 내부까지 멈추면 이 신호도 멈추므로 그때는 걸린다.
+function beatProgress() {
+  beatHeartbeat();
+  try {
+    window.AndroidBridge?.cycleProgress?.(state.cycle);
   } catch {}
 }
 
@@ -2740,6 +2752,9 @@ async function restore() {
     log("복원 실패 — deposit wallet을 찾지 못했습니다 (네트워크 상태 확인 필요)");
     return null;
   }
+  // 복원 진행 신호 — 단계가 전진하는 동안은 네이티브 부팅 감시의
+  // 기한이 미뤄진다 (느린 복원을 부팅 실패로 오인하지 않게).
+  beatProgress();
   let creds = null;
   try {
     creds = JSON.parse(readSecret(LS.creds) || "null");
@@ -2759,6 +2774,7 @@ async function restore() {
   state.account = account;
   state.eoa = account.address;
   state.funder = funder;
+  beatProgress();
   // 스냅샷이 끝내 실패해도 클라이언트가 있으면 엔진은 시작할 수 있다 —
   // 첫 사이클이 스냅샷부터 다시 시도하므로 복원 전체를 막지 않는다 (F2).
   const snap = await retryAsync(() => snapshot()).catch((e) => {

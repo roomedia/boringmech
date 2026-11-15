@@ -82,6 +82,22 @@ public class Bridge {
         return EngineService.getHeartbeatMs(ctx);
     }
 
+    // 사이클 내부 진행 신호 — 루프가 단계·후보를 처리할 때만 불린다
+    // (30초 타이머 하트비트와 별개). 워치독의 사이클 정체 판정이
+    // "번호는 안 바뀌었지만 진행 중인 긴 사이클"을 오재로드하지
+    // 않게 하는 재료다.
+    @JavascriptInterface
+    public void cycleProgress(int cycle) {
+        EngineService.recordProgress(ctx);
+    }
+
+    // 제보 payload용 네이티브 상태 JSON — 워치독 카운터·하트비트·
+    // 부팅 실패·틱 생존 시각을 한 번에 돌려준다.
+    @JavascriptInterface
+    public String getNativeState() {
+        return EngineService.getNativeStateJson(ctx);
+    }
+
     @JavascriptInterface
     public int getWatchdogReloads() {
         return EngineService.getWatchdogReloads(ctx);
