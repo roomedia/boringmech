@@ -68,6 +68,8 @@ const LS = {
   log: "bm_log",
   updateInfo: "bm_update",
   wdSeen: "bm_wd_seen",
+  wdCycleSeen: "bm_wd_cycle_seen",
+  selfReload: "bm_self_reload",
   stopLoss: "bm_stoploss",
   stopLossArchive: "bm_stoploss_archive",
   settledBase: "bm_settled_base",
@@ -538,6 +540,10 @@ const state = {
   settledBaselineLoaded: false,
   submitCount: 0,
   hbTimer: null,
+  watchTimer: null,
+  lastCycleDoneMs: 0,
+  cycleInFlight: false,
+  cycleErrors: 0,
 };
 
 function log(line) {
@@ -1789,14 +1795,97 @@ function readStage() {
   return null;
 }
 
+// ── 루프 자가 감시 + 오류 에스컬레이션 ─────────────────────
+// 사이클 완료 후 다음 사이클을 거는 setTimeout 체인이 끊기면 stage는
+// idle로 남고 하트비트 타이머는 살아 있어, JS 안에서는 아무도 알아채지
+// 못하는 정지가 된다 (v0.3.25 실측). 하트비트와 분리된 감시 타이머가
+// 마지막 사이클 완료 시각을 보고 체인을 스스로 다시 건다. 감시 타이머
+// 자체가 죽는 경우까지는 네이티브 워치독의 사이클 정체 판정이 덮는다.
+export const LOOP_WATCH_INTERVAL_MS = 60_000;
+export const LOOP_STALL_MS = 5 * 60_000;
+
+export function isLoopStalled(lastCycleDoneMs, nowMs) {
+  if (!Number.isFinite(lastCycleDoneMs) || lastCycleDoneMs <= 0) return false;
+  return nowMs - lastCycleDoneMs > LOOP_STALL_MS;
+}
+
+function checkLoopAlive() {
+  if (!state.running || state.cycleInFlight) return;
+  if (!isLoopStalled(state.lastCycleDoneMs, Date.now())) return;
+  // 예약된 타이머가 남아 있으면(발화만 안 된 경우) 지우고, gen을 올려
+  // 뒤늦게 도는 구 체인 콜백이 새 체인과 겹치지 않게 한 뒤 다시 건다.
+  // 진행 중이던 구 사이클은 gen 경계마다 스스로 멈춘다.
+  if (state.timer) clearTimeout(state.timer);
+  state.timer = null;
+  state.gen += 1;
+  const idleMin = Math.floor((Date.now() - state.lastCycleDoneMs) / 60_000);
+  log(`루프 자가 재시작 — 사이클 완료 후 ${idleMin}분간 다음 사이클이 돌지 않았습니다`);
+  // 재시작 직후 감시가 곧바로 또 발화하지 않게 기준 시각을 당겨 둔다
+  state.lastCycleDoneMs = Date.now();
+  loop(state.gen);
+}
+
+// 네트워크 단절처럼 사이클 오류만 반복되는 구간에서는 루프가 살아
+// 있어도 아무 진전이 없다 (2026-11-15 오전 실측 — 105분간 매분 실패).
+// 오류가 연속 임계에 닿으면 페이지를 자가 재로드한다: 실행 의도가
+// 영속이라 재로드 뒤 복원이 자동 재개한다. 재로드가 남발되지 않게
+// 직전 재로드 시각을 영속으로 남겨 쿨다운 안에서는 다시 걸지 않는다.
+export const CYCLE_ERROR_RELOAD_THRESHOLD = 10;
+export const SELF_RELOAD_COOLDOWN_MS = 10 * 60_000;
+
+export function shouldSelfReload(consecutiveErrors, lastReloadMs, nowMs) {
+  if (!Number.isFinite(consecutiveErrors)
+      || consecutiveErrors < CYCLE_ERROR_RELOAD_THRESHOLD) return false;
+  if (Number.isFinite(lastReloadMs) && lastReloadMs > 0
+      && nowMs - lastReloadMs < SELF_RELOAD_COOLDOWN_MS) return false;
+  return true;
+}
+
+function lastSelfReloadMs() {
+  try {
+    return Number(localStorage.getItem(LS.selfReload) || 0) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+// 재로드하면 true — 호출자(loop)는 이 페이지에서 더 진행하지 않는다.
+function maybeSelfReload() {
+  const now = Date.now();
+  if (!shouldSelfReload(state.cycleErrors, lastSelfReloadMs(), now)) return false;
+  try {
+    localStorage.setItem(LS.selfReload, String(now));
+  } catch {}
+  log(`사이클 오류 ${state.cycleErrors}회 연속 — 페이지 자가 재로드로 복구를 시도합니다`);
+  try {
+    window.location.reload();
+  } catch {}
+  return true;
+}
+
 async function loop(gen) {
   if (!state.running || gen !== state.gen) return;
   state.cycle += 1;
+  state.cycleInFlight = true;
   beatHeartbeat();
+  let cycleFailed = false;
   try {
     await runCycle(gen);
   } catch (e) {
+    cycleFailed = true;
     log(`사이클 오류: ${String(e.message ?? e).slice(0, 160)}`);
+  }
+  // 완료 기록은 현재 세대일 때만 남긴다 — 정지→재시작 뒤에 끝난 구
+  // 사이클이 새 체인의 감시 기준을 흔들지 않게 한다.
+  if (gen === state.gen) {
+    state.cycleInFlight = false;
+    state.lastCycleDoneMs = Date.now();
+    if (cycleFailed) {
+      state.cycleErrors += 1;
+      if (maybeSelfReload()) return;
+    } else if (state.running) {
+      state.cycleErrors = 0;
+    }
   }
   // 정지된 뒤에 끝난 사이클이 "stopped" 기록을 "idle"로 덮지 않게 한다
   if (state.running && gen === state.gen) setStage("idle");
@@ -1897,14 +1986,24 @@ function beatHeartbeat() {
 }
 
 // 워치독이 재로드한 사실은 복원 직후 로그로 남긴다 — 조용한 복구 금지.
+// 사이클 정체가 사유였던 재로드는 별도 카운터로 구분해 함께 남긴다.
 function reportWatchdogRecovery() {
   try {
     const n = Number(window.AndroidBridge?.getWatchdogReloads?.() || 0);
-    if (!Number.isFinite(n) || n <= 0) return;
-    const seen = Number(localStorage.getItem(LS.wdSeen) || 0);
-    if (n > seen) {
-      log(`워치독 복구 — 멈춘 엔진 페이지를 재로드했습니다 (누적 ${n}회)`);
-      localStorage.setItem(LS.wdSeen, String(n));
+    if (Number.isFinite(n) && n > 0) {
+      const seen = Number(localStorage.getItem(LS.wdSeen) || 0);
+      if (n > seen) {
+        log(`워치독 복구 — 멈춘 엔진 페이지를 재로드했습니다 (누적 ${n}회)`);
+        localStorage.setItem(LS.wdSeen, String(n));
+      }
+    }
+    const cyc = Number(window.AndroidBridge?.getWatchdogCycleReloads?.() || 0);
+    if (Number.isFinite(cyc) && cyc > 0) {
+      const seenCyc = Number(localStorage.getItem(LS.wdCycleSeen) || 0);
+      if (cyc > seenCyc) {
+        log(`워치독 복구 — 사이클 정체(번호 무전진)로 재로드했습니다 (누적 ${cyc}회)`);
+        localStorage.setItem(LS.wdCycleSeen, String(cyc));
+      }
     }
   } catch {}
 }
@@ -2506,6 +2605,12 @@ function start() {
   // JS 메인 스레드가 진짜로 멈추면 이 타이머도 멈추므로 워치독은 여전히 유효하다.
   if (state.hbTimer) clearInterval(state.hbTimer);
   state.hbTimer = setInterval(beatHeartbeat, HEARTBEAT_INTERVAL_MS);
+  // 루프 자가 감시 — 하트비트와 분리된 타이머로 체인 단절을 본다.
+  state.lastCycleDoneMs = Date.now();
+  state.cycleInFlight = false;
+  state.cycleErrors = 0;
+  if (state.watchTimer) clearInterval(state.watchTimer);
+  state.watchTimer = setInterval(checkLoopAlive, LOOP_WATCH_INTERVAL_MS);
   log("엔진 실행 시작");
   state.onState(state.lastSnapshot);
   loop(state.gen);
@@ -2520,6 +2625,8 @@ function stop() {
   state.timer = null;
   if (state.hbTimer) clearInterval(state.hbTimer);
   state.hbTimer = null;
+  if (state.watchTimer) clearInterval(state.watchTimer);
+  state.watchTimer = null;
   setStage("stopped");
   log("엔진 정지");
   state.onState(state.lastSnapshot);
@@ -2599,6 +2706,11 @@ function boot() {
 
 async function restore() {
   migrateSecrets();
+  // 사이클 오류 에스컬레이션으로 자가 재로드한 직후면 그 흔적을 남긴다
+  const selfReloadAt = lastSelfReloadMs();
+  if (selfReloadAt > 0 && Date.now() - selfReloadAt < SELF_RELOAD_COOLDOWN_MS) {
+    log("사이클 오류 연속으로 자가 재로드한 페이지입니다 — 복원을 이어갑니다");
+  }
   // 이전 실행이 사이클 중간 단계에서 끝난 흔적이 있으면 중단 지점을 남긴다
   const prevStage = readStage();
   if (prevStage && prevStage.stage !== "idle" && prevStage.stage !== "stopped") {

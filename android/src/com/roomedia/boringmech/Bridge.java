@@ -87,6 +87,12 @@ public class Bridge {
         return EngineService.getWatchdogReloads(ctx);
     }
 
+    // 워치독 재로드 중 사이클 정체가 사유였던 횟수 (구분 기록용)
+    @JavascriptInterface
+    public int getWatchdogCycleReloads() {
+        return EngineService.getWatchdogCycleReloads(ctx);
+    }
+
     // 스냅샷 캐시 미러 — localStorage와 별개로 확실히 공유되는 통로.
     @JavascriptInterface
     public void putSnapCache(String json) {

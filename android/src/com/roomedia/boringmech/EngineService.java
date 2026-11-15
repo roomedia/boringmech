@@ -30,8 +30,10 @@ import android.webkit.WebViewClient;
 // 알림에서 정지하면 미러를 먼저 지워 다음 실행 때 자동 재개되지 않게 한다.
 // 워치독: JS가 사이클마다 남기는 하트비트를 30초마다 확인해
 // 200초(사이클 3개 + 여유, JS HEARTBEAT_STALE_MS와 같은 값) 이상
-// stale이면 엔진 페이지를 재로드한다. 재로드 횟수는 JS가 복원 직후
-// 읽어 로그로 남긴다.
+// stale이면 엔진 페이지를 재로드한다. 하트비트 타이머만 살고 루프가
+// 죽는 경우를 위해 사이클 번호 전진도 함께 본다 — 번호가 240초간
+// 바뀌지 않으면 정체로 보고 재로드한다 (별도 카운터로 구분).
+// 재로드 횟수는 JS가 복원 직후 읽어 로그로 남긴다.
 public class EngineService extends Service {
     public static final String ACTION_STOP = "com.roomedia.boringmech.ACTION_STOP";
     public static final String ACTION_RELOAD_ENGINE =
@@ -41,7 +43,9 @@ public class EngineService extends Service {
     private static final String KEY_RUN_INTENT = "run_intent";
     private static final String KEY_HEARTBEAT_MS = "heartbeat_ms";
     private static final String KEY_HEARTBEAT_CYCLE = "heartbeat_cycle";
+    private static final String KEY_HEARTBEAT_CYCLE_CHANGED_MS = "heartbeat_cycle_changed_ms";
     private static final String KEY_WD_RELOADS = "wd_reloads";
+    private static final String KEY_WD_CYCLE_RELOADS = "wd_cycle_reloads";
     private static final String KEY_SNAP_CACHE = "snap_cache";
     private static final String KEY_SUBMIT_IN_FLIGHT = "submit_in_flight";
     // 네이티브 섀도우용 미러 — JS boot/link가 남긴다 (Bridge.setFunderMirror 등)
@@ -57,6 +61,12 @@ public class EngineService extends Service {
     private static final long WATCHDOG_PERIOD_MS = 30_000;
     private static final long HEARTBEAT_STALE_MS = 200_000;
     private static final long LOAD_GRACE_MS = 240_000;
+    // 사이클 정체 판정 — 하트비트 타이머(30초)만 살아 있고 사이클 루프
+    // 체인이 죽으면 하트비트는 계속 오지만 사이클 번호가 멈춘다. 번호가
+    // 마지막으로 바뀐 뒤 이 시간(사이클 4개분)이 지나도 전진이 없으면
+    // 정체로 보고 재로드한다. 번호 기록이 없으면 페이지 로드 시각을
+    // 기준으로 삼아 LOAD_GRACE_MS와 같은 유예를 준다.
+    private static final long CYCLE_STALL_MS = 240_000;
     // 제출 가드의 상한 (F1, JS SUBMIT_GUARD_MAX_MS와 같은 값) — 하트비트가
     // 이보다 오래됐으면 제출이 끝난 것으로 보고 가드를 무시하고 재로드한다.
     private static final long SUBMIT_GUARD_MAX_MS = 600_000;
@@ -105,10 +115,18 @@ public class EngineService extends Service {
     }
 
     static void recordHeartbeat(Context ctx, int cycle) {
-        prefs(ctx).edit()
-                .putLong(KEY_HEARTBEAT_MS, System.currentTimeMillis())
-                .putInt(KEY_HEARTBEAT_CYCLE, cycle)
-                .apply();
+        SharedPreferences p = prefs(ctx);
+        long now = System.currentTimeMillis();
+        SharedPreferences.Editor e = p.edit()
+                .putLong(KEY_HEARTBEAT_MS, now)
+                .putInt(KEY_HEARTBEAT_CYCLE, cycle);
+        // 사이클 번호가 바뀐 순간만 전진 시각을 갱신한다 — 워치독의
+        // 정체 판정은 이 시각을 기준으로 한다. 첫 기록도 전진으로 친다.
+        if (!p.contains(KEY_HEARTBEAT_CYCLE)
+                || p.getInt(KEY_HEARTBEAT_CYCLE, 0) != cycle) {
+            e.putLong(KEY_HEARTBEAT_CYCLE_CHANGED_MS, now);
+        }
+        e.apply();
     }
 
     static long getHeartbeatMs(Context ctx) {
@@ -117,6 +135,10 @@ public class EngineService extends Service {
 
     static int getWatchdogReloads(Context ctx) {
         return prefs(ctx).getInt(KEY_WD_RELOADS, 0);
+    }
+
+    static int getWatchdogCycleReloads(Context ctx) {
+        return prefs(ctx).getInt(KEY_WD_CYCLE_RELOADS, 0);
     }
 
     static void setSubmitInFlight(Context ctx, boolean on) {
@@ -384,17 +406,30 @@ public class EngineService extends Service {
         boolean stale = hb > 0
                 ? now - hb > HEARTBEAT_STALE_MS
                 : now - engineLoadedAtMs > LOAD_GRACE_MS;
-        if (!stale) return;
+        // 사이클 정체 판정 — 하트비트 판정과 별개로 본다. 번호가 마지막으로
+        // 바뀐 시각과 페이지 로드 시각 중 늦은 쪽을 기준으로 삼는다:
+        // 재로드 직후에는 로드 시각이 기준이라 유예가 걸리고, 이후에는
+        // 전진 시각이 기준이 된다.
+        SharedPreferences p = prefs(this);
+        long cycleChangedMs = p.getLong(KEY_HEARTBEAT_CYCLE_CHANGED_MS, 0);
+        long cycleBase = Math.max(cycleChangedMs, engineLoadedAtMs);
+        boolean cycleStalled = now - cycleBase > CYCLE_STALL_MS;
+        if (!stale && !cycleStalled) return;
         // 제출 진행 중이면 재로드를 미룬다 (F1) — 재로드가 제출 대기를
         // 끊으면 체결 기록이 남지 않아 중복 체결 창이 열린다. 단,
         // 하트비트가 가드 상한보다 오래됐으면 제출이 끝난 것으로 본다.
         if (getSubmitInFlight(this) && now - hb <= SUBMIT_GUARD_MAX_MS) return;
-        SharedPreferences p = prefs(this);
-        p.edit()
+        SharedPreferences.Editor e = p.edit()
                 .putInt(KEY_WD_RELOADS, p.getInt(KEY_WD_RELOADS, 0) + 1)
                 .remove(KEY_HEARTBEAT_MS)
-                .putBoolean(KEY_SUBMIT_IN_FLIGHT, false)
-                .apply();
+                .remove(KEY_HEARTBEAT_CYCLE)
+                .remove(KEY_HEARTBEAT_CYCLE_CHANGED_MS)
+                .putBoolean(KEY_SUBMIT_IN_FLIGHT, false);
+        if (cycleStalled) {
+            // 정체 재로드는 별도 카운터로 구분해 남긴다 (JS 복원 로그용)
+            e.putInt(KEY_WD_CYCLE_RELOADS, p.getInt(KEY_WD_CYCLE_RELOADS, 0) + 1);
+        }
+        e.apply();
         engineLoadedAtMs = now;
         engineWeb.reload();
     }

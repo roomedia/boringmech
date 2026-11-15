@@ -14,6 +14,12 @@ const {
   shouldAutoStart,
   isHeartbeatStale,
   HEARTBEAT_STALE_MS,
+  isLoopStalled,
+  LOOP_WATCH_INTERVAL_MS,
+  LOOP_STALL_MS,
+  shouldSelfReload,
+  CYCLE_ERROR_RELOAD_THRESHOLD,
+  SELF_RELOAD_COOLDOWN_MS,
   stopLossVerdict,
   pickOutcomeIndex,
   tryAcquireSubmitLock,
@@ -387,6 +393,25 @@ eq(isHeartbeatStale(1000, 1000 + 200001), true, "stale: past threshold");
 eq(isHeartbeatStale(0, 999999999), false, "stale: no heartbeat is not stale");
 eq(isHeartbeatStale(-5, 999999999), false, "stale: negative is not stale");
 eq(isHeartbeatStale(NaN, 1000), false, "stale: NaN is not stale");
+
+// 20b. 루프 자가 감시 — 완료 후 5분 무진행이면 정체, 미기록은 정체 아님
+eq(LOOP_WATCH_INTERVAL_MS, 60000, "loopwatch: interval is 60s");
+eq(LOOP_STALL_MS, 300000, "loopwatch: stall threshold is 5min");
+eq(isLoopStalled(1000, 1000 + 300000), false, "loopwatch: exactly at threshold is alive");
+eq(isLoopStalled(1000, 1000 + 300001), true, "loopwatch: past threshold is stalled");
+eq(isLoopStalled(0, 999999999), false, "loopwatch: never completed is not stalled");
+eq(isLoopStalled(NaN, 1000), false, "loopwatch: NaN is not stalled");
+
+// 20c. 사이클 오류 에스컬레이션 — 연속 10회 + 쿨다운 10분이 게이트
+eq(CYCLE_ERROR_RELOAD_THRESHOLD, 10, "selfreload: threshold is 10 errors");
+eq(SELF_RELOAD_COOLDOWN_MS, 600000, "selfreload: cooldown is 10min");
+eq(shouldSelfReload(9, 0, 10000000), false, "selfreload: below threshold");
+eq(shouldSelfReload(10, 0, 10000000), true, "selfreload: at threshold, no prior reload");
+eq(shouldSelfReload(15, 0, 10000000), true, "selfreload: above threshold");
+eq(shouldSelfReload(10, 10000000 - 599999, 10000000), false, "selfreload: inside cooldown");
+eq(shouldSelfReload(10, 10000000 - 600000, 10000000), true, "selfreload: cooldown elapsed");
+eq(shouldSelfReload(NaN, 0, 10000000), false, "selfreload: NaN errors");
+eq(shouldSelfReload(10, NaN, 10000000), true, "selfreload: NaN last reload treated as none");
 
 // 21. 손절 판정 — 발화 경계·결정 구간 제외·결측 스킵
 eq(stopLossVerdict(0.75, 0.5), "triggered", "stoploss: boundary triggers");
