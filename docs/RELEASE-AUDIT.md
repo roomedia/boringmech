@@ -24,3 +24,12 @@
 2. 발견은 코드 대조·재현으로 확정한 것만 수리 대상
 3. 수리마다 가드 테스트 추가, 전체 테스트 통과 확인
 4. 버전은 하나로 범프해 릴리스
+
+## 빌드 산출물 게이트 (2026-11-15 추가 — v0.3.26~29 브리지 사망 사고)
+
+릴리스 전 출하 APK의 dex를 직접 확인한다. 소스·테스트 통과만으로 내지 않는다.
+
+- dex 문자열 테이블에 `Landroid/webkit/JavascriptInterface;`가 있어야 한다.
+  없으면 브리지 메서드가 JS에 전혀 노출되지 않아 앱 전체가 무반응이 된다
+  (keep.pro의 `-keepattributes *Annotation*`가 지킨다).
+- 확인 명령: APK를 풀어 `strings classes.dex | grep JavascriptInterface`.
