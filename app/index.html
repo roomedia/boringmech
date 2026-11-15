@@ -185,6 +185,11 @@
     var intentOn = false;
     var heartbeatMs = 0;
     var autoReportSent = false;
+    var errorReportSent = false;
+    // 사이클 오류가 이 횟수만큼 연속되면 자동 제보한다. 일시 오류 전적은
+    // 최대 2회 연속 후 자가 회복(01:36 Gamma 타임아웃)이라 5회로 잡으면
+    // 60초 주기 기준 약 5분 지속된 장애만 발화한다.
+    var ERROR_STREAK_LIMIT = 5;
     var viewerBootMs = Date.now();
     var bootInfo = { eoa: null, funder: null };
     try {
@@ -261,9 +266,20 @@
       // 엔진이 회복되면 플래그를 풀어 다음 무응답 때 다시 보낸다).
       if (stale && !autoReportSent){
         autoReportSent = true;
-        sendReport(true);
+        sendReport(true, 'engine_unresponsive');
       } else if (!stale){
         autoReportSent = false;
+      }
+      // 엔진이 살아 있어도 사이클 오류만 반복하면 무응답 판정에 안 걸린다
+      // (2026-11-15 실측: Failed to fetch 약 200회·3시간 19분 무신호).
+      // 로그 꼬리의 연속 오류가 임계에 닿으면 같은 방식으로 1회 제보한다.
+      if (intentOn && countErrorStreak(readLogs()) >= ERROR_STREAK_LIMIT){
+        if (!errorReportSent){
+          errorReportSent = true;
+          sendReport(true, 'cycle_error_streak');
+        }
+      } else {
+        errorReportSent = false;
       }
       if (!hasKey){ chip.textContent = '미연동'; chip.className = 'chip warn'; }
       else if (intentOn && stale){ chip.textContent = '실행 중 · 응답 없음'; chip.className = 'chip warn'; }
@@ -419,9 +435,19 @@
     });
     // 제보 전송 (수동 버튼·자동 제보 공용). 성공하면 true.
     // 실패하면 2초 뒤 1회 재시도한다 — 폰 네트워크 순단으로 버리는 제보를 줄인다.
-    async function sendReport(auto){
+    // 로그 꼬리에서 연속된 사이클 오류 횟수. 오류 사이클은 오류 줄만
+    // 남기고 끝나므로, 다른 줄이 나오면 연속이 끊긴 것으로 본다.
+    function countErrorStreak(logs){
+      var n = 0;
+      for (var i = logs.length - 1; i >= 0; i--){
+        if (logs[i].indexOf('사이클 오류:') >= 0) n++;
+        else break;
+      }
+      return n;
+    }
+    async function sendReport(auto, reason){
       var payload = { ts: Date.now(), host: HOST, auto: !!auto };
-      if (auto) payload.reason = 'engine_unresponsive';
+      if (auto) payload.reason = reason || 'engine_unresponsive';
       try { payload.stage = JSON.parse(localStorage.getItem('bm_stage') || 'null'); } catch (e) {}
       try { payload.snap = JSON.parse(localStorage.getItem('bm_snap') || 'null'); } catch (e) {}
       try { payload.bought = JSON.parse(localStorage.getItem('bm_bought') || '[]'); } catch (e) {}
