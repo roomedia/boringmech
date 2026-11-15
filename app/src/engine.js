@@ -383,6 +383,15 @@ async function fetchMarkets(total = 1000, pageSize = 100) {
   return markets.slice(0, total);
 }
 
+// 스포츠 판정 — 경기 마켓(sportsMarketType)만이 아니라 우승 아웃라이트까지
+// 포함한다. 아웃라이트는 sportsMarketType이 비어 있지만 Gamma가 스포츠
+// 수수료 체계(feeType: sports_fees_*)를 붙이므로 그걸로 가른다
+// (2026-11-15 실측: 유동성 상위 1,000개 중 아웃라이트 170개, 정치 마켓은
+// politics_fees로 명확히 분리됨). 사용자 지시로 제외 범위를 우승까지 확장.
+export function isSportsMarket(m) {
+  return !!m?.sportsMarketType || String(m?.feeType || "").startsWith("sports");
+}
+
 export function scanCandidates(markets, heldSlugs, boughtSlugs, stats = null) {
   const today = new Date();
   const iso = (d) => d.toISOString().slice(0, 10);
@@ -397,7 +406,7 @@ export function scanCandidates(markets, heldSlugs, boughtSlugs, stats = null) {
     if (m.acceptingOrders === false || m.archived === true) { drop("not_accepting"); continue; } // 주문 수용 중단·보관 마켓 (문서 Market Details — Market Status)
     const slug = m.slug || "";
     if (SHORT_TERM_RE.test(slug)) { drop("short_term"); continue; }
-    if (m.sportsMarketType) { drop("sports"); continue; } // 스포츠는 목록 단계에서 제외 (검증 단계에도 가드로 남겨 둠)
+    if (isSportsMarket(m)) { drop("sports"); continue; } // 스포츠는 목록 단계에서 제외 (검증 단계에도 가드로 남겨 둠)
     if (heldSlugs.has(slug) || boughtSlugs.has(slug)) { drop("owned"); continue; }
     const end = (m.endDate || "").slice(0, 10);
     if (!(todayIso < end && end <= endMaxIso)) { drop("end_out"); continue; }
@@ -855,7 +864,7 @@ async function verifyCandidate(cand, bet) {
   );
   const m = Array.isArray(page) ? page[0] : null;
   if (!m) return reject("gamma_market_missing");
-  if (m.sportsMarketType) return reject("sports");
+  if (isSportsMarket(m)) return reject("sports");
   if (m.acceptingOrders === false || m.archived === true) return reject("market_not_accepting");
   let tokens, prices;
   try {

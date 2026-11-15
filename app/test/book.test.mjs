@@ -872,6 +872,14 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   eq(out.length, 0, "scanStats: held market excluded from candidates");
   eq(stats.total, 5, "scanStats: total counts all fetched markets");
   eq(stats.sports, 1, "scanStats: sports counted");
+  // 우승 아웃라이트: sportsMarketType이 비어도 sports feeType이면 제외
+  const outStats2 = {};
+  const outright = scanCandidates([
+    mk({ slug: "outright-1", endDate: soon, feeType: "sports_fees_v3" }),
+    mk({ slug: "politics-1", endDate: soon, feeType: "politics_fees" }),
+  ], new Set(), new Set(), outStats2);
+  eq(outright.map((c) => c.slug), ["politics-1"], "sports: outright excluded by feeType, politics kept");
+  eq(outStats2.sports, 1, "sports: outright counted as sports");
   eq(stats.end_out, 1, "scanStats: end_out counted");
   eq(stats.band_out, 1, "scanStats: band_out counted");
   eq(stats.owned, 2, "scanStats: owned counted");
