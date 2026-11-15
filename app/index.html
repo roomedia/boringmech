@@ -198,6 +198,16 @@
       var b = BM.boot();
       bootInfo = { eoa: b.eoa, funder: b.funder };
     } catch (e) {}
+    // 네이티브 전환 승계 — JS 시절 LS에 남은 로그·stage를 네이티브
+    // 저장소로 한 번 옮긴다 (네이티브 쪽이 비어 있을 때만 채워진다).
+    try {
+      if (window.AndroidBridge && AndroidBridge.seedNativeLog) {
+        var lsLog = localStorage.getItem('bm_log');
+        if (lsLog) AndroidBridge.seedNativeLog(lsLog);
+        var lsStage = localStorage.getItem('bm_stage');
+        if (lsStage) AndroidBridge.seedNativeStage(lsStage);
+      }
+    } catch (e) {}
 
     function bridgeIntent(){
       try { return !!(window.AndroidBridge && AndroidBridge.getRunIntent()); } catch (e) { return false; }
@@ -214,12 +224,28 @@
       try { return BM.readSnapCache(); } catch (e) { return null; }
     }
     function readLogs(){
+      // 네이티브 엔진 로그가 정본 — 있을 때만 LS로 떨어진다
+      try {
+        var viaNative = window.AndroidBridge && AndroidBridge.getNativeLog && AndroidBridge.getNativeLog();
+        if (viaNative) {
+          var narr = JSON.parse(viaNative);
+          if (Array.isArray(narr) && narr.length) return narr;
+        }
+      } catch (e) {}
       try {
         var arr = JSON.parse(localStorage.getItem('bm_log') || '[]');
         return Array.isArray(arr) ? arr : [];
       } catch (e) { return []; }
     }
     function readUpdateInfo(){
+      try {
+        var viaNative = window.AndroidBridge && AndroidBridge.getNativeUpdateInfo && AndroidBridge.getNativeUpdateInfo();
+        if (viaNative) {
+          var ninfo = JSON.parse(viaNative);
+          if (ninfo && ninfo.tag && ninfo.url
+              && (!BM.version || BM.compareVersions(ninfo.tag, BM.version) === 1)) return ninfo;
+        }
+      } catch (e) {}
       try {
         var info = JSON.parse(localStorage.getItem('bm_update') || 'null');
         if (!info || !info.tag || !info.url) return null;
@@ -495,7 +521,10 @@
     async function sendReport(auto, reason){
       var payload = { ts: Date.now(), host: HOST, auto: !!auto };
       if (auto) payload.reason = reason || 'engine_unresponsive';
-      try { payload.stage = JSON.parse(localStorage.getItem('bm_stage') || 'null'); } catch (e) {}
+      try {
+        var nstage = window.AndroidBridge && AndroidBridge.getNativeStage && AndroidBridge.getNativeStage();
+        payload.stage = nstage ? JSON.parse(nstage) : JSON.parse(localStorage.getItem('bm_stage') || 'null');
+      } catch (e) {}
       try { payload.snap = JSON.parse(localStorage.getItem('bm_snap') || 'null'); } catch (e) {}
       try { payload.bought = JSON.parse(localStorage.getItem('bm_bought') || '[]'); } catch (e) {}
       // 네이티브 워치독 상태 — 워치독이 돌았는지·재로드가 걸렸는지·

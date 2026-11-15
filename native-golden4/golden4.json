@@ -1,0 +1,1051 @@
+{
+  "meta": {
+    "generator": "gen_golden3.mjs",
+    "sdk": "@polymarket/clob-client-v2 (app/node_modules)",
+    "eoa": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+    "funder": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+    "privateKey": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "secret": "dGVzdC1zZWNyZXQtdGVzdC1zZWNyZXQtdGVzdC1zZWNyZXQtdGVzdC1zZWNyZXQtdGVzdA==",
+    "passphrase": "test-passphrase-0000"
+  },
+  "orderBodies": [
+    {
+      "name": "v2_buy_fok",
+      "input": {
+        "version": 2,
+        "negRisk": false,
+        "tokenId": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+        "side": "BUY",
+        "amount": 5,
+        "price": 0.75,
+        "tickSize": "0.01",
+        "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+        "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+        "signatureType": 3,
+        "salt": "1234567890123456789",
+        "timestamp": "1760000000000",
+        "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "builderCode": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "owner": "11111111-2222-3333-4444-555555555555",
+        "orderType": "FOK"
+      },
+      "expected": {
+        "signature": "0x35dd0848e8179976ba443c3cd2e4cea48a60b116e00611133bd838cf4c8bf1de3bf0aa4085a66cd3c8f860aad4be00c53bc62376e295b964d5ede04890062d9a1b3264e159346253e26a64e00b69032db0e7d32f94628de3e6eecb50304d7af3d27c5c44cf46434b27c5450199acc44f8f31bbd31f2e3565c163bfd2db4782fb484f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba",
+        "body": "{\"deferExec\":false,\"postOnly\":false,\"order\":{\"salt\":1234567890123456800,\"maker\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"signer\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"tokenId\":\"5217830831767552351603457242192184817666125891744021388456190691134219482513\",\"makerAmount\":\"5000000\",\"takerAmount\":\"6666600\",\"side\":\"BUY\",\"signatureType\":3,\"timestamp\":\"1760000000000\",\"expiration\":\"0\",\"metadata\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"builder\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"signature\":\"0x35dd0848e8179976ba443c3cd2e4cea48a60b116e00611133bd838cf4c8bf1de3bf0aa4085a66cd3c8f860aad4be00c53bc62376e295b964d5ede04890062d9a1b3264e159346253e26a64e00b69032db0e7d32f94628de3e6eecb50304d7af3d27c5c44cf46434b27c5450199acc44f8f31bbd31f2e3565c163bfd2db4782fb484f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba\"},\"owner\":\"11111111-2222-3333-4444-555555555555\",\"orderType\":\"FOK\"}"
+      }
+    },
+    {
+      "name": "v2_sell_fok",
+      "input": {
+        "version": 2,
+        "negRisk": false,
+        "tokenId": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+        "side": "SELL",
+        "amount": 6.66,
+        "price": 0.72,
+        "tickSize": "0.01",
+        "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+        "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+        "signatureType": 3,
+        "salt": "1234567890123456789",
+        "timestamp": "1760000000000",
+        "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "builderCode": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "owner": "11111111-2222-3333-4444-555555555555",
+        "orderType": "FOK"
+      },
+      "expected": {
+        "signature": "0xa0b01affbb7f4da4930277c0f0789fb4be51a31454cf132d8ff892b304a352bb322e1eb07ccd438d13caff2a38bdac70b8cc5f9acf2bf54b6dd16b54c25e369c1c3264e159346253e26a64e00b69032db0e7d32f94628de3e6eecb50304d7af3d2d3eae3061b8d3b1afe383d16f17c34bb5269b3ac18b0beb6856d37bcd25b4b644f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba",
+        "body": "{\"deferExec\":false,\"postOnly\":false,\"order\":{\"salt\":1234567890123456800,\"maker\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"signer\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"tokenId\":\"5217830831767552351603457242192184817666125891744021388456190691134219482513\",\"makerAmount\":\"6660000\",\"takerAmount\":\"4795200\",\"side\":\"SELL\",\"signatureType\":3,\"timestamp\":\"1760000000000\",\"expiration\":\"0\",\"metadata\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"builder\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"signature\":\"0xa0b01affbb7f4da4930277c0f0789fb4be51a31454cf132d8ff892b304a352bb322e1eb07ccd438d13caff2a38bdac70b8cc5f9acf2bf54b6dd16b54c25e369c1c3264e159346253e26a64e00b69032db0e7d32f94628de3e6eecb50304d7af3d2d3eae3061b8d3b1afe383d16f17c34bb5269b3ac18b0beb6856d37bcd25b4b644f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba\"},\"owner\":\"11111111-2222-3333-4444-555555555555\",\"orderType\":\"FOK\"}"
+      }
+    },
+    {
+      "name": "v2_negrisk_sell_fok",
+      "input": {
+        "version": 2,
+        "negRisk": true,
+        "tokenId": "9800787273216002583860617742040128587601631587605531883592612768894865019786",
+        "side": "SELL",
+        "amount": 12.5,
+        "price": 0.335,
+        "tickSize": "0.005",
+        "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+        "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+        "signatureType": 3,
+        "salt": "1234567890123456789",
+        "timestamp": "1760000000000",
+        "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "builderCode": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "owner": "11111111-2222-3333-4444-555555555555",
+        "orderType": "FOK"
+      },
+      "expected": {
+        "signature": "0xd4b66c4ae958103637e9cff3e9a2650067a90463ec0211ea9639439bffd4a32e2219b41e4e8ea291b709f09def98581c274369c425c70777c5bf7d997ebe88771c9b858f53327b0bd13af8ec14cfb35234fb9eb7b0504d1a4e61f433840d30e81a52f29c387c0d863a06e58a7f93e4611d5e27d5cf2e93321aef742ccec35e58d54f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba",
+        "body": "{\"deferExec\":false,\"postOnly\":false,\"order\":{\"salt\":1234567890123456800,\"maker\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"signer\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"tokenId\":\"9800787273216002583860617742040128587601631587605531883592612768894865019786\",\"makerAmount\":\"12500000\",\"takerAmount\":\"4187500\",\"side\":\"SELL\",\"signatureType\":3,\"timestamp\":\"1760000000000\",\"expiration\":\"0\",\"metadata\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"builder\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"signature\":\"0xd4b66c4ae958103637e9cff3e9a2650067a90463ec0211ea9639439bffd4a32e2219b41e4e8ea291b709f09def98581c274369c425c70777c5bf7d997ebe88771c9b858f53327b0bd13af8ec14cfb35234fb9eb7b0504d1a4e61f433840d30e81a52f29c387c0d863a06e58a7f93e4611d5e27d5cf2e93321aef742ccec35e58d54f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba\"},\"owner\":\"11111111-2222-3333-4444-555555555555\",\"orderType\":\"FOK\"}"
+      }
+    },
+    {
+      "name": "v3_buy_fok",
+      "input": {
+        "version": 3,
+        "negRisk": false,
+        "tokenId": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+        "side": "BUY",
+        "amount": 5,
+        "price": 0.75,
+        "tickSize": "0.01",
+        "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+        "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+        "signatureType": 3,
+        "salt": "1234567890123456789",
+        "timestamp": "1760000000000",
+        "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "builderCode": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "owner": "11111111-2222-3333-4444-555555555555",
+        "orderType": "FOK"
+      },
+      "expected": {
+        "signature": "0xa8956d244005cdf99c2de735c05523bf049040a4ad476f67f152379f2537cb39113aa12ff8bf2fc51523869be7c62244657213b4ec6f71a9030b2d1e741c712b1c466c63910185bbd55e8679264200c4e0abdcbb0c6264eb3d41d13326022e095b7c5c44cf46434b27c5450199acc44f8f31bbd31f2e3565c163bfd2db4782fb484f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba",
+        "body": "{\"deferExec\":false,\"postOnly\":false,\"order\":{\"salt\":1234567890123456800,\"maker\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"signer\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"tokenId\":\"5217830831767552351603457242192184817666125891744021388456190691134219482513\",\"makerAmount\":\"5000000\",\"takerAmount\":\"6666600\",\"side\":\"BUY\",\"signatureType\":3,\"timestamp\":\"1760000000000\",\"expiration\":\"0\",\"metadata\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"builder\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"signature\":\"0xa8956d244005cdf99c2de735c05523bf049040a4ad476f67f152379f2537cb39113aa12ff8bf2fc51523869be7c62244657213b4ec6f71a9030b2d1e741c712b1c466c63910185bbd55e8679264200c4e0abdcbb0c6264eb3d41d13326022e095b7c5c44cf46434b27c5450199acc44f8f31bbd31f2e3565c163bfd2db4782fb484f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba\"},\"owner\":\"11111111-2222-3333-4444-555555555555\",\"orderType\":\"FOK\"}"
+      }
+    },
+    {
+      "name": "v2_buy_gtc",
+      "input": {
+        "version": 2,
+        "negRisk": false,
+        "tokenId": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+        "side": "BUY",
+        "amount": 5,
+        "price": 0.75,
+        "tickSize": "0.01",
+        "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+        "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+        "signatureType": 3,
+        "salt": "1234567890123456789",
+        "timestamp": "1760000000000",
+        "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "builderCode": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "owner": "11111111-2222-3333-4444-555555555555",
+        "orderType": "GTC"
+      },
+      "expected": {
+        "signature": "0x35dd0848e8179976ba443c3cd2e4cea48a60b116e00611133bd838cf4c8bf1de3bf0aa4085a66cd3c8f860aad4be00c53bc62376e295b964d5ede04890062d9a1b3264e159346253e26a64e00b69032db0e7d32f94628de3e6eecb50304d7af3d27c5c44cf46434b27c5450199acc44f8f31bbd31f2e3565c163bfd2db4782fb484f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba",
+        "body": "{\"deferExec\":false,\"postOnly\":false,\"order\":{\"salt\":1234567890123456800,\"maker\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"signer\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"tokenId\":\"5217830831767552351603457242192184817666125891744021388456190691134219482513\",\"makerAmount\":\"5000000\",\"takerAmount\":\"6666600\",\"side\":\"BUY\",\"signatureType\":3,\"timestamp\":\"1760000000000\",\"expiration\":\"0\",\"metadata\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"builder\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"signature\":\"0x35dd0848e8179976ba443c3cd2e4cea48a60b116e00611133bd838cf4c8bf1de3bf0aa4085a66cd3c8f860aad4be00c53bc62376e295b964d5ede04890062d9a1b3264e159346253e26a64e00b69032db0e7d32f94628de3e6eecb50304d7af3d27c5c44cf46434b27c5450199acc44f8f31bbd31f2e3565c163bfd2db4782fb484f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba\"},\"owner\":\"11111111-2222-3333-4444-555555555555\",\"orderType\":\"GTC\"}"
+      }
+    },
+    {
+      "name": "v2_sell_tick0001",
+      "input": {
+        "version": 2,
+        "negRisk": false,
+        "tokenId": "9800787273216002583860617742040128587601631587605531883592612768894865019786",
+        "side": "SELL",
+        "amount": 3.21,
+        "price": 0.7135,
+        "tickSize": "0.0001",
+        "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+        "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+        "signatureType": 3,
+        "salt": "1234567890123456789",
+        "timestamp": "1760000000000",
+        "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "builderCode": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "owner": "11111111-2222-3333-4444-555555555555",
+        "orderType": "FOK"
+      },
+      "expected": {
+        "signature": "0xe62d5813e2f91f0aca4399482cfab4616f970d0d9720052427e0d39ef1d80d247090acce8a564b4d060d39708b48f11264876e661b55a4a65023f1aecf2c9dd31c3264e159346253e26a64e00b69032db0e7d32f94628de3e6eecb50304d7af3d26e30da7d7340de200ac1f2572d0969d9e12588523e6eb1457e3ac455e27c24224f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba",
+        "body": "{\"deferExec\":false,\"postOnly\":false,\"order\":{\"salt\":1234567890123456800,\"maker\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"signer\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"tokenId\":\"9800787273216002583860617742040128587601631587605531883592612768894865019786\",\"makerAmount\":\"3210000\",\"takerAmount\":\"2290335\",\"side\":\"SELL\",\"signatureType\":3,\"timestamp\":\"1760000000000\",\"expiration\":\"0\",\"metadata\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"builder\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"signature\":\"0xe62d5813e2f91f0aca4399482cfab4616f970d0d9720052427e0d39ef1d80d247090acce8a564b4d060d39708b48f11264876e661b55a4a65023f1aecf2c9dd31c3264e159346253e26a64e00b69032db0e7d32f94628de3e6eecb50304d7af3d26e30da7d7340de200ac1f2572d0969d9e12588523e6eb1457e3ac455e27c24224f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba\"},\"owner\":\"11111111-2222-3333-4444-555555555555\",\"orderType\":\"FOK\"}"
+      }
+    }
+  ],
+  "l2Headers": [
+    {
+      "name": "post_order",
+      "input": {
+        "method": "POST",
+        "path": "/order",
+        "bodyCase": "v2_buy_fok",
+        "timestamp": 1760000123
+      },
+      "expected": {
+        "POLY_ADDRESS": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+        "POLY_SIGNATURE": "y2qhZ2xE8xQlEfvxoVqmFnHP_DSMo3URVmoZFga0DPA=",
+        "POLY_TIMESTAMP": "1760000123",
+        "POLY_API_KEY": "11111111-2222-3333-4444-555555555555",
+        "POLY_PASSPHRASE": "test-passphrase-0000"
+      }
+    },
+    {
+      "name": "get_trades",
+      "input": {
+        "method": "GET",
+        "path": "/data/trades",
+        "timestamp": 1760000123
+      },
+      "expected": {
+        "POLY_ADDRESS": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+        "POLY_SIGNATURE": "o5C-8NWsiW5IbrOhKLYRmFfHBcRQRPJ9ZHbgzwpZS6Q=",
+        "POLY_TIMESTAMP": "1760000123",
+        "POLY_API_KEY": "11111111-2222-3333-4444-555555555555",
+        "POLY_PASSPHRASE": "test-passphrase-0000"
+      }
+    }
+  ],
+  "judgeFill": [
+    {
+      "name": "matched_full",
+      "resp": {
+        "success": true,
+        "status": "matched",
+        "makingAmount": "5",
+        "takingAmount": "6.66",
+        "transactionsHashes": [
+          "0xabc"
+        ],
+        "tradeIDs": [
+          "t1"
+        ],
+        "orderID": "o1"
+      },
+      "expected": {
+        "filled": true,
+        "kind": "filled",
+        "status": "matched"
+      }
+    },
+    {
+      "name": "filled_word",
+      "resp": {
+        "success": true,
+        "status": "filled"
+      },
+      "expected": {
+        "filled": true,
+        "kind": "filled",
+        "status": "filled"
+      }
+    },
+    {
+      "name": "success_hash_only",
+      "resp": {
+        "success": true,
+        "status": "",
+        "transactionsHashes": [
+          "0x1"
+        ]
+      },
+      "expected": {
+        "filled": true,
+        "kind": "filled",
+        "status": ""
+      }
+    },
+    {
+      "name": "success_tradeids_only",
+      "resp": {
+        "success": true,
+        "tradeIDs": [
+          "a",
+          "b"
+        ]
+      },
+      "expected": {
+        "filled": true,
+        "kind": "filled",
+        "status": ""
+      }
+    },
+    {
+      "name": "success_making_only",
+      "resp": {
+        "success": true,
+        "makingAmount": "2.5"
+      },
+      "expected": {
+        "filled": true,
+        "kind": "filled",
+        "status": ""
+      }
+    },
+    {
+      "name": "success_no_evidence",
+      "resp": {
+        "success": true,
+        "status": "live",
+        "makingAmount": "0",
+        "takingAmount": "0",
+        "transactionsHashes": [],
+        "tradeIDs": []
+      },
+      "expected": {
+        "filled": false,
+        "kind": "unfilled",
+        "status": "live"
+      }
+    },
+    {
+      "name": "success_delayed",
+      "resp": {
+        "success": true,
+        "status": "delayed"
+      },
+      "expected": {
+        "filled": false,
+        "kind": "unfilled",
+        "status": "delayed"
+      }
+    },
+    {
+      "name": "rejected_flag",
+      "resp": {
+        "success": false,
+        "status": "rejected"
+      },
+      "expected": {
+        "filled": false,
+        "kind": "rejected",
+        "status": "rejected"
+      }
+    },
+    {
+      "name": "error_string",
+      "resp": {
+        "error": "insufficient funds"
+      },
+      "expected": {
+        "filled": false,
+        "kind": "unknown",
+        "status": "",
+        "error": "insufficient funds"
+      }
+    },
+    {
+      "name": "error_zero_string",
+      "resp": {
+        "error": "0"
+      },
+      "expected": {
+        "filled": false,
+        "kind": "unknown",
+        "status": "",
+        "error": "0"
+      }
+    },
+    {
+      "name": "error_empty_string",
+      "resp": {
+        "error": ""
+      },
+      "expected": {
+        "filled": false,
+        "kind": "unfilled",
+        "status": ""
+      }
+    },
+    {
+      "name": "error_object",
+      "resp": {
+        "error": {
+          "code": 500
+        }
+      },
+      "expected": {
+        "filled": false,
+        "kind": "unknown",
+        "status": "",
+        "error": "{\"code\":500}"
+      }
+    },
+    {
+      "name": "error_msg_field",
+      "resp": {
+        "errorMsg": "bad tick size"
+      },
+      "expected": {
+        "filled": false,
+        "kind": "error",
+        "status": "",
+        "error": "bad tick size"
+      }
+    },
+    {
+      "name": "error_and_msg",
+      "resp": {
+        "error": "0",
+        "errorMsg": "should not reach"
+      },
+      "expected": {
+        "filled": false,
+        "kind": "unknown",
+        "status": "",
+        "error": "0"
+      }
+    },
+    {
+      "name": "empty_object",
+      "resp": {},
+      "expected": {
+        "filled": false,
+        "kind": "unfilled",
+        "status": ""
+      }
+    },
+    {
+      "name": "null_resp",
+      "resp": null,
+      "expected": {
+        "filled": false,
+        "kind": "unfilled",
+        "status": ""
+      }
+    },
+    {
+      "name": "string_resp",
+      "resp": "weird",
+      "expected": {
+        "filled": false,
+        "kind": "unfilled",
+        "status": ""
+      }
+    },
+    {
+      "name": "matched_upper",
+      "resp": {
+        "success": true,
+        "status": "MATCHED"
+      },
+      "expected": {
+        "filled": true,
+        "kind": "filled",
+        "status": "matched"
+      }
+    },
+    {
+      "name": "taking_only_not_fill",
+      "resp": {
+        "success": true,
+        "takingAmount": "9.99"
+      },
+      "expected": {
+        "filled": false,
+        "kind": "unfilled",
+        "status": ""
+      }
+    },
+    {
+      "name": "error_beats_success",
+      "resp": {
+        "success": true,
+        "status": "matched",
+        "error": "post only"
+      },
+      "expected": {
+        "filled": false,
+        "kind": "error",
+        "status": "matched",
+        "error": "post only"
+      }
+    }
+  ],
+  "stopLossVerdict": [
+    {
+      "entry": "0.75",
+      "current": "0.5",
+      "expected": "triggered"
+    },
+    {
+      "entry": "0.75",
+      "current": "0.51",
+      "expected": "holding"
+    },
+    {
+      "entry": "0.75",
+      "current": "0.97",
+      "expected": "decided"
+    },
+    {
+      "entry": "0.75",
+      "current": "0.03",
+      "expected": "decided"
+    },
+    {
+      "entry": "0.75",
+      "current": "0.02",
+      "expected": "decided"
+    },
+    {
+      "entry": "0.75",
+      "current": "NaN",
+      "expected": "skip"
+    },
+    {
+      "entry": "NaN",
+      "current": "0.5",
+      "expected": "skip"
+    },
+    {
+      "entry": "0.3",
+      "current": "0.05",
+      "expected": "holding"
+    },
+    {
+      "entry": "0.3",
+      "current": "0.049",
+      "expected": "triggered"
+    },
+    {
+      "entry": "0.99",
+      "current": "0.74",
+      "expected": "triggered"
+    },
+    {
+      "entry": "0.99",
+      "current": "0.73",
+      "expected": "triggered"
+    },
+    {
+      "entry": "0.26",
+      "current": "0.01",
+      "expected": "decided"
+    },
+    {
+      "entry": "0.26",
+      "current": "0.009",
+      "expected": "decided"
+    },
+    {
+      "entry": "0.5",
+      "current": "Infinity",
+      "expected": "skip"
+    },
+    {
+      "entry": "0.5",
+      "current": "0.25",
+      "expected": "triggered"
+    }
+  ],
+  "pickOutcomeIndex": [
+    {
+      "outcomes": [
+        "Yes",
+        "No"
+      ],
+      "row": {
+        "outcome": "No"
+      },
+      "expected": 1
+    },
+    {
+      "outcomes": [
+        "Yes",
+        "No"
+      ],
+      "row": {
+        "outcome": " yes "
+      },
+      "expected": 0
+    },
+    {
+      "outcomes": [
+        "Yes",
+        "No"
+      ],
+      "row": {
+        "outcome": "Maybe",
+        "outcome_index": 1
+      },
+      "expected": 1
+    },
+    {
+      "outcomes": [
+        "Yes",
+        "No"
+      ],
+      "row": {
+        "outcome_index": 0
+      },
+      "expected": 0
+    },
+    {
+      "outcomes": [
+        "Yes",
+        "No"
+      ],
+      "row": {},
+      "expected": -1
+    },
+    {
+      "outcomes": [],
+      "row": {
+        "outcome_index": 2
+      },
+      "expected": 2
+    },
+    {
+      "outcomes": [
+        "Up",
+        "Down"
+      ],
+      "row": {
+        "outcome": "DOWN"
+      },
+      "expected": 1
+    },
+    {
+      "outcomes": [
+        "Yes",
+        "No"
+      ],
+      "row": {
+        "outcome_index": 1.5
+      },
+      "expected": -1
+    },
+    {
+      "outcomes": [
+        "Yes",
+        "No"
+      ],
+      "row": {
+        "outcome_index": -1
+      },
+      "expected": -1
+    },
+    {
+      "outcomes": null,
+      "row": {
+        "outcome_index": 3
+      },
+      "expected": 3
+    }
+  ],
+  "roundTick": [
+    {
+      "price": "0.735",
+      "tick": "0.01",
+      "expected": "0.74"
+    },
+    {
+      "price": "0.7349",
+      "tick": "0.01",
+      "expected": "0.73"
+    },
+    {
+      "price": "0.125",
+      "tick": "0.001",
+      "expected": "0.125"
+    },
+    {
+      "price": "0.9995",
+      "tick": "0.001",
+      "expected": "1"
+    },
+    {
+      "price": "0.5",
+      "tick": "0.0001",
+      "expected": "0.5"
+    },
+    {
+      "price": "0.1234565",
+      "tick": "0.0001",
+      "expected": "0.1235"
+    },
+    {
+      "price": "0.07",
+      "tick": "0.005",
+      "expected": "0.07"
+    },
+    {
+      "price": "0.333",
+      "tick": "0.0025",
+      "expected": "0.3325"
+    },
+    {
+      "price": "0.985",
+      "tick": "0.01",
+      "expected": "0.99"
+    },
+    {
+      "price": "0.015",
+      "tick": "0.01",
+      "expected": "0.02"
+    },
+    {
+      "price": "0.0049",
+      "tick": "0.01",
+      "expected": "0"
+    }
+  ],
+  "fillMath": [
+    {
+      "resp": {
+        "makingAmount": "6.66",
+        "takingAmount": "4.7952"
+      },
+      "shares": "6.66",
+      "current": "0.72",
+      "entry": "0.95",
+      "expected": {
+        "soldShares": "6.66",
+        "proceeds": "4.8",
+        "exitPrice": "0.7207207207207207",
+        "realized": "-1.53"
+      }
+    },
+    {
+      "resp": {
+        "makingAmount": "0",
+        "takingAmount": "0"
+      },
+      "shares": "5",
+      "current": "0.5",
+      "entry": "0.8",
+      "expected": {
+        "soldShares": "5",
+        "proceeds": "2.5",
+        "exitPrice": "0.5",
+        "realized": "-1.5"
+      }
+    },
+    {
+      "resp": {},
+      "shares": "5",
+      "current": "0.5",
+      "entry": "0.8",
+      "expected": {
+        "soldShares": "5",
+        "proceeds": "2.5",
+        "exitPrice": "0.5",
+        "realized": "-1.5"
+      }
+    },
+    {
+      "resp": {
+        "makingAmount": "3.333",
+        "takingAmount": "1.111"
+      },
+      "shares": "5",
+      "current": "0.4",
+      "entry": "0.75",
+      "expected": {
+        "soldShares": "3.333",
+        "proceeds": "1.11",
+        "exitPrice": "0.33303330333033304",
+        "realized": "-1.39"
+      }
+    },
+    {
+      "resp": {
+        "takingAmount": "2.5"
+      },
+      "shares": "4",
+      "current": "0.6",
+      "entry": "0.9",
+      "expected": {
+        "soldShares": "4",
+        "proceeds": "2.5",
+        "exitPrice": "0.625",
+        "realized": "-1.1"
+      }
+    },
+    {
+      "resp": {
+        "makingAmount": "10"
+      },
+      "shares": "10",
+      "current": "0.33",
+      "entry": "0.61",
+      "expected": {
+        "soldShares": "10",
+        "proceeds": "3.3",
+        "exitPrice": "0.32999999999999996",
+        "realized": "-2.8"
+      }
+    }
+  ],
+  "bridgeShape": [
+    {
+      "name": "ok_object",
+      "raw": {
+        "status": 200,
+        "body": "{\"success\":true,\"orderID\":\"o1\"}",
+        "error": null
+      },
+      "expected": {
+        "ok": {
+          "success": true,
+          "orderID": "o1"
+        }
+      }
+    },
+    {
+      "name": "ok_string_body",
+      "raw": {
+        "status": 200,
+        "body": "plain-ok",
+        "error": null
+      },
+      "expected": {
+        "ok": "plain-ok"
+      }
+    },
+    {
+      "name": "transport_passthrough",
+      "raw": {
+        "status": 0,
+        "body": "",
+        "error": "네트워크 오류 (연결 실패)"
+      },
+      "expected": {
+        "ok": {
+          "error": "네트워크 오류 (연결 실패)"
+        }
+      }
+    },
+    {
+      "name": "err_json_error_string",
+      "raw": {
+        "status": 400,
+        "body": "{\"error\":\"bad tick\"}",
+        "error": null
+      },
+      "expected": {
+        "ok": {
+          "error": "bad tick",
+          "status": 400
+        }
+      }
+    },
+    {
+      "name": "err_json_error_object",
+      "raw": {
+        "status": 400,
+        "body": "{\"error\":{\"code\":7}}",
+        "error": null
+      },
+      "expected": {
+        "ok": {
+          "error": {
+            "code": 7
+          },
+          "status": 400
+        }
+      }
+    },
+    {
+      "name": "err_json_errormsg",
+      "raw": {
+        "status": 422,
+        "body": "{\"errorMsg\":\"no match\"}",
+        "error": null
+      },
+      "expected": {
+        "ok": {
+          "error": {
+            "errorMsg": "no match"
+          },
+          "status": 422
+        }
+      }
+    },
+    {
+      "name": "err_json_no_fields",
+      "raw": {
+        "status": 400,
+        "body": "{\"foo\":1}",
+        "error": null
+      },
+      "expected": {
+        "ok": {
+          "error": {
+            "foo": 1
+          },
+          "status": 400
+        }
+      }
+    },
+    {
+      "name": "err_plain_text",
+      "raw": {
+        "status": 500,
+        "body": "server boom",
+        "error": null
+      },
+      "expected": {
+        "ok": {
+          "error": "server boom",
+          "status": 500
+        }
+      }
+    },
+    {
+      "name": "err_empty_body",
+      "raw": {
+        "status": 503,
+        "body": "",
+        "error": null
+      },
+      "expected": {
+        "ok": {
+          "error": "Request failed with status code 503"
+        }
+      }
+    }
+  ],
+  "bridgeRetry": [
+    {
+      "name": "net_then_ok",
+      "outcomes": [
+        {
+          "status": 0,
+          "body": "",
+          "error": "연결 시간 초과"
+        },
+        {
+          "status": 200,
+          "body": "{\"success\":true,\"status\":\"matched\"}",
+          "error": null
+        }
+      ],
+      "retryOnError": true,
+      "expected": {
+        "calls": 2,
+        "ok": {
+          "success": true,
+          "status": "matched"
+        }
+      }
+    },
+    {
+      "name": "srv_then_ok",
+      "outcomes": [
+        {
+          "status": 503,
+          "body": "",
+          "error": null
+        },
+        {
+          "status": 200,
+          "body": "{\"success\":true,\"status\":\"matched\"}",
+          "error": null
+        }
+      ],
+      "retryOnError": true,
+      "expected": {
+        "calls": 2,
+        "ok": {
+          "success": true,
+          "status": "matched"
+        }
+      }
+    },
+    {
+      "name": "net_twice",
+      "outcomes": [
+        {
+          "status": 0,
+          "body": "",
+          "error": "연결 시간 초과"
+        },
+        {
+          "status": 0,
+          "body": "",
+          "error": "연결 시간 초과"
+        }
+      ],
+      "retryOnError": true,
+      "expected": {
+        "calls": 2,
+        "ok": {
+          "error": "연결 시간 초과"
+        }
+      }
+    },
+    {
+      "name": "client_error_no_retry",
+      "outcomes": [
+        {
+          "status": 400,
+          "body": "{\"error\":\"bad\"}",
+          "error": null
+        },
+        {
+          "status": 200,
+          "body": "{\"success\":true,\"status\":\"matched\"}",
+          "error": null
+        }
+      ],
+      "retryOnError": true,
+      "expected": {
+        "calls": 1,
+        "ok": {
+          "error": "bad",
+          "status": 400
+        }
+      }
+    },
+    {
+      "name": "no_retry_flag",
+      "outcomes": [
+        {
+          "status": 503,
+          "body": "",
+          "error": null
+        },
+        {
+          "status": 200,
+          "body": "{\"success\":true,\"status\":\"matched\"}",
+          "error": null
+        }
+      ],
+      "retryOnError": false,
+      "expected": {
+        "calls": 1,
+        "ok": {
+          "error": "Request failed with status code 503"
+        }
+      }
+    },
+    {
+      "name": "ok_first_try",
+      "outcomes": [
+        {
+          "status": 200,
+          "body": "{\"success\":true,\"status\":\"matched\"}",
+          "error": null
+        }
+      ],
+      "retryOnError": true,
+      "expected": {
+        "calls": 1,
+        "ok": {
+          "success": true,
+          "status": "matched"
+        }
+      }
+    }
+  ],
+  "redeemBody": {
+    "input": {
+      "eoa": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+      "funder": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+      "nonce": "7",
+      "signature": "0xababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+      "conditionId": "0xcond123",
+      "deadline": "1760000600",
+      "calls": [
+        {
+          "target": "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",
+          "data": "0x1234abcd"
+        },
+        {
+          "target": "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",
+          "data": "0x"
+        }
+      ]
+    },
+    "expected": "{\"type\":\"WALLET\",\"from\":\"0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A\",\"to\":\"0x00000000000Fb5C9ADea0298D729A0CB3823Cc07\",\"nonce\":\"7\",\"signature\":\"0xababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab\",\"metadata\":\"Redeem positions for condition 0xcond123\",\"depositWalletParams\":{\"depositWallet\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"deadline\":\"1760000600\",\"calls\":[{\"target\":\"0x4D97DCd97eC945f40cF65F87097ACe5EA0476045\",\"value\":\"0\",\"data\":\"0x1234abcd\"},{\"target\":\"0x4D97DCd97eC945f40cF65F87097ACe5EA0476045\",\"value\":\"0\",\"data\":\"0x\"}]}}"
+  }
+}

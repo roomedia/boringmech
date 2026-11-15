@@ -1,0 +1,1168 @@
+{
+ "meta": {
+  "target": "app/src/engine.js 판정 로직 (scan·verify·stoploss·redeem·fill·reconcile·sizing·settled)",
+  "nowMs": 1794744000000,
+  "note": "nowMs 고정으로 날짜 판정을 결정적으로 만들었다. __NaN__·__Inf__·__-Inf__는 JSON에 없는 JS 수치의 센티넬 표기다.",
+  "expected_from": "app/src/engine.js (모듈 import + 원본 추출 실행)"
+ },
+ "cases": {
+  "scan-band-edges": {
+   "candidates": [
+    {
+     "slug": "band-group-lo",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.7,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    {
+     "slug": "band-lo-edge",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.6,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    {
+     "slug": "band-hi-edge",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.9,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    {
+     "slug": "band-group-hi",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.8,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    }
+   ],
+   "stats": {
+    "band_out": 2,
+    "total": 6
+   }
+  },
+  "scan-sports": {
+   "candidates": [
+    {
+     "slug": "politics-fee",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    {
+     "slug": "no-fee",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    }
+   ],
+   "stats": {
+    "sports": 3,
+    "total": 5
+   }
+  },
+  "scan-drops": {
+   "candidates": [
+    {
+     "slug": "vol-edge",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    {
+     "slug": "ok-one",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    {
+     "slug": "end-max",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-12-30T12:00:00.000Z"
+    }
+   ],
+   "stats": {
+    "inactive": 2,
+    "not_accepting": 2,
+    "short_term": 2,
+    "owned": 2,
+    "end_out": 2,
+    "volume_low": 2,
+    "price_bad": 3,
+    "total": 18
+   }
+  },
+  "scan-sort": {
+   "candidates": [
+    {
+     "slug": "sort-near-band",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-18T12:00:00.000Z"
+    },
+    {
+     "slug": "sort-tie-a",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-18T12:00:00.000Z"
+    },
+    {
+     "slug": "sort-tie-b",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-18T12:00:00.000Z"
+    },
+    {
+     "slug": "sort-far-band",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    {
+     "slug": "sort-near-out",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.65,
+     "endDate": "2026-11-17T12:00:00.000Z"
+    },
+    {
+     "slug": "sort-far-out",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.85,
+     "endDate": "2026-11-20T12:00:00.000Z"
+    }
+   ],
+   "stats": {
+    "total": 6
+   }
+  },
+  "scan-side": {
+   "candidates": [
+    {
+     "slug": "side-tie",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    {
+     "slug": "side-no",
+     "question": "질문?",
+     "side": "no",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    }
+   ],
+   "stats": {
+    "total": 2
+   }
+  },
+  "verify-ok-yes": {
+   "ok": true,
+   "tokenId": "tok-yes",
+   "limitPrice": 0.77,
+   "estShares": 6.4935064935064934,
+   "tickSize": "0.01",
+   "negRisk": false
+  },
+  "verify-ok-no": {
+   "ok": true,
+   "tokenId": "tok-no",
+   "limitPrice": 0.77,
+   "estShares": 6.4935064935064934,
+   "tickSize": "0.01",
+   "negRisk": false
+  },
+  "verify-v2-position-ids": {
+   "ok": true,
+   "tokenId": "pos-yes",
+   "limitPrice": 0.77,
+   "estShares": 6.4935064935064934,
+   "tickSize": "0.01",
+   "negRisk": false
+  },
+  "verify-gamma-missing": {
+   "ok": false,
+   "reason": "gamma_market_missing"
+  },
+  "verify-gamma-sports": {
+   "ok": false,
+   "reason": "sports"
+  },
+  "verify-gamma-not-accepting": {
+   "ok": false,
+   "reason": "market_not_accepting"
+  },
+  "verify-gamma-parse-error": {
+   "ok": false,
+   "reason": "gamma_parse_error"
+  },
+  "verify-gamma-shape-error": {
+   "ok": false,
+   "reason": "gamma_shape_error"
+  },
+  "verify-market-inactive": {
+   "ok": false,
+   "reason": "market_inactive"
+  },
+  "verify-end-out": {
+   "ok": false,
+   "reason": "end_out_of_range"
+  },
+  "verify-snapshot-mismatch": {
+   "ok": false,
+   "reason": "snapshot_mismatch"
+  },
+  "verify-snapshot-boundary-quirk": {
+   "ok": false,
+   "reason": "snapshot_mismatch"
+  },
+  "verify-snapshot-near": {
+   "ok": true,
+   "tokenId": "tok-yes",
+   "limitPrice": 0.79,
+   "estShares": 6.329113924050633,
+   "tickSize": "0.01",
+   "negRisk": false
+  },
+  "verify-side-flipped": {
+   "ok": false,
+   "reason": "side_flipped"
+  },
+  "verify-no-asks": {
+   "ok": false,
+   "reason": "no_asks"
+  },
+  "verify-no-bids": {
+   "ok": false,
+   "reason": "no_bids"
+  },
+  "verify-ask-out-of-band-low": {
+   "ok": false,
+   "reason": "ask_out_of_band"
+  },
+  "verify-ask-out-of-band-high": {
+   "ok": false,
+   "reason": "ask_out_of_band"
+  },
+  "verify-ask-above-signal": {
+   "ok": false,
+   "reason": "ask_above_signal"
+  },
+  "verify-ask-above-signal-boundary": {
+   "ok": true,
+   "tokenId": "tok-yes",
+   "limitPrice": 0.82,
+   "estShares": 6.097560975609756,
+   "tickSize": "0.01",
+   "negRisk": false
+  },
+  "verify-spread-wide": {
+   "ok": false,
+   "reason": "spread_too_wide"
+  },
+  "verify-spread-boundary": {
+   "ok": true,
+   "tokenId": "tok-yes",
+   "limitPrice": 0.77,
+   "estShares": 6.4935064935064934,
+   "tickSize": "0.01",
+   "negRisk": false
+  },
+  "verify-depth-low-bet": {
+   "ok": false,
+   "reason": "ask_depth_low"
+  },
+  "verify-depth-low-bigbet": {
+   "ok": false,
+   "reason": "ask_depth_low"
+  },
+  "verify-depth-boundary": {
+   "ok": true,
+   "tokenId": "tok-yes",
+   "limitPrice": 0.82,
+   "estShares": 6.097560975609756,
+   "tickSize": "0.01",
+   "negRisk": false
+  },
+  "verify-tick-fallback": {
+   "ok": true,
+   "tokenId": "tok-yes",
+   "limitPrice": 0.77,
+   "estShares": 6.4935064935064934,
+   "tickSize": "0.001",
+   "negRisk": false
+  },
+  "verify-limit-capped": {
+   "ok": true,
+   "tokenId": "tok-yes",
+   "limitPrice": 0.9,
+   "estShares": 5.555555555555555,
+   "tickSize": "0.01",
+   "negRisk": false
+  },
+  "verify-below-min-size": {
+   "ok": false,
+   "reason": "below_min_order_size"
+  },
+  "verify-book-throws": {
+   "throw": true
+  },
+  "verify-asks-unsorted-filter": {
+   "ok": true,
+   "tokenId": "tok-yes",
+   "limitPrice": 0.78,
+   "estShares": 6.41025641025641,
+   "tickSize": "0.01",
+   "negRisk": false
+  },
+  "sl-triggered-exact": {
+   "verdict": "triggered"
+  },
+  "sl-holding-above": {
+   "verdict": "holding"
+  },
+  "sl-decided-high-exact": {
+   "verdict": "decided"
+  },
+  "sl-decided-low-exact": {
+   "verdict": "decided"
+  },
+  "sl-decided-crash": {
+   "verdict": "decided"
+  },
+  "sl-skip-nan-current": {
+   "verdict": "skip"
+  },
+  "sl-skip-nan-entry": {
+   "verdict": "skip"
+  },
+  "sl-skip-inf": {
+   "verdict": "skip"
+  },
+  "sl-triggered-low-band": {
+   "verdict": "triggered"
+  },
+  "pick-name-match": {
+   "index": 0
+  },
+  "pick-fallback-index": {
+   "index": 1
+  },
+  "pick-fraction-index": {
+   "index": -1
+  },
+  "pick-negative-index": {
+   "index": -1
+  },
+  "pick-empty-outcomes-index0": {
+   "index": 0
+  },
+  "pick-none": {
+   "index": -1
+  },
+  "gamma-parse-ok": {
+   "parsed": {
+    "outcomes": [
+     "Yes",
+     "No"
+    ],
+    "prices": [
+     0.5,
+     0.5
+    ]
+   }
+  },
+  "gamma-parse-empty": {
+   "parsed": null
+  },
+  "gamma-parse-bad-json": {
+   "parsed": null
+  },
+  "gamma-parse-len-mismatch": {
+   "parsed": null
+  },
+  "gamma-parse-nonfinite": {
+   "parsed": null
+  },
+  "gamma-parse-empty-outcomes": {
+   "parsed": null
+  },
+  "eval-triggered": {
+   "action": "triggered",
+   "current": 0.48
+  },
+  "eval-holding": {
+   "action": "holding",
+   "current": 0.6
+  },
+  "eval-decided-as-holding": {
+   "action": "holding",
+   "current": 0.98
+  },
+  "eval-recheck-dropped": {
+   "action": "recheck_dropped",
+   "current": 0.6
+  },
+  "eval-bad-entry": {
+   "action": "bad_entry"
+  },
+  "eval-skip-no-token": {
+   "action": "skip"
+  },
+  "eval-skip-size0": {
+   "action": "skip"
+  },
+  "eval-no-index": {
+   "action": "no_index"
+  },
+  "eval-skip-fetch-fail": {
+   "action": "skip"
+  },
+  "plan-mixed": {
+   "targets": [
+    {
+     "condition_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "wins": [
+      {
+       "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "status": "REDEEMABLE",
+       "current_value": 10.5,
+       "token_id": "t1"
+      }
+     ],
+     "losses": [
+      {
+       "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "status": "REDEEMABLE_LOST",
+       "current_value": 0,
+       "token_id": "t2"
+      }
+     ],
+     "expected_usd": 10.5
+    }
+   ],
+   "worthless": [
+    {
+     "condition_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "status": "REDEEMABLE_LOST",
+     "current_value": 0,
+     "token_id": "t3"
+    },
+    {
+     "condition_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "status": "REDEEMABLE_LOST",
+     "current_value": 0,
+     "token_id": "t4"
+    }
+   ],
+   "errors": []
+  },
+  "plan-redeemable-zero": {
+   "targets": [],
+   "worthless": [
+    {
+     "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "status": "REDEEMABLE",
+     "current_value": 0,
+     "token_id": "t1"
+    }
+   ],
+   "errors": []
+  },
+  "plan-errors": {
+   "targets": [],
+   "worthless": [],
+   "errors": [
+    "condition_id 형식 오류",
+    "condition_id 형식 오류",
+    "condition_id 형식 오류"
+   ]
+  },
+  "plan-normalize-grouping": {
+   "targets": [
+    {
+     "condition_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "wins": [
+      {
+       "condition_id": "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+       "status": "REDEEMABLE",
+       "current_value": 3,
+       "token_id": "t1"
+      }
+     ],
+     "losses": [
+      {
+       "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "status": "REDEEMABLE_LOST",
+       "current_value": 0,
+       "token_id": "t2"
+      }
+     ],
+     "expected_usd": 3
+    }
+   ],
+   "worthless": [],
+   "errors": []
+  },
+  "plan-null-entries": {
+   "targets": [],
+   "worthless": [],
+   "errors": []
+  },
+  "plan-expected-rounding": {
+   "targets": [
+    {
+     "condition_id": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "wins": [
+      {
+       "condition_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+       "status": "REDEEMABLE",
+       "current_value": 0.1,
+       "token_id": "t1"
+      },
+      {
+       "condition_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+       "status": "REDEEMABLE",
+       "current_value": 0.2,
+       "token_id": "t2"
+      }
+     ],
+     "losses": [],
+     "expected_usd": 0.3
+    }
+   ],
+   "worthless": [],
+   "errors": []
+  },
+  "recovery-exact": {
+   "delta_usd": 5,
+   "expected_usd": 5,
+   "tolerance": 0.1,
+   "status": "verified"
+  },
+  "recovery-short": {
+   "delta_usd": 3,
+   "expected_usd": 5,
+   "tolerance": 0.1,
+   "status": "mismatch"
+  },
+  "recovery-rel-tol": {
+   "delta_usd": 1015,
+   "expected_usd": 1000,
+   "tolerance": 20,
+   "status": "verified"
+  },
+  "recovery-rel-over": {
+   "delta_usd": 1030,
+   "expected_usd": 1000,
+   "tolerance": 20,
+   "status": "mismatch"
+  },
+  "recovery-abs-boundary": {
+   "delta_usd": 4.96,
+   "expected_usd": 5,
+   "tolerance": 0.1,
+   "status": "verified"
+  },
+  "recovery-zero-expected": {
+   "delta_usd": 0.04,
+   "expected_usd": 0,
+   "tolerance": 0.05,
+   "status": "verified"
+  },
+  "gate-all-zero": {
+   "gate": "already"
+  },
+  "gate-some-left": {
+   "gate": "submit"
+  },
+  "gate-empty": {
+   "gate": "unknown"
+  },
+  "gate-null": {
+   "gate": "unknown"
+  },
+  "cid-0x-upper": {
+   "cid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "cid-plain": {
+   "cid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "cid-0X": {
+   "cid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "cid-short": {
+   "cid": null
+  },
+  "cid-nonhex": {
+   "cid": null
+  },
+  "cid-null": {
+   "cid": null
+  },
+  "bytes31-end00": {
+   "hex": "0xababababababababababababababababababababababababababababababab"
+  },
+  "bytes31-end01": {
+   "hex": "0xababababababababababababababababababababababababababababababab"
+  },
+  "bytes31-end-other-throws": {
+   "throw": true
+  },
+  "bytes31-already31": {
+   "hex": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+  },
+  "bytes31-short-throws": {
+   "throw": true
+  },
+  "ctf-call-standard": {
+   "target": "0xAdA100Db00Ca00073811820692005400218FcE1f",
+   "value": "0",
+   "data": "0x01b7037c000000000000000000000000c011a7e12a19f7b1f670d46f03b03f3342e82dfb0000000000000000000000000000000000000000000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002"
+  },
+  "ctf-call-negrisk": {
+   "target": "0xadA2005600Dec949baf300f4C6120000bDB6eAab",
+   "value": "0",
+   "data": "0x01b7037c000000000000000000000000c011a7e12a19f7b1f670d46f03b03f3342e82dfb0000000000000000000000000000000000000000000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002"
+  },
+  "v2-call": {
+   "target": "0x12121212006e4CD160D18e3f00711DA5c3372600",
+   "value": "0",
+   "data": "0xd217a3ccababababababababababababababababababababababababababababababab0000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000003039"
+  },
+  "fill-null": {
+   "filled": false,
+   "kind": "unfilled",
+   "status": ""
+  },
+  "fill-string": {
+   "filled": false,
+   "kind": "unfilled",
+   "status": ""
+  },
+  "fill-transport-no-status": {
+   "filled": false,
+   "kind": "unknown",
+   "status": "",
+   "error": "Network Error"
+  },
+  "fill-transport-status0": {
+   "filled": false,
+   "kind": "unknown",
+   "status": "0",
+   "error": "Network Error"
+  },
+  "fill-http-error": {
+   "filled": false,
+   "kind": "error",
+   "status": "403",
+   "error": "forbidden"
+  },
+  "fill-error-object-quirk": {
+   "filled": false,
+   "kind": "unknown",
+   "status": "",
+   "error": "{\"code\":400,\"message\":\"bad\"}"
+  },
+  "fill-errormsg": {
+   "filled": false,
+   "kind": "error",
+   "status": "live",
+   "error": "order rejected"
+  },
+  "fill-rejected": {
+   "filled": false,
+   "kind": "rejected",
+   "status": "unmatched"
+  },
+  "fill-matched": {
+   "filled": true,
+   "kind": "filled",
+   "status": "matched"
+  },
+  "fill-hash-evidence": {
+   "filled": true,
+   "kind": "filled",
+   "status": "unmatched"
+  },
+  "fill-making-evidence": {
+   "filled": true,
+   "kind": "filled",
+   "status": "unmatched"
+  },
+  "fill-unmatched-no-evidence": {
+   "filled": false,
+   "kind": "unfilled",
+   "status": "unmatched"
+  },
+  "fill-no-success-flag": {
+   "filled": false,
+   "kind": "unfilled",
+   "status": "matched"
+  },
+  "fill-delayed": {
+   "filled": false,
+   "kind": "unfilled",
+   "status": "delayed"
+  },
+  "reconcile-basic": {
+   "kept": [
+    "a",
+    "c"
+   ],
+   "dropped": [
+    "b",
+    "d"
+   ]
+  },
+  "reconcile-empty": {
+   "kept": [],
+   "dropped": []
+  },
+  "buy-two-pages": {
+   "slugs": [
+    "s1",
+    "s4"
+   ],
+   "complete": true
+  },
+  "buy-array-root": {
+   "slugs": [
+    "s1"
+   ],
+   "complete": true
+  },
+  "buy-bad-shape": {
+   "slugs": [],
+   "complete": false
+  },
+  "buy-empty-hasmore": {
+   "slugs": [
+    "s1"
+   ],
+   "complete": false
+  },
+  "buy-cursor-repeat": {
+   "slugs": [
+    "s1",
+    "s2"
+   ],
+   "complete": true
+  },
+  "buy-page-cap": {
+   "slugs": [
+    "s0",
+    "s1",
+    "s2",
+    "s3",
+    "s4",
+    "s5",
+    "s6",
+    "s7",
+    "s8",
+    "s9"
+   ],
+   "complete": false
+  },
+  "buy-fetch-throws": {
+   "throw": true
+  },
+  "sizing-standard": {
+   "cashFloor": 300,
+   "available": 700,
+   "bet": 10,
+   "slots": 70
+  },
+  "sizing-at-floor": {
+   "cashFloor": 300,
+   "available": 0,
+   "bet": 10,
+   "slots": 0
+  },
+  "sizing-below-bet": {
+   "cashFloor": 300,
+   "available": 5,
+   "bet": 10,
+   "slots": 0
+  },
+  "sizing-position-cap": {
+   "cashFloor": 30000,
+   "available": 70000,
+   "bet": 1000,
+   "slots": 1
+  },
+  "sizing-position-full": {
+   "cashFloor": 30000,
+   "available": 70000,
+   "bet": 1000,
+   "slots": 0
+  },
+  "sizing-nan-closed": {
+   "cashFloor": 2.87,
+   "available": 0,
+   "bet": 5,
+   "slots": 0
+  },
+  "sizing-small-equity": {
+   "cashFloor": 149.7,
+   "available": 0,
+   "bet": 5,
+   "slots": 0
+  },
+  "sizing-bet-boundary": {
+   "cashFloor": 150,
+   "available": 9850,
+   "bet": 5,
+   "slots": 70
+  },
+  "bet-zero": {
+   "bet": 5
+  },
+  "bet-large": {
+   "bet": 100
+  },
+  "bet-null": {
+   "bet": 5
+  },
+  "bet-just-below": {
+   "bet": 5
+  },
+  "bet-exact": {
+   "bet": 5
+  },
+  "bet-just-above": {
+   "bet": 5.01
+  },
+  "base-ok": {
+   "base": {
+    "count": 10,
+    "realized": 12.5
+   }
+  },
+  "base-null-fields": {
+   "base": {
+    "count": null,
+    "realized": null
+   }
+  },
+  "base-missing-field": {
+   "base": null
+  },
+  "base-bad-json": {
+   "base": null
+  },
+  "base-null-raw": {
+   "base": null
+  },
+  "base-string-field": {
+   "base": null
+  },
+  "notice-new": {
+   "notice": {
+    "count": 2,
+    "realizedDelta": 30.25
+   }
+  },
+  "notice-none": {
+   "notice": null
+  },
+  "notice-snap-null": {
+   "notice": null
+  },
+  "notice-base-realized-null": {
+   "notice": null
+  },
+  "ledger-append": {
+   "recent": [
+    {
+     "slug": "m-t1",
+     "condition_id": "c",
+     "token_id": "t1",
+     "outcome": "Yes",
+     "entry_price": 0.75,
+     "exit_price": 0.5,
+     "shares": 10,
+     "proceeds": 5,
+     "realized_pnl": -2.5,
+     "ts": "2026-11-15T00:00:00.000Z"
+    },
+    {
+     "slug": "m-t2",
+     "condition_id": "c",
+     "token_id": "t2",
+     "outcome": "Yes",
+     "entry_price": 0.75,
+     "exit_price": 0.5,
+     "shares": 10,
+     "proceeds": 5,
+     "realized_pnl": 1.25,
+     "ts": "2026-11-15T00:00:00.000Z"
+    }
+   ],
+   "archive": [],
+   "merged": [
+    {
+     "slug": "m-t1",
+     "condition_id": "c",
+     "token_id": "t1",
+     "outcome": "Yes",
+     "entry_price": 0.75,
+     "exit_price": 0.5,
+     "shares": 10,
+     "proceeds": 5,
+     "realized_pnl": -2.5,
+     "ts": "2026-11-15T00:00:00.000Z"
+    },
+    {
+     "slug": "m-t2",
+     "condition_id": "c",
+     "token_id": "t2",
+     "outcome": "Yes",
+     "entry_price": 0.75,
+     "exit_price": 0.5,
+     "shares": 10,
+     "proceeds": 5,
+     "realized_pnl": 1.25,
+     "ts": "2026-11-15T00:00:00.000Z"
+    }
+   ]
+  },
+  "ledger-parse-filter": {
+   "recent": [
+    {
+     "slug": "m-t1",
+     "condition_id": "c",
+     "token_id": "t1",
+     "outcome": "Yes",
+     "entry_price": 0.75,
+     "exit_price": 0.5,
+     "shares": 10,
+     "proceeds": 5,
+     "realized_pnl": -2.5,
+     "ts": "2026-11-15T00:00:00.000Z"
+    },
+    {
+     "token_id": "t4",
+     "realized_pnl": "2.5"
+    },
+    {
+     "slug": "m-t5",
+     "condition_id": "c",
+     "token_id": "t5",
+     "outcome": "Yes",
+     "entry_price": 0.75,
+     "exit_price": 0.5,
+     "shares": 10,
+     "proceeds": 5,
+     "realized_pnl": 0.5,
+     "ts": "2026-11-15T00:00:00.000Z"
+    }
+   ],
+   "archive": [],
+   "merged": [
+    {
+     "slug": "m-t1",
+     "condition_id": "c",
+     "token_id": "t1",
+     "outcome": "Yes",
+     "entry_price": 0.75,
+     "exit_price": 0.5,
+     "shares": 10,
+     "proceeds": 5,
+     "realized_pnl": -2.5,
+     "ts": "2026-11-15T00:00:00.000Z"
+    },
+    {
+     "token_id": "t4",
+     "realized_pnl": "2.5"
+    },
+    {
+     "slug": "m-t5",
+     "condition_id": "c",
+     "token_id": "t5",
+     "outcome": "Yes",
+     "entry_price": 0.75,
+     "exit_price": 0.5,
+     "shares": 10,
+     "proceeds": 5,
+     "realized_pnl": 0.5,
+     "ts": "2026-11-15T00:00:00.000Z"
+    }
+   ]
+  },
+  "ledger-rec-unfiltered-quirk": {
+   "recent": [
+    {
+     "token_id": 123,
+     "realized_pnl": "x"
+    }
+   ],
+   "archive": [],
+   "merged": []
+  },
+  "slparse-merged-order": {
+   "merged": [
+    {
+     "token_id": "t1",
+     "realized_pnl": -3
+    },
+    {
+     "slug": "m-t2",
+     "condition_id": "c",
+     "token_id": "t2",
+     "outcome": "Yes",
+     "entry_price": 0.75,
+     "exit_price": 0.5,
+     "shares": 10,
+     "proceeds": 5,
+     "realized_pnl": 1,
+     "ts": "2026-11-15T00:00:00.000Z"
+    }
+   ]
+  },
+  "attempted-add": {
+   "tokens": [
+    "a",
+    "b",
+    "c"
+   ]
+  },
+  "attempted-dup": {
+   "tokens": [
+    "a",
+    "b"
+   ]
+  },
+  "attempted-empty": {
+   "tokens": [
+    "a"
+   ]
+  },
+  "ingest-basic": {
+   "pending": [
+    {
+     "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "token_id": "t1",
+     "slug": "ma",
+     "status": "REDEEMABLE",
+     "current_value": 10
+    },
+    {
+     "condition_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "token_id": "t2",
+     "slug": "mb",
+     "status": "REDEEMABLE_LOST",
+     "current_value": 0
+    }
+   ],
+   "changed": true
+  },
+  "ingest-done-excluded": {
+   "pending": [
+    {
+     "condition_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "token_id": "t3",
+     "slug": "mc",
+     "status": "REDEEMABLE",
+     "current_value": 7
+    }
+   ],
+   "changed": true
+  },
+  "ingest-value-update": {
+   "pending": [
+    {
+     "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "token_id": "t1",
+     "slug": "m",
+     "status": "REDEEMABLE",
+     "current_value": 5
+    }
+   ],
+   "changed": true
+  },
+  "ingest-no-change": {
+   "pending": [
+    {
+     "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "token_id": "t1",
+     "slug": "m",
+     "status": "REDEEMABLE",
+     "current_value": 5
+    }
+   ],
+   "changed": false
+  },
+  "ingest-closed-win-est": {
+   "pending": [
+    {
+     "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "token_id": "t1",
+     "slug": "ma",
+     "status": "REDEEMABLE",
+     "current_value": 7
+    }
+   ],
+   "changed": true
+  },
+  "ingest-closed-win-keeps-value": {
+   "pending": [
+    {
+     "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "token_id": "t1",
+     "slug": "ma",
+     "status": "REDEEMABLE",
+     "current_value": 3
+    }
+   ],
+   "changed": true
+  },
+  "ingest-closed-not-win": {
+   "pending": [],
+   "changed": false
+  },
+  "corrupted-ok": {
+   "corrupted": false
+  },
+  "corrupted-object": {
+   "corrupted": true
+  },
+  "corrupted-bad-json": {
+   "corrupted": true
+  },
+  "corrupted-null": {
+   "corrupted": false
+  },
+  "corrupted-empty-array": {
+   "corrupted": false
+  },
+  "failsafe-403": {
+   "hit": true
+  },
+  "failsafe-signature": {
+   "hit": true
+  },
+  "failsafe-clean": {
+   "hit": false
+  },
+  "failsafe-null": {
+   "hit": false
+  },
+  "failsafe-not-allowed": {
+   "hit": true
+  }
+ }
+}

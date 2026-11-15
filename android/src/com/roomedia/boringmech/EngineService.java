@@ -12,40 +12,35 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
-import android.os.Looper;
 import android.os.PowerManager;
-import android.webkit.RenderProcessGoneDetail;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
 
-// 엔진 호스트 — WebView를 소유하고 엔진 페이지(사이클)를 구동하는
-// 포그라운드 서비스. 앱이 백그라운드로 가거나 액티비티가 죽어도
-// 엔진은 여기서 계속 돈다 ("무인 자동화 서버" 요구).
+// 엔진 호스트 — 네이티브 엔진 스레드(NativeEngine)를 소유하는 포그라운드
+// 서비스. 앱이 백그라운드로 가거나 액티비티가 죽어도 엔진은 여기서 계속
+// 돈다 ("무인 자동화 서버" 요구). JS 엔진 페이지는 더 이상 띄우지 않는다 —
+// 네이티브 루프와 JS 루프가 동시에 도는 경로는 구조적으로 없다.
 // 실행 의도의 네이티브 미러(SharedPreferences)도 여기서 관리한다 —
 // 알림에서 정지하면 미러를 먼저 지워 다음 실행 때 자동 재개되지 않게 한다.
 //
-// 워치독은 전용 스레드에서 돈다. 종전 구조는 틱이 메인 Looper에 붙어
-// onStartCommand 말미(동기 WebView 생성 뒤)에서만 무장돼, WebView
-// 생성이 메인 스레드에서 멈추면 프로세스는 살고 섀도우는 도는데
-// 워치독만 영원히 무장되지 않는 상태가 됐다 (제보 12). 이제 무장은
-// onCreate 즉시, 판정·예약은 워치독 스레드가 소유하고, WebView 조작만
-// 메인 스레드로 post한다. 판정 자체는 WatchdogLogic(순수 Java)이 맡는다.
+// 워치독은 전용 스레드에서 돈다. 무장은 onCreate 즉시, 판정·예약은
+// 워치독 스레드가 소유하고, 지시 실행도 워치독 스레드에서 바로 한다
+// (네이티브 엔진 시작·재시작은 스레드 안전하고 메인 스레드를 거치지
+// 않으므로 지시 무응답 경로 자체가 없다). 판정은 WatchdogLogic(순수
+// Java)이 맡고, webViewExists 입력은 네이티브 엔진 스레드 생존으로
+// 읽는다 — CREATE/RELOAD/RECREATE 모두 엔진 (재)시작으로 매핑된다.
 // 감시 항목:
-//  - 하트비트 stale 200초 (사이클 3개 + 여유, JS와 같은 값)
+//  - 하트비트 stale 200초 (사이클 3개 + 여유, 종전과 같은 값)
 //  - 사이클 정체 240초 — 번호 전진과 사이클 내부 진행 신호 중 늦은
 //    쪽 기준. 검증만 긴 사이클은 진행 신호가 움직여 오재로드하지 않고,
 //    단계 내부까지 멈춘 경우에만 걸린다.
-//  - 부팅 감시 90초 — 로드·재로드·재생성 뒤 첫 하트비트가 없으면
-//    부팅 실패로 세고 WebView를 재생성한다 (로드됐는데 JS가 안 도는
-//    경우 포함). 복원 진행 신호가 오면 기한은 그만큼 미뤄진다.
-//  - WebView 소멸 시 재생성, 지시 무응답(메인 스레드 정지) 추적·반복.
-// 재로드 횟수는 JS가 복원 직후 읽어 로그로 남긴다.
+//  - 부팅 감시 90초 — 엔진 시작·재시작 뒤 첫 하트비트가 없으면 부팅
+//    실패로 세고 엔진을 재생성한다. 복원 진행 신호가 오면 기한은
+//    그만큼 미뤄진다.
+//  - 엔진 스레드 소멸 시 재생성.
+// 재로드 횟수는 네이티브 엔진이 복원 직후 읽어 로그로 남긴다.
 public class EngineService extends Service {
     public static final String ACTION_STOP = "com.roomedia.boringmech.ACTION_STOP";
     public static final String ACTION_RELOAD_ENGINE =
@@ -74,10 +69,8 @@ public class EngineService extends Service {
     private static final int NOTIFICATION_ID = 1;
 
     private PowerManager.WakeLock wakeLock;
-    // engineWeb은 메인 스레드에서만 만진다 — 워치독 스레드는 직접
-    // 접근하지 않고 메인으로 post한 실행자만 거친다.
-    private WebView engineWeb;
-    private Handler mainHandler;
+    // 네이티브 엔진 — 시작·재시작·정지 모두 스레드 안전하다.
+    private NativeEngine nativeEngine;
     private BroadcastReceiver reloadReceiver;
     private BroadcastReceiver downloadReceiver;
     private Thread shadowThread;
@@ -90,13 +83,11 @@ public class EngineService extends Service {
     // 마지막 틱 시각 — 제보 payload의 tick_alive로 실어, 틱 자체가
     // 멈췄는지를 원격에서 판별할 수 있게 한다.
     private static volatile long lastTickMs;
-    // 페이지 로드 완료 시각 (메인 스레드 콜백이 쓰고 워치독이 읽는다)
-    private volatile long pageFinishMs;
     // 유예 앵커 — 서비스 시작 시각. 어떤 복구 동작으로도 움직이지 않는다.
     private long serviceStartMs;
-    // 아래 상태는 워치독 스레드에서만 읽고 쓴다 (메인 스레드 이벤트는
+    // 아래 상태는 워치독 스레드에서만 읽고 쓴다 (엔진 생존 이벤트는
     // watchdogHandler로 post해 이 스레드에서 반영한다).
-    private boolean wdWebViewExists;
+    private boolean wdEngineAlive;
     private long wdBootSinceMs;
     private long wdLastReloadMs;
     private WatchdogLogic.Action pendingAction;
@@ -123,21 +114,25 @@ public class EngineService extends Service {
         }
     };
 
-    private final Bridge.Host engineHost = new Bridge.Host() {
+    private final NativeEngine.Host nativeHost = new NativeEngine.Host() {
         @Override
-        public String hostMode() {
-            return "engine";
+        public void onEngineAliveChanged(final boolean alive) {
+            Handler h = watchdogHandler;
+            if (h != null) {
+                h.post(() -> {
+                    wdEngineAlive = alive;
+                    if (alive) {
+                        // 새 엔진 세대의 부팅 감시는 시작 시각부터
+                        wdBootSinceMs = System.currentTimeMillis();
+                    }
+                });
+            }
         }
 
         @Override
-        public void onRunIntentChanged(boolean on) {
-            // 엔진 JS가 스스로 정지했으면(failsafe 등) 서비스도 내린다
-            if (!on) stopSelf();
-        }
-
-        @Override
-        public void onReloadEngine() {
-            // 재로드는 뷰어 → 서비스 방향 전용이라 엔진 호스트에서는 무시
+        public void onEngineStopRequested() {
+            // 네이티브 엔진이 스스로 정지했으면(failsafe 등) 서비스도 내린다
+            stopSelf();
         }
     };
 
@@ -286,6 +281,39 @@ public class EngineService extends Service {
         return prefs(ctx).getString(KEY_CREDS_CIPHER, null);
     }
 
+    // ── 네이티브 엔진 비밀 미러 (개인키·Relayer 키) ── 암호문 그대로만
+    // 보관한다. 빈 값이면 미러를 비운다 (creds 미러와 같은 규칙).
+    private static final String KEY_PK_CIPHER = "pk_cipher";
+    private static final String KEY_RELAYER_CIPHER = "relayer_cipher";
+
+    static void setPkCipher(Context ctx, String cipher) {
+        SharedPreferences.Editor e = prefs(ctx).edit();
+        if (cipher != null && !cipher.isEmpty()) {
+            e.putString(KEY_PK_CIPHER, cipher);
+        } else {
+            e.remove(KEY_PK_CIPHER);
+        }
+        e.apply();
+    }
+
+    static String getPkCipher(Context ctx) {
+        return prefs(ctx).getString(KEY_PK_CIPHER, null);
+    }
+
+    static void setRelayerCipher(Context ctx, String cipher) {
+        SharedPreferences.Editor e = prefs(ctx).edit();
+        if (cipher != null && !cipher.isEmpty()) {
+            e.putString(KEY_RELAYER_CIPHER, cipher);
+        } else {
+            e.remove(KEY_RELAYER_CIPHER);
+        }
+        e.apply();
+    }
+
+    static String getRelayerCipher(Context ctx) {
+        return prefs(ctx).getString(KEY_RELAYER_CIPHER, null);
+    }
+
     // ── 섀도우 대조 기록 (bm_shadow) ──
     private static SharedPreferences shadowPrefs(Context ctx) {
         return ctx.getSharedPreferences(SHADOW_PREFS, MODE_PRIVATE);
@@ -363,25 +391,25 @@ public class EngineService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        mainHandler = new Handler(Looper.getMainLooper());
         serviceStartMs = System.currentTimeMillis();
 
-        // 워치독 무장은 여기서 즉시 한다 — onStartCommand의 동기 WebView
-        // 생성보다 먼저 걸려 있어야 그 생성이 멈춰도 틱이 돈다.
+        // 워치독 무장은 여기서 즉시 한다 — 어떤 엔진 시작 경로보다 먼저
+        // 걸려 있어야 시작이 멈춰도 틱이 돈다.
         watchdogRunning = true;
         watchdogThread = new HandlerThread("bm-watchdog");
         watchdogThread.start();
         watchdogHandler = new Handler(watchdogThread.getLooper());
         watchdogHandler.postDelayed(watchdogTick, WatchdogLogic.PERIOD_MS);
 
-        // 뷰어에서 연동이 바뀌면 엔진 페이지를 다시 읽어 자격증명을 맞춘다.
-        // 이 재로드는 유예 앵커를 움직이지 않는다 — 새 페이지 세대의
-        // 부팅 감시만 워치독 스레드에서 새로 시작한다.
+        // 뷰어에서 연동이 바뀌면 네이티브 엔진을 재시작해 자격증명을 맞춘다.
+        // 엔진이 살아 있을 때만 재시작한다 (JS 시절 "engineWeb 있을 때만
+        // reload"와 같다). 이 재시작은 유예 앵커를 움직이지 않는다 — 새
+        // 엔진 세대의 부팅 감시만 워치독 스레드에서 새로 시작한다.
         reloadReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                if (engineWeb != null) {
-                    engineWeb.reload();
+                if (nativeEngine != null && nativeEngine.isAlive()) {
+                    nativeEngine.restart();
                     Handler h = watchdogHandler;
                     if (h != null) {
                         h.post(() -> wdBootSinceMs = System.currentTimeMillis());
@@ -444,8 +472,8 @@ public class EngineService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
             setRunIntent(this, false);
-            if (engineWeb != null) {
-                engineWeb.evaluateJavascript("window.BM && BM.stop();", null);
+            if (nativeEngine != null) {
+                nativeEngine.stop();
             }
             stopSelf();
             return START_NOT_STICKY;
@@ -457,68 +485,24 @@ public class EngineService extends Service {
         }
         startForegroundWithNotification();
         acquireWakeLock();
-        ensureEngine();
+        ensureNativeEngine();
         return START_STICKY;
     }
 
-    // 메인 스레드 전용 — 엔진 WebView가 없으면 만들어 페이지를 띄우고,
-    // 생성을 워치독 스레드에 알린다 (존재 상태 + 새 세대 부팅 감시 시작).
-    private void ensureEngine() {
-        if (engineWeb != null) return;
-        WebView web = new WebView(this);
-        WebSettings settings = web.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        web.addJavascriptInterface(new Bridge(this, engineHost), "AndroidBridge");
-        web.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                if (url.startsWith("file://")) {
-                    return false;
-                }
-                try {
-                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-                } catch (Exception ignored) {
-                    // 엔진 호스트에서 외부 링크를 못 열어도 엔진은 계속 돈다
-                }
-                return true;
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                // 로드 신호 — 지시 확인과 부팅 감시의 재료 (volatile 기록)
-                pageFinishMs = System.currentTimeMillis();
-            }
-
-            @Override
-            public boolean onRenderProcessGone(WebView view,
-                                                RenderProcessGoneDetail detail) {
-                // 렌더러가 죽은 WebView는 reload로 되살릴 수 없다 (F6) —
-                // 버리고 새로 만들어 페이지를 다시 띄운다. 렌더러 사망은
-                // 재로드 사유이지 유예 연장이 아니므로, 종전처럼 로드
-                // 시각 앵커를 리셋하지 않는다. 새 세대의 부팅 감시는
-                // ensureEngine의 생성 통지가 새로 시작한다.
-                if (engineWeb != null) {
-                    try {
-                        engineWeb.destroy();
-                    } catch (Exception ignored) {
-                    }
-                    engineWeb = null;
-                }
-                ensureEngine();
-                return true;
-            }
-        });
-        engineWeb = web;
-        Handler h = watchdogHandler;
-        if (h != null) {
-            h.post(() -> {
-                wdWebViewExists = true;
-                wdBootSinceMs = System.currentTimeMillis();
-            });
+    // 네이티브 엔진이 없으면 만들고 시작한다. 생존 상태는 NativeEngine
+    // 콜백이 워치독 스레드에 반영한다 (존재 상태 + 새 세대 부팅 감시).
+    private void ensureNativeEngine() {
+        if (nativeEngine == null) {
+            nativeEngine = new NativeEngine(this, nativeHost);
         }
-        web.loadUrl("file:///android_asset/index.html");
+        nativeEngine.start();
+    }
+
+    private void restartNativeEngine() {
+        if (nativeEngine == null) {
+            nativeEngine = new NativeEngine(this, nativeHost);
+        }
+        nativeEngine.restart();
     }
 
     // ── 워치독 틱 (워치독 스레드) ─────────────────────────────────
@@ -526,12 +510,14 @@ public class EngineService extends Service {
         long now = System.currentTimeMillis();
         lastTickMs = now;
 
-        // 미확인 지시 추적 — 메인 스레드가 멈춰 실행자가 돌지 않으면
-        // 지시를 반복하고 횟수를 남긴다. 확인된 지시가 남아 있는 동안은
-        // 새 판정을 내리지 않는다 (이중 지시로 카운터가 부풀지 않게).
+        // 미확인 지시 추적 — 실행자가 돌지 않으면 지시를 반복하고 횟수를
+        // 남긴다. 네이티브 지시는 워치독 스레드에서 바로 실행돼 즉시
+        // ack되므로 이 경로는 사실상 닿지 않지만, 판정 로직은 종전과
+        // 같은 형태로 유지한다. 확인된 지시가 남아 있는 동안은 새
+        // 판정을 내리지 않는다 (이중 지시로 카운터가 부풀지 않게).
         if (pendingAction != null) {
             if (WatchdogLogic.isDirectiveAcked(pendingIssuedMs, wdAckMs,
-                    pageFinishMs, getHeartbeatMs(this))) {
+                    0, getHeartbeatMs(this))) {
                 pendingAction = null;
             } else if (WatchdogLogic.shouldRepostDirective(now, pendingLastPostMs)) {
                 SharedPreferences p = prefs(this);
@@ -549,7 +535,7 @@ public class EngineService extends Service {
         WatchdogLogic.Input in = new WatchdogLogic.Input();
         in.now = now;
         in.runIntent = getRunIntent(this);
-        in.webViewExists = wdWebViewExists;
+        in.webViewExists = wdEngineAlive;
         in.serviceStartMs = serviceStartMs;
         in.lastReloadMs = wdLastReloadMs;
         in.heartbeatMs = p.getLong(KEY_HEARTBEAT_MS, 0);
@@ -584,8 +570,8 @@ public class EngineService extends Service {
             e.apply();
             wdLastReloadMs = now;
         }
-        // 새 페이지 세대의 부팅 감시는 지시 시각부터 시작한다. 실행이
-        // 늦어지면 그만큼 부팅 기한이 촉박해지지만, 생성 통지·진행
+        // 새 엔진 세대의 부팅 감시는 지시 시각부터 시작한다. 실행이
+        // 늦어지면 그만큼 부팅 기한이 촉박해지지만, 시작 통지·진행
         // 신호가 오면 판정이 다시 미뤄진다.
         wdBootSinceMs = now;
         issueDirective(d.action, now);
@@ -598,52 +584,27 @@ public class EngineService extends Service {
         postDirective(action, now);
     }
 
-    // 지시를 메인 스레드로 보낸다. 실행자는 WebView 조작 후 ack를
-    // 워치독 스레드로 돌려준다 — ack가 없으면 틱이 무응답으로 추적한다.
+    // 지시를 워치독 스레드에서 바로 실행한다. 네이티브 엔진의 시작·
+    // 재시작은 스레드 안전하고 메인 스레드를 거치지 않으므로 실행 즉시
+    // ack를 남긴다 — 메인 스레드 정지로 지시가 무응답이 되는 경로는
+    // 구조적으로 없다. CREATE/RELOAD/RECREATE 모두 엔진 (재)시작이다.
     private void postDirective(final WatchdogLogic.Action action, final long issuedMs) {
-        Handler m = mainHandler;
-        if (m == null) return;
-        m.post(() -> {
-            try {
-                switch (action) {
-                    case CREATE:
-                        ensureEngine();
-                        break;
-                    case RELOAD:
-                        if (engineWeb != null) {
-                            engineWeb.reload();
-                        } else {
-                            ensureEngine();
-                        }
-                        break;
-                    case RECREATE:
-                        if (engineWeb != null) {
-                            try {
-                                engineWeb.destroy();
-                            } catch (Exception ignored) {
-                            }
-                            engineWeb = null;
-                            Handler h = watchdogHandler;
-                            if (h != null) h.post(() -> wdWebViewExists = false);
-                        }
-                        ensureEngine();
-                        break;
-                    default:
-                        break;
-                }
-            } catch (Throwable ignored) {
-                // 실행 실패는 ack를 보내지 않는 것으로 알리지 않는다 —
-                // 실행자가 돌았다는 사실 자체는 메인 스레드 생존 신호라
-                // 아래에서 ack한다. WebView 상태는 다음 틱의 존재
-                // 상태·부팅 감시가 다시 가른다.
+        try {
+            switch (action) {
+                case CREATE:
+                    ensureNativeEngine();
+                    break;
+                case RELOAD:
+                case RECREATE:
+                    restartNativeEngine();
+                    break;
+                default:
+                    break;
             }
-            Handler h = watchdogHandler;
-            if (h != null) {
-                h.post(() -> {
-                    if (issuedMs > wdAckMs) wdAckMs = issuedMs;
-                });
-            }
-        });
+        } catch (Throwable ignored) {
+            // 실행 실패는 존재 상태·부팅 감시가 다음 틱에 다시 가른다.
+        }
+        if (issuedMs > wdAckMs) wdAckMs = issuedMs;
     }
 
     private void startForegroundWithNotification() {
@@ -710,9 +671,9 @@ public class EngineService extends Service {
         if (downloadReceiver != null) {
             unregisterReceiver(downloadReceiver);
         }
-        if (engineWeb != null) {
-            engineWeb.destroy();
-            engineWeb = null;
+        if (nativeEngine != null) {
+            nativeEngine.stop();
+            nativeEngine = null;
         }
         if (wakeLock != null && wakeLock.isHeld()) {
             wakeLock.release();

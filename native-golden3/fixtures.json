@@ -1,0 +1,3531 @@
+{
+ "meta": {
+  "target": "app/src/engine.js 판정 로직 (scan·verify·stoploss·redeem·fill·reconcile·sizing·settled)",
+  "nowMs": 1794744000000,
+  "note": "nowMs 고정으로 날짜 판정을 결정적으로 만들었다. __NaN__·__Inf__·__-Inf__는 JSON에 없는 JS 수치의 센티넬 표기다."
+ },
+ "cases": [
+  {
+   "kind": "scan",
+   "name": "scan-band-edges",
+   "description": "밴드 경계: 0.60·0.90 포함, 0.5999·0.9001 탈락",
+   "input": {
+    "nowMs": 1794744000000,
+    "heldSlugs": [],
+    "boughtSlugs": [],
+    "markets": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "band-lo-edge",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.6\", \"0.4\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "band-hi-edge",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.9\", \"0.1\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "band-lo-out",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.5999\", \"0.4001\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "band-hi-out",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.9001\", \"0.0999\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "band-group-lo",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.7\", \"0.3\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "band-group-hi",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.8\", \"0.2\"]"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "scan",
+   "name": "scan-sports",
+   "description": "스포츠 판정: sportsMarketType·feeType sports_* 제외, politics_fees 통과",
+   "input": {
+    "nowMs": 1794744000000,
+    "heldSlugs": [],
+    "boughtSlugs": [],
+    "markets": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "sports-type",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]",
+      "sportsMarketType": "moneyline"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "sports-fee",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]",
+      "feeType": "sports_fees_v2"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "sports-fee-exact",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]",
+      "feeType": "sports"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "politics-fee",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]",
+      "feeType": "politics_fees"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "no-fee",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "scan",
+   "name": "scan-drops",
+   "description": "탈락 사유 전종 + 만기·거래량 경계",
+   "input": {
+    "nowMs": 1794744000000,
+    "heldSlugs": [
+     "held-one"
+    ],
+    "boughtSlugs": [
+     "bought-one"
+    ],
+    "markets": [
+     {
+      "active": false,
+      "closed": false,
+      "slug": "inactive",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": true,
+      "slug": "closed",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "not-accepting",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]",
+      "acceptingOrders": false
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "archived",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]",
+      "archived": true
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "bitcoin-up-or-down-may-15",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "random-up-or-down-5m",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "held-one",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "bought-one",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "end-today",
+      "question": "질문?",
+      "endDate": "2026-11-15T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "end-max",
+      "question": "질문?",
+      "endDate": "2026-12-30T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "end-over",
+      "question": "질문?",
+      "endDate": "2026-12-31T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "vol-low",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 9999,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "vol-edge",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 10000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "vol-nan",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": "abc",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "price-bad-json",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "not-json"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "price-bad-len",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "price-bad-nan",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"abc\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "ok-one",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "scan",
+   "name": "scan-sort",
+   "description": "정렬: 0.70–0.80 구간 우선 + 구간 내 만기 가까운 순 + 동률 안정",
+   "input": {
+    "nowMs": 1794744000000,
+    "heldSlugs": [],
+    "boughtSlugs": [],
+    "markets": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "sort-far-band",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "sort-near-band",
+      "question": "질문?",
+      "endDate": "2026-11-18T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "sort-near-out",
+      "question": "질문?",
+      "endDate": "2026-11-17T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.65\", \"0.35\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "sort-far-out",
+      "question": "질문?",
+      "endDate": "2026-11-20T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.85\", \"0.15\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "sort-tie-a",
+      "question": "질문?",
+      "endDate": "2026-11-18T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "sort-tie-b",
+      "question": "질문?",
+      "endDate": "2026-11-18T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "scan",
+   "name": "scan-side",
+   "description": "우세 쪽 선택: 동률이면 yes, 낮으면 no",
+   "input": {
+    "nowMs": 1794744000000,
+    "heldSlugs": [],
+    "boughtSlugs": [],
+    "markets": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "side-tie",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.75\", \"0.75\"]"
+     },
+     {
+      "active": true,
+      "closed": false,
+      "slug": "side-no",
+      "question": "질문?",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "volume": 20000,
+      "outcomePrices": "[\"0.25\", \"0.75\"]"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-ok-yes",
+   "description": "정상 검증 (yes)",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-ok-no",
+   "description": "정상 검증 (no — 가격 역전)",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "no",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.25\", \"0.75\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-v2-position-ids",
+   "description": "v2는 positionIds 사용 — clobTokenIds가 깨져 있어도 파싱하지 않음",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "not-json",
+      "outcomePrices": "[\"0.75\", \"0.25\"]",
+      "version": "v2",
+      "positionIds": [
+       "pos-yes",
+       "pos-no"
+      ]
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-gamma-missing",
+   "description": "Gamma 페이지가 비면 gamma_market_missing",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-gamma-sports",
+   "description": "검증 단계 스포츠 가드",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]",
+      "sportsMarketType": "moneyline"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-gamma-not-accepting",
+   "description": "주문 중단 마켓",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]",
+      "acceptingOrders": false
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-gamma-parse-error",
+   "description": "clobTokenIds 파싱 실패",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "not-json",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-gamma-shape-error",
+   "description": "토큰이 선택 쪽 인덱스보다 적음",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "no",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-only\"]",
+      "outcomePrices": "[\"0.25\", \"0.75\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-market-inactive",
+   "description": "스캔 뒤 비활성화된 마켓",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": false,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-end-out",
+   "description": "만기가 범위 밖으로 이동",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2027-01-14T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-snapshot-mismatch",
+   "description": "신호가와 Gamma가 편차 초과",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.8\", \"0.2\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-snapshot-boundary-quirk",
+   "description": "편차 정확히 0.03 — double 연산상 0.030000000000000027이라 탈락 (quirk)",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.78\", \"0.22\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.78",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.77",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-snapshot-near",
+   "description": "편차 0.02는 통과",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.77\", \"0.23\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.77",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.76",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-side-flipped",
+   "description": "스캔 뒤 우세가 뒤집힘",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.42,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.4\", \"0.6\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-no-asks",
+   "description": "매도 호가 없음",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-no-bids",
+   "description": "매수 호가 없음",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-ask-out-of-band-low",
+   "description": "최저 매도호가가 밴드 아래",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.55",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.54",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-ask-out-of-band-high",
+   "description": "최저 매도호가가 밴드 위",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.92",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.91",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-ask-above-signal",
+   "description": "신호가 + 0.05 초과 호가",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.81",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.8",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-ask-above-signal-boundary",
+   "description": "신호가 + 0.05 정확히 — 초과가 아니라 통과",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.8",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.79",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-spread-wide",
+   "description": "스프레드 0.03 탈락",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.72",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-spread-boundary",
+   "description": "스프레드 0.02 경계 — 1e-9 허용오차로 통과 (double상 0.020000000000000004)",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.73",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-depth-low-bet",
+   "description": "호가 깊이 < $10 하한",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "10"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-depth-low-bigbet",
+   "description": "호가 깊이 < 건당 금액(큰 베팅)",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 20,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "20"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-depth-boundary",
+   "description": "호가 깊이 정확히 하한이면 통과",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.78,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.78\", \"0.22\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.8",
+       "size": "12.5"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.79",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-tick-fallback",
+   "description": "book에 tick_size가 없으면 조회로 폴백",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.755",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.745",
+       "size": "50"
+      }
+     ],
+     "min_order_size": 5,
+     "neg_risk": false
+    },
+    "tickSizeFallback": 0.001
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-limit-capped",
+   "description": "지정가가 밴드 상한 0.90으로 캡",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.87,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.87\", \"0.13\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.89",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.88",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-below-min-size",
+   "description": "추정 주식수가 최소 주문 수량 미달",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 100,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-book-throws",
+   "description": "오더북 조회 자체가 던지면 전파 (호출자가 verify_error)",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.75",
+       "size": "100"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.74",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    },
+    "bookError": true
+   }
+  },
+  {
+   "kind": "verify",
+   "name": "verify-asks-unsorted-filter",
+   "description": "호가 정렬 + 비유한 호가 제거",
+   "input": {
+    "nowMs": 1794744000000,
+    "bet": 5,
+    "cand": {
+     "slug": "cand-market",
+     "question": "질문?",
+     "side": "yes",
+     "price": 0.75,
+     "endDate": "2026-11-25T12:00:00.000Z"
+    },
+    "gammaPage": [
+     {
+      "active": true,
+      "closed": false,
+      "slug": "cand-market",
+      "endDate": "2026-11-25T12:00:00.000Z",
+      "clobTokenIds": "[\"tok-yes\", \"tok-no\"]",
+      "outcomePrices": "[\"0.75\", \"0.25\"]"
+     }
+    ],
+    "book": {
+     "asks": [
+      {
+       "price": "0.78",
+       "size": "5"
+      },
+      {
+       "price": "0.76",
+       "size": "100"
+      },
+      {
+       "price": "abc",
+       "size": "10"
+      },
+      {
+       "price": "0.77",
+       "size": "xyz"
+      }
+     ],
+     "bids": [
+      {
+       "price": "0.75",
+       "size": "50"
+      }
+     ],
+     "tick_size": "0.01",
+     "min_order_size": 5,
+     "neg_risk": false
+    }
+   }
+  },
+  {
+   "kind": "slVerdict",
+   "name": "sl-triggered-exact",
+   "description": "현재가 = 진입가 − 0.25 정확히 → triggered",
+   "input": {
+    "entry": 0.75,
+    "current": 0.5
+   }
+  },
+  {
+   "kind": "slVerdict",
+   "name": "sl-holding-above",
+   "description": "경계 위 → holding",
+   "input": {
+    "entry": 0.75,
+    "current": 0.51
+   }
+  },
+  {
+   "kind": "slVerdict",
+   "name": "sl-decided-high-exact",
+   "description": "0.97 정확히 → decided",
+   "input": {
+    "entry": 0.9,
+    "current": 0.97
+   }
+  },
+  {
+   "kind": "slVerdict",
+   "name": "sl-decided-low-exact",
+   "description": "0.03 정확히 → decided (발화선 아래여도)",
+   "input": {
+    "entry": 0.28,
+    "current": 0.03
+   }
+  },
+  {
+   "kind": "slVerdict",
+   "name": "sl-decided-crash",
+   "description": "0으로 추락 → decided",
+   "input": {
+    "entry": 0.28,
+    "current": 0.02
+   }
+  },
+  {
+   "kind": "slVerdict",
+   "name": "sl-skip-nan-current",
+   "description": "현재가 NaN → skip",
+   "input": {
+    "entry": 0.75,
+    "current": "__NaN__"
+   }
+  },
+  {
+   "kind": "slVerdict",
+   "name": "sl-skip-nan-entry",
+   "description": "진입가 NaN → skip",
+   "input": {
+    "entry": "__NaN__",
+    "current": 0.4
+   }
+  },
+  {
+   "kind": "slVerdict",
+   "name": "sl-skip-inf",
+   "description": "현재가 Infinity → skip (유한 아님)",
+   "input": {
+    "entry": 0.75,
+    "current": "__Inf__"
+   }
+  },
+  {
+   "kind": "slVerdict",
+   "name": "sl-triggered-low-band",
+   "description": "저밴드 발화",
+   "input": {
+    "entry": 0.62,
+    "current": 0.37
+   }
+  },
+  {
+   "kind": "pickIndex",
+   "name": "pick-name-match",
+   "description": "이름 대조 (대소문자·공백 무시)",
+   "input": {
+    "outcomes": [
+     "Yes",
+     "No"
+    ],
+    "row": {
+     "outcome": " yes "
+    }
+   }
+  },
+  {
+   "kind": "pickIndex",
+   "name": "pick-fallback-index",
+   "description": "이름 대조 실패 → outcome_index 폴백",
+   "input": {
+    "outcomes": [
+     "Up",
+     "Down"
+    ],
+    "row": {
+     "outcome": "Yes",
+     "outcome_index": 1
+    }
+   }
+  },
+  {
+   "kind": "pickIndex",
+   "name": "pick-fraction-index",
+   "description": "outcome_index가 소수면 -1",
+   "input": {
+    "outcomes": [],
+    "row": {
+     "outcome_index": 1.5
+    }
+   }
+  },
+  {
+   "kind": "pickIndex",
+   "name": "pick-negative-index",
+   "description": "outcome_index 음수면 -1",
+   "input": {
+    "outcomes": [],
+    "row": {
+     "outcome_index": -1
+    }
+   }
+  },
+  {
+   "kind": "pickIndex",
+   "name": "pick-empty-outcomes-index0",
+   "description": "outcomes가 비어도 폴백은 동작",
+   "input": {
+    "outcomes": [],
+    "row": {
+     "outcome_index": 0
+    }
+   }
+  },
+  {
+   "kind": "pickIndex",
+   "name": "pick-none",
+   "description": "이름도 인덱스도 없으면 -1",
+   "input": {
+    "outcomes": [
+     "Yes",
+     "No"
+    ],
+    "row": {}
+   }
+  },
+  {
+   "kind": "gammaParse",
+   "name": "gamma-parse-ok",
+   "description": "정상 파싱",
+   "input": {
+    "page": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.5\",\"0.5\"]"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "gammaParse",
+   "name": "gamma-parse-empty",
+   "description": "빈 페이지 → null",
+   "input": {
+    "page": []
+   }
+  },
+  {
+   "kind": "gammaParse",
+   "name": "gamma-parse-bad-json",
+   "description": "outcomes 파싱 실패 → null",
+   "input": {
+    "page": [
+     {
+      "outcomes": "not-json",
+      "outcomePrices": "[\"0.5\", \"0.5\"]"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "gammaParse",
+   "name": "gamma-parse-len-mismatch",
+   "description": "outcomes·prices 길이 불일치 → null",
+   "input": {
+    "page": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.5\"]"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "gammaParse",
+   "name": "gamma-parse-nonfinite",
+   "description": "가격이 숫자가 아니면 null",
+   "input": {
+    "page": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"abc\",\"0.5\"]"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "gammaParse",
+   "name": "gamma-parse-empty-outcomes",
+   "description": "outcomes가 비면 null",
+   "input": {
+    "page": [
+     {
+      "outcomes": "[]",
+      "outcomePrices": "[]"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "slEvaluate",
+   "name": "eval-triggered",
+   "description": "1차·2차 모두 발화 → triggered",
+   "input": {
+    "row": {
+     "slug": "held-market",
+     "token_id": "tok-1",
+     "avg_price": 0.75,
+     "current_size": 10,
+     "outcome": "Yes"
+    },
+    "page1": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.5\",\"0.5\"]"
+     }
+    ],
+    "page2": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.48\",\"0.52\"]"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "slEvaluate",
+   "name": "eval-holding",
+   "description": "1차 미발화 → holding",
+   "input": {
+    "row": {
+     "slug": "held-market",
+     "token_id": "tok-1",
+     "avg_price": 0.75,
+     "current_size": 10,
+     "outcome": "Yes"
+    },
+    "page1": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.6\",\"0.4\"]"
+     }
+    ],
+    "page2": null
+   }
+  },
+  {
+   "kind": "slEvaluate",
+   "name": "eval-decided-as-holding",
+   "description": "결정 구간은 미발화로 취급 (원본은 false 반환)",
+   "input": {
+    "row": {
+     "slug": "held-market",
+     "token_id": "tok-1",
+     "avg_price": 0.75,
+     "current_size": 10,
+     "outcome": "Yes"
+    },
+    "page1": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.98\",\"0.02\"]"
+     }
+    ],
+    "page2": null
+   }
+  },
+  {
+   "kind": "slEvaluate",
+   "name": "eval-recheck-dropped",
+   "description": "재검증에서 발화 해제 → recheck_dropped",
+   "input": {
+    "row": {
+     "slug": "held-market",
+     "token_id": "tok-1",
+     "avg_price": 0.75,
+     "current_size": 10,
+     "outcome": "Yes"
+    },
+    "page1": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.5\",\"0.5\"]"
+     }
+    ],
+    "page2": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.6\",\"0.4\"]"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "slEvaluate",
+   "name": "eval-bad-entry",
+   "description": "진입가 0 → bad_entry",
+   "input": {
+    "row": {
+     "slug": "held-market",
+     "token_id": "tok-1",
+     "avg_price": 0,
+     "current_size": 10,
+     "outcome": "Yes"
+    },
+    "page1": null,
+    "page2": null
+   }
+  },
+  {
+   "kind": "slEvaluate",
+   "name": "eval-skip-no-token",
+   "description": "token_id 없으면 skip",
+   "input": {
+    "row": {
+     "slug": "held-market",
+     "avg_price": 0.75,
+     "current_size": 10,
+     "outcome": "Yes"
+    },
+    "page1": null,
+    "page2": null
+   }
+  },
+  {
+   "kind": "slEvaluate",
+   "name": "eval-skip-size0",
+   "description": "수량 0이면 skip",
+   "input": {
+    "row": {
+     "slug": "held-market",
+     "token_id": "tok-1",
+     "avg_price": 0.75,
+     "current_size": 0,
+     "outcome": "Yes"
+    },
+    "page1": null,
+    "page2": null
+   }
+  },
+  {
+   "kind": "slEvaluate",
+   "name": "eval-no-index",
+   "description": "보유 쪽을 가격 목록에서 못 찾음 → no_index",
+   "input": {
+    "row": {
+     "slug": "held-market",
+     "token_id": "tok-1",
+     "avg_price": 0.75,
+     "current_size": 10,
+     "outcome": "Yes"
+    },
+    "page1": [
+     {
+      "outcomes": "[\"Up\",\"Down\"]",
+      "outcomePrices": "[\"0.5\",\"0.5\"]"
+     }
+    ],
+    "page2": null
+   }
+  },
+  {
+   "kind": "slEvaluate",
+   "name": "eval-skip-fetch-fail",
+   "description": "1차 조회 실패 → skip",
+   "input": {
+    "row": {
+     "slug": "held-market",
+     "token_id": "tok-1",
+     "avg_price": 0.75,
+     "current_size": 10,
+     "outcome": "Yes"
+    },
+    "page1": null,
+    "page2": null
+   }
+  },
+  {
+   "kind": "plan",
+   "name": "plan-mixed",
+   "description": "승·패 혼합 그룹 분류 + expected 합산",
+   "input": {
+    "entries": [
+     {
+      "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "REDEEMABLE",
+      "current_value": 10.5,
+      "token_id": "t1"
+     },
+     {
+      "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "REDEEMABLE_LOST",
+      "current_value": 0,
+      "token_id": "t2"
+     },
+     {
+      "condition_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "status": "REDEEMABLE_LOST",
+      "current_value": 0,
+      "token_id": "t3"
+     },
+     {
+      "condition_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "status": "REDEEMABLE_LOST",
+      "current_value": 0,
+      "token_id": "t4"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "plan",
+   "name": "plan-redeemable-zero",
+   "description": "REDEEMABLE이어도 가치 0이면 패 버킷 → worthless",
+   "input": {
+    "entries": [
+     {
+      "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "REDEEMABLE",
+      "current_value": 0,
+      "token_id": "t1"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "plan",
+   "name": "plan-errors",
+   "description": "condition_id 형식 오류는 errors로",
+   "input": {
+    "entries": [
+     {
+      "condition_id": "xyz",
+      "status": "REDEEMABLE",
+      "current_value": 5
+     },
+     {
+      "condition_id": "abcd",
+      "status": "REDEEMABLE",
+      "current_value": 5
+     },
+     {
+      "status": "REDEEMABLE",
+      "current_value": 5
+     }
+    ]
+   }
+  },
+  {
+   "kind": "plan",
+   "name": "plan-normalize-grouping",
+   "description": "0x·대문자 표기가 달라도 같은 condition으로 그룹",
+   "input": {
+    "entries": [
+     {
+      "condition_id": "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "status": "REDEEMABLE",
+      "current_value": 3,
+      "token_id": "t1"
+     },
+     {
+      "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "REDEEMABLE_LOST",
+      "current_value": 0,
+      "token_id": "t2"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "plan",
+   "name": "plan-null-entries",
+   "description": "entries null → 빈 계획",
+   "input": {
+    "entries": null
+   }
+  },
+  {
+   "kind": "plan",
+   "name": "plan-expected-rounding",
+   "description": "expected_usd는 round2 (0.1 + 0.2)",
+   "input": {
+    "entries": [
+     {
+      "condition_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "status": "REDEEMABLE",
+      "current_value": 0.1,
+      "token_id": "t1"
+     },
+     {
+      "condition_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "status": "REDEEMABLE",
+      "current_value": 0.2,
+      "token_id": "t2"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "verifyRecovery",
+   "name": "recovery-exact",
+   "description": "정확히 회수 → verified",
+   "input": {
+    "before": 100,
+    "after": 105,
+    "expected": 5
+   }
+  },
+  {
+   "kind": "verifyRecovery",
+   "name": "recovery-short",
+   "description": "부족 → mismatch",
+   "input": {
+    "before": 100,
+    "after": 103,
+    "expected": 5
+   }
+  },
+  {
+   "kind": "verifyRecovery",
+   "name": "recovery-rel-tol",
+   "description": "2% 상대 허용오차 안 → verified",
+   "input": {
+    "before": 0,
+    "after": 1015,
+    "expected": 1000
+   }
+  },
+  {
+   "kind": "verifyRecovery",
+   "name": "recovery-rel-over",
+   "description": "허용오차 밖 → mismatch",
+   "input": {
+    "before": 0,
+    "after": 1030,
+    "expected": 1000
+   }
+  },
+  {
+   "kind": "verifyRecovery",
+   "name": "recovery-abs-boundary",
+   "description": "절대 허용오차 경계 안 (0.04 차이)",
+   "input": {
+    "before": 100,
+    "after": 104.96,
+    "expected": 5
+   }
+  },
+  {
+   "kind": "verifyRecovery",
+   "name": "recovery-zero-expected",
+   "description": "예상 0 — 절대 허용오차만",
+   "input": {
+    "before": 50,
+    "after": 50.04,
+    "expected": 0
+   }
+  },
+  {
+   "kind": "balanceGate",
+   "name": "gate-all-zero",
+   "description": "전부 0 → already",
+   "input": {
+    "balances": [
+     "0",
+     "0"
+    ]
+   }
+  },
+  {
+   "kind": "balanceGate",
+   "name": "gate-some-left",
+   "description": "잔고가 남음 → submit",
+   "input": {
+    "balances": [
+     "0",
+     "5"
+    ]
+   }
+  },
+  {
+   "kind": "balanceGate",
+   "name": "gate-empty",
+   "description": "빈 목록 → unknown",
+   "input": {
+    "balances": []
+   }
+  },
+  {
+   "kind": "balanceGate",
+   "name": "gate-null",
+   "description": "null → unknown",
+   "input": {
+    "balances": null
+   }
+  },
+  {
+   "kind": "normalizeCid",
+   "name": "cid-0x-upper",
+   "description": "0x + 대문자 → 소문자 정규화",
+   "input": {
+    "raw": "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+   }
+  },
+  {
+   "kind": "normalizeCid",
+   "name": "cid-plain",
+   "description": "접두사 없는 64자리",
+   "input": {
+    "raw": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+   }
+  },
+  {
+   "kind": "normalizeCid",
+   "name": "cid-0X",
+   "description": "0X도 소문자화 후 제거",
+   "input": {
+    "raw": "0Xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   }
+  },
+  {
+   "kind": "normalizeCid",
+   "name": "cid-short",
+   "description": "짧으면 null",
+   "input": {
+    "raw": "abcd"
+   }
+  },
+  {
+   "kind": "normalizeCid",
+   "name": "cid-nonhex",
+   "description": "hex가 아니면 null",
+   "input": {
+    "raw": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+   }
+  },
+  {
+   "kind": "normalizeCid",
+   "name": "cid-null",
+   "description": "null → null",
+   "input": {
+    "raw": null
+   }
+  },
+  {
+   "kind": "toBytes31",
+   "name": "bytes31-end00",
+   "description": "끝 00을 떼어 31바이트",
+   "input": {
+    "conditionId": "0xababababababababababababababababababababababababababababababab00"
+   }
+  },
+  {
+   "kind": "toBytes31",
+   "name": "bytes31-end01",
+   "description": "끝 01을 떼어 31바이트",
+   "input": {
+    "conditionId": "0xababababababababababababababababababababababababababababababab01"
+   }
+  },
+  {
+   "kind": "toBytes31",
+   "name": "bytes31-end-other-throws",
+   "description": "끝이 00/01이 아닌 64자리는 변환 불가 → throw",
+   "input": {
+    "conditionId": "0xabababababababababababababababababababababababababababababababab"
+   }
+  },
+  {
+   "kind": "toBytes31",
+   "name": "bytes31-already31",
+   "description": "이미 62자리면 그대로",
+   "input": {
+    "conditionId": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+   }
+  },
+  {
+   "kind": "toBytes31",
+   "name": "bytes31-short-throws",
+   "description": "너무 짧으면 throw",
+   "input": {
+    "conditionId": "0xabcd"
+   }
+  },
+  {
+   "kind": "redeemCallCtf",
+   "name": "ctf-call-standard",
+   "description": "CTF 상환 콜 (negRisk 아님)",
+   "input": {
+    "conditionId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "negRisk": false
+   }
+  },
+  {
+   "kind": "redeemCallCtf",
+   "name": "ctf-call-negrisk",
+   "description": "CTF 상환 콜 (negRisk — 어댑터 교체)",
+   "input": {
+    "conditionId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "negRisk": true
+   }
+  },
+  {
+   "kind": "redeemCallV2",
+   "name": "v2-call",
+   "description": "protocol v2 상환 콜",
+   "input": {
+    "conditionId": "0xababababababababababababababababababababababababababababababab01",
+    "outcomeIndex": "1",
+    "amount": "12345"
+   }
+  },
+  {
+   "kind": "judgeFill",
+   "name": "fill-null",
+   "description": "null 응답 → unfilled",
+   "input": {
+    "resp": null
+   }
+  },
+  {
+   "kind": "judgeFill",
+   "name": "fill-string",
+   "description": "객체가 아닌 응답 → unfilled",
+   "input": {
+    "resp": "oops"
+   }
+  },
+  {
+   "kind": "judgeFill",
+   "name": "fill-transport-no-status",
+   "description": "status 없는 error → unknown",
+   "input": {
+    "resp": {
+     "error": "Network Error"
+    }
+   }
+  },
+  {
+   "kind": "judgeFill",
+   "name": "fill-transport-status0",
+   "description": "status 0인 error → unknown",
+   "input": {
+    "resp": {
+     "error": "Network Error",
+     "status": 0
+    }
+   }
+  },
+  {
+   "kind": "judgeFill",
+   "name": "fill-http-error",
+   "description": "HTTP 403 error → error",
+   "input": {
+    "resp": {
+     "error": "forbidden",
+     "status": 403
+    }
+   }
+  },
+  {
+   "kind": "judgeFill",
+   "name": "fill-error-object-quirk",
+   "description": "error가 객체면 JSON 문자열화 + status 없으면 unknown (quirk)",
+   "input": {
+    "resp": {
+     "error": {
+      "code": 400,
+      "message": "bad"
+     }
+    }
+   }
+  },
+  {
+   "kind": "judgeFill",
+   "name": "fill-errormsg",
+   "description": "errorMsg → error",
+   "input": {
+    "resp": {
+     "errorMsg": "order rejected",
+     "status": "live"
+    }
+   }
+  },
+  {
+   "kind": "judgeFill",
+   "name": "fill-rejected",
+   "description": "success false → rejected",
+   "input": {
+    "resp": {
+     "success": false,
+     "status": "unmatched"
+    }
+   }
+  },
+  {
+   "kind": "judgeFill",
+   "name": "fill-matched",
+   "description": "matched → filled",
+   "input": {
+    "resp": {
+     "success": true,
+     "status": "matched"
+    }
+   }
+  },
+  {
+   "kind": "judgeFill",
+   "name": "fill-hash-evidence",
+   "description": "트랜잭션 해시가 있으면 filled",
+   "input": {
+    "resp": {
+     "success": true,
+     "status": "unmatched",
+     "transactionsHashes": [
+      "0xabc"
+     ]
+    }
+   }
+  },
+  {
+   "kind": "judgeFill",
+   "name": "fill-making-evidence",
+   "description": "makingAmount > 0이면 filled",
+   "input": {
+    "resp": {
+     "success": true,
+     "status": "unmatched",
+     "makingAmount": "5000000"
+    }
+   }
+  },
+  {
+   "kind": "judgeFill",
+   "name": "fill-unmatched-no-evidence",
+   "description": "success여도 증거 없으면 unfilled",
+   "input": {
+    "resp": {
+     "success": true,
+     "status": "unmatched"
+    }
+   }
+  },
+  {
+   "kind": "judgeFill",
+   "name": "fill-no-success-flag",
+   "description": "success 플래그가 없으면 matched여도 unfilled",
+   "input": {
+    "resp": {
+     "status": "matched"
+    }
+   }
+  },
+  {
+   "kind": "judgeFill",
+   "name": "fill-delayed",
+   "description": "delayed는 증거 없으면 unfilled (호출자가 기록 처리)",
+   "input": {
+    "resp": {
+     "success": true,
+     "status": "delayed"
+    }
+   }
+  },
+  {
+   "kind": "reconcile",
+   "name": "reconcile-basic",
+   "description": "온체인·보유에 없는 기록만 dropped (순서 유지)",
+   "input": {
+    "bought": [
+     "a",
+     "b",
+     "c",
+     "d"
+    ],
+    "onChain": [
+     "a"
+    ],
+    "held": [
+     "c"
+    ]
+   }
+  },
+  {
+   "kind": "reconcile",
+   "name": "reconcile-empty",
+   "description": "빈 기록",
+   "input": {
+    "bought": [],
+    "onChain": [
+     "a"
+    ],
+    "held": []
+   }
+  },
+  {
+   "kind": "buySlugs",
+   "name": "buy-two-pages",
+   "description": "2페이지 순회 + 비매수 행 필터 + 완결",
+   "input": {
+    "pages": [
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s1"
+       },
+       {
+        "type": "TRADE",
+        "side": "SELL",
+        "slug": "s2"
+       },
+       {
+        "type": "REWARD",
+        "side": "BUY",
+        "slug": "s3"
+       },
+       {
+        "type": "TRADE",
+        "side": "BUY"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c2"
+      }
+     },
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s4"
+       }
+      ],
+      "pagination": {
+       "has_more": false,
+       "next_cursor": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "kind": "buySlugs",
+   "name": "buy-array-root",
+   "description": "루트가 배열인 응답 → 완결",
+   "input": {
+    "pages": [
+     [
+      {
+       "type": "TRADE",
+       "side": "BUY",
+       "slug": "s1"
+      }
+     ]
+    ]
+   }
+  },
+  {
+   "kind": "buySlugs",
+   "name": "buy-bad-shape",
+   "description": "data가 배열이 아니면 incomplete",
+   "input": {
+    "pages": [
+     {
+      "data": {
+       "nope": 1
+      }
+     }
+    ]
+   }
+  },
+  {
+   "kind": "buySlugs",
+   "name": "buy-empty-hasmore",
+   "description": "빈 페이지 + has_more → incomplete",
+   "input": {
+    "pages": [
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s1"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c2"
+      }
+     },
+     {
+      "data": [],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c3"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "kind": "buySlugs",
+   "name": "buy-cursor-repeat",
+   "description": "커서가 반복되면 완결로 종료",
+   "input": {
+    "pages": [
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s1"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c2"
+      }
+     },
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s2"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c2"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "kind": "buySlugs",
+   "name": "buy-page-cap",
+   "description": "페이지 상한 도달 → incomplete",
+   "input": {
+    "pages": [
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s0"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c2"
+      }
+     },
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s1"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c3"
+      }
+     },
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s2"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c4"
+      }
+     },
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s3"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c5"
+      }
+     },
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s4"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c6"
+      }
+     },
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s5"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c7"
+      }
+     },
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s6"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c8"
+      }
+     },
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s7"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c9"
+      }
+     },
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s8"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c10"
+      }
+     },
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s9"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c11"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "kind": "buySlugs",
+   "name": "buy-fetch-throws",
+   "description": "2페이지 조회 실패는 전파",
+   "input": {
+    "pages": [
+     {
+      "data": [
+       {
+        "type": "TRADE",
+        "side": "BUY",
+        "slug": "s1"
+       }
+      ],
+      "pagination": {
+       "has_more": true,
+       "next_cursor": "c2"
+      }
+     },
+     {
+      "$throw": true
+     }
+    ]
+   }
+  },
+  {
+   "kind": "sizing",
+   "name": "sizing-standard",
+   "description": "표준: 현금 하한 30%·슬롯 70 캡",
+   "input": {
+    "cash": 1000,
+    "equity": 1000,
+    "openCount": 0
+   }
+  },
+  {
+   "kind": "sizing",
+   "name": "sizing-at-floor",
+   "description": "현금이 하한과 같으면 슬롯 0",
+   "input": {
+    "cash": 300,
+    "equity": 1000,
+    "openCount": 0
+   }
+  },
+  {
+   "kind": "sizing",
+   "name": "sizing-below-bet",
+   "description": "가용액이 건당보다 적으면 슬롯 0",
+   "input": {
+    "cash": 305,
+    "equity": 1000,
+    "openCount": 0
+   }
+  },
+  {
+   "kind": "sizing",
+   "name": "sizing-position-cap",
+   "description": "보유 상한이 슬롯을 제한 (69건 보유 → 1)",
+   "input": {
+    "cash": 100000,
+    "equity": 100000,
+    "openCount": 69
+   }
+  },
+  {
+   "kind": "sizing",
+   "name": "sizing-position-full",
+   "description": "보유 70건이면 슬롯 0",
+   "input": {
+    "cash": 100000,
+    "equity": 100000,
+    "openCount": 70
+   }
+  },
+  {
+   "kind": "sizing",
+   "name": "sizing-nan-closed",
+   "description": "NaN 입력이면 사이징을 닫음",
+   "input": {
+    "cash": "__NaN__",
+    "equity": 1000,
+    "openCount": 0
+   }
+  },
+  {
+   "kind": "sizing",
+   "name": "sizing-small-equity",
+   "description": "소액 평가금 — 건당 하한 $5·현금 하한이 평가를 넘음",
+   "input": {
+    "cash": 100,
+    "equity": 499,
+    "openCount": 0
+   }
+  },
+  {
+   "kind": "sizing",
+   "name": "sizing-bet-boundary",
+   "description": "1%가 정확히 $5인 경계",
+   "input": {
+    "cash": 10000,
+    "equity": 500,
+    "openCount": 0
+   }
+  },
+  {
+   "kind": "betUsd",
+   "name": "bet-zero",
+   "description": "평가금 0 → 하한 $5",
+   "input": {
+    "equity": 0
+   }
+  },
+  {
+   "kind": "betUsd",
+   "name": "bet-large",
+   "description": "평가금 1만 → $100",
+   "input": {
+    "equity": 10000
+   }
+  },
+  {
+   "kind": "betUsd",
+   "name": "bet-null",
+   "description": "null → $5",
+   "input": {
+    "equity": null
+   }
+  },
+  {
+   "kind": "betUsd",
+   "name": "bet-just-below",
+   "description": "1%가 $5에 못 미치면 $5",
+   "input": {
+    "equity": 499.99
+   }
+  },
+  {
+   "kind": "betUsd",
+   "name": "bet-exact",
+   "description": "1%가 정확히 $5",
+   "input": {
+    "equity": 500
+   }
+  },
+  {
+   "kind": "betUsd",
+   "name": "bet-just-above",
+   "description": "1%가 $5를 넘으면 그 값",
+   "input": {
+    "equity": 501
+   }
+  },
+  {
+   "kind": "settledParse",
+   "name": "base-ok",
+   "description": "정상 기준선",
+   "input": {
+    "raw": "{\"count\": 10, \"realized\": 12.5}"
+   }
+  },
+  {
+   "kind": "settledParse",
+   "name": "base-null-fields",
+   "description": "null 필드 허용",
+   "input": {
+    "raw": "{\"count\": null, \"realized\": null}"
+   }
+  },
+  {
+   "kind": "settledParse",
+   "name": "base-missing-field",
+   "description": "필드 누락 → null",
+   "input": {
+    "raw": "{\"count\": 10}"
+   }
+  },
+  {
+   "kind": "settledParse",
+   "name": "base-bad-json",
+   "description": "깨진 JSON → null",
+   "input": {
+    "raw": "not json"
+   }
+  },
+  {
+   "kind": "settledParse",
+   "name": "base-null-raw",
+   "description": "원문 없음 → null",
+   "input": {
+    "raw": null
+   }
+  },
+  {
+   "kind": "settledParse",
+   "name": "base-string-field",
+   "description": "문자열 필드 → null",
+   "input": {
+    "raw": "{\"count\": \"10\", \"realized\": 1}"
+   }
+  },
+  {
+   "kind": "settledNotice",
+   "name": "notice-new",
+   "description": "신규 정산 알림분",
+   "input": {
+    "base": {
+     "count": 10,
+     "realized": 100
+    },
+    "snap": {
+     "settledCount": 12,
+     "settledRealizedPnl": 130.25
+    }
+   }
+  },
+  {
+   "kind": "settledNotice",
+   "name": "notice-none",
+   "description": "증가 없으면 null",
+   "input": {
+    "base": {
+     "count": 10,
+     "realized": 100
+    },
+    "snap": {
+     "settledCount": 10,
+     "settledRealizedPnl": 100
+    }
+   }
+  },
+  {
+   "kind": "settledNotice",
+   "name": "notice-snap-null",
+   "description": "스냅샷 미확정이면 null",
+   "input": {
+    "base": {
+     "count": 10,
+     "realized": 100
+    },
+    "snap": {
+     "settledCount": null,
+     "settledRealizedPnl": null
+    }
+   }
+  },
+  {
+   "kind": "settledNotice",
+   "name": "notice-base-realized-null",
+   "description": "기준선 실현이 null이면 null",
+   "input": {
+    "base": {
+     "count": 10,
+     "realized": null
+    },
+    "snap": {
+     "settledCount": 12,
+     "settledRealizedPnl": 130
+    }
+   }
+  },
+  {
+   "kind": "slLedger",
+   "name": "ledger-append",
+   "description": "기록 추가 — 최근·합본",
+   "input": {
+    "recentRaw": "[{\"slug\":\"m-t1\",\"condition_id\":\"c\",\"token_id\":\"t1\",\"outcome\":\"Yes\",\"entry_price\":0.75,\"exit_price\":0.5,\"shares\":10,\"proceeds\":5,\"realized_pnl\":-2.5,\"ts\":\"2026-11-15T00:00:00.000Z\"}]",
+    "archiveRaw": "[]",
+    "rec": {
+     "slug": "m-t2",
+     "condition_id": "c",
+     "token_id": "t2",
+     "outcome": "Yes",
+     "entry_price": 0.75,
+     "exit_price": 0.5,
+     "shares": 10,
+     "proceeds": 5,
+     "realized_pnl": 1.25,
+     "ts": "2026-11-15T00:00:00.000Z"
+    }
+   }
+  },
+  {
+   "kind": "slLedger",
+   "name": "ledger-parse-filter",
+   "description": "파싱 필터: token_id 없거나 실현이 숫자가 아닌 행 제거",
+   "input": {
+    "recentRaw": "[{\"slug\":\"m-t1\",\"condition_id\":\"c\",\"token_id\":\"t1\",\"outcome\":\"Yes\",\"entry_price\":0.75,\"exit_price\":0.5,\"shares\":10,\"proceeds\":5,\"realized_pnl\":-2.5,\"ts\":\"2026-11-15T00:00:00.000Z\"},{\"slug\":\"no-token\",\"realized_pnl\":1},{\"token_id\":\"t3\",\"realized_pnl\":\"abc\"},{\"token_id\":\"t4\",\"realized_pnl\":\"2.5\"}]",
+    "archiveRaw": "[]",
+    "rec": {
+     "slug": "m-t5",
+     "condition_id": "c",
+     "token_id": "t5",
+     "outcome": "Yes",
+     "entry_price": 0.75,
+     "exit_price": 0.5,
+     "shares": 10,
+     "proceeds": 5,
+     "realized_pnl": 0.5,
+     "ts": "2026-11-15T00:00:00.000Z"
+    }
+   }
+  },
+  {
+   "kind": "slLedger",
+   "name": "ledger-rec-unfiltered-quirk",
+   "description": "추가되는 기록 자체는 검증 없이 들어감 (quirk)",
+   "input": {
+    "recentRaw": "[]",
+    "archiveRaw": "[]",
+    "rec": {
+     "token_id": 123,
+     "realized_pnl": "x"
+    }
+   }
+  },
+  {
+   "kind": "slParse",
+   "name": "slparse-merged-order",
+   "description": "합본은 아카이브 먼저 + 최근 순",
+   "input": {
+    "recentRaw": "[{\"slug\":\"m-t2\",\"condition_id\":\"c\",\"token_id\":\"t2\",\"outcome\":\"Yes\",\"entry_price\":0.75,\"exit_price\":0.5,\"shares\":10,\"proceeds\":5,\"realized_pnl\":1,\"ts\":\"2026-11-15T00:00:00.000Z\"}]",
+    "archiveRaw": "[{\"token_id\":\"t1\",\"realized_pnl\":-3}]"
+   }
+  },
+  {
+   "kind": "attempted",
+   "name": "attempted-add",
+   "description": "시도 토큰 추가",
+   "input": {
+    "raw": "[\"a\", \"b\", 123]",
+    "add": "c"
+   }
+  },
+  {
+   "kind": "attempted",
+   "name": "attempted-dup",
+   "description": "중복 추가는 그대로",
+   "input": {
+    "raw": "[\"a\", \"b\"]",
+    "add": "a"
+   }
+  },
+  {
+   "kind": "attempted",
+   "name": "attempted-empty",
+   "description": "빈 토큰 추가는 그대로",
+   "input": {
+    "raw": "[\"a\"]",
+    "add": ""
+   }
+  },
+  {
+   "kind": "ingest",
+   "name": "ingest-basic",
+   "description": "승·패 행 수집",
+   "input": {
+    "pending": [],
+    "history": [],
+    "closed": [],
+    "winRows": [
+     {
+      "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "token_id": "t1",
+      "slug": "ma",
+      "current_value": 10
+     }
+    ],
+    "lostRows": [
+     {
+      "condition_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "token_id": "t2",
+      "slug": "mb",
+      "current_value": 0
+     }
+    ],
+    "closedRows": []
+   }
+  },
+  {
+   "kind": "ingest",
+   "name": "ingest-done-excluded",
+   "description": "회수 이력·종결된 condition은 다시 넣지 않음",
+   "input": {
+    "pending": [],
+    "history": [
+     {
+      "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     }
+    ],
+    "closed": [
+     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ],
+    "winRows": [
+     {
+      "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "token_id": "t1",
+      "slug": "ma",
+      "current_value": 10
+     },
+     {
+      "condition_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "token_id": "t2",
+      "slug": "mb",
+      "current_value": 5
+     },
+     {
+      "condition_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "token_id": "t3",
+      "slug": "mc",
+      "current_value": 7
+     }
+    ],
+    "lostRows": [],
+    "closedRows": []
+   }
+  },
+  {
+   "kind": "ingest",
+   "name": "ingest-value-update",
+   "description": "이미 수집된 항목의 가치 갱신",
+   "input": {
+    "pending": [
+     {
+      "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "token_id": "t1",
+      "slug": "m",
+      "status": "REDEEMABLE",
+      "current_value": 0
+     }
+    ],
+    "history": [],
+    "closed": [],
+    "winRows": [
+     {
+      "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "token_id": "t1",
+      "slug": "ma",
+      "current_value": 5
+     }
+    ],
+    "lostRows": [],
+    "closedRows": []
+   }
+  },
+  {
+   "kind": "ingest",
+   "name": "ingest-no-change",
+   "description": "같은 가치면 변경 없음",
+   "input": {
+    "pending": [
+     {
+      "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "token_id": "t1",
+      "slug": "m",
+      "status": "REDEEMABLE",
+      "current_value": 5
+     }
+    ],
+    "history": [],
+    "closed": [],
+    "winRows": [
+     {
+      "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "token_id": "t1",
+      "slug": "ma",
+      "current_value": 5
+     }
+    ],
+    "lostRows": [],
+    "closedRows": []
+   }
+  },
+  {
+   "kind": "ingest",
+   "name": "ingest-closed-win-est",
+   "description": "CLOSED 승자는 진입원가+실현으로 추정 수집",
+   "input": {
+    "pending": [],
+    "history": [],
+    "closed": [],
+    "winRows": [],
+    "lostRows": [],
+    "closedRows": [
+     {
+      "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "token_id": "t1",
+      "slug": "ma",
+      "current_price": 1,
+      "current_value": 0,
+      "entry_cost_usdc": 5,
+      "realized_pnl": 2
+     }
+    ]
+   }
+  },
+  {
+   "kind": "ingest",
+   "name": "ingest-closed-win-keeps-value",
+   "description": "CLOSED 승자인데 현재 가치가 있으면 그 값 유지",
+   "input": {
+    "pending": [],
+    "history": [],
+    "closed": [],
+    "winRows": [],
+    "lostRows": [],
+    "closedRows": [
+     {
+      "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "token_id": "t1",
+      "slug": "ma",
+      "current_price": 1,
+      "current_value": 3,
+      "entry_cost_usdc": 5,
+      "realized_pnl": 2
+     }
+    ]
+   }
+  },
+  {
+   "kind": "ingest",
+   "name": "ingest-closed-not-win",
+   "description": "CLOSED인데 승이 아니면 수집 안 함",
+   "input": {
+    "pending": [],
+    "history": [],
+    "closed": [],
+    "winRows": [],
+    "lostRows": [],
+    "closedRows": [
+     {
+      "condition_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "token_id": "t1",
+      "slug": "ma",
+      "current_price": 0.5,
+      "current_value": 0,
+      "entry_cost_usdc": 5,
+      "realized_pnl": -1
+     }
+    ]
+   }
+  },
+  {
+   "kind": "corrupted",
+   "name": "corrupted-ok",
+   "description": "배열이면 정상",
+   "input": {
+    "raw": "[\"a\"]"
+   }
+  },
+  {
+   "kind": "corrupted",
+   "name": "corrupted-object",
+   "description": "객체면 손상",
+   "input": {
+    "raw": "{\"x\": 1}"
+   }
+  },
+  {
+   "kind": "corrupted",
+   "name": "corrupted-bad-json",
+   "description": "파싱 실패면 손상",
+   "input": {
+    "raw": "not-json"
+   }
+  },
+  {
+   "kind": "corrupted",
+   "name": "corrupted-null",
+   "description": "없으면 정상",
+   "input": {
+    "raw": null
+   }
+  },
+  {
+   "kind": "corrupted",
+   "name": "corrupted-empty-array",
+   "description": "빈 배열은 정상",
+   "input": {
+    "raw": "[]"
+   }
+  },
+  {
+   "kind": "failsafe",
+   "name": "failsafe-403",
+   "description": "403 감지",
+   "input": {
+    "text": "HTTP 403 Forbidden"
+   }
+  },
+  {
+   "kind": "failsafe",
+   "name": "failsafe-signature",
+   "description": "invalid signature 감지",
+   "input": {
+    "text": "invalid signature detected"
+   }
+  },
+  {
+   "kind": "failsafe",
+   "name": "failsafe-clean",
+   "description": "정상 텍스트",
+   "input": {
+    "text": "all good"
+   }
+  },
+  {
+   "kind": "failsafe",
+   "name": "failsafe-null",
+   "description": "null은 안전",
+   "input": {
+    "text": null
+   }
+  },
+  {
+   "kind": "failsafe",
+   "name": "failsafe-not-allowed",
+   "description": "not allowed 감지",
+   "input": {
+    "text": "user not allowed"
+   }
+  }
+ ]
+}

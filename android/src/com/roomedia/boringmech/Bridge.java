@@ -29,9 +29,13 @@ import javax.crypto.spec.GCMParameterSpec;
 
 import org.json.JSONObject;
 
-// WebView ↔ 네이티브 다리. 같은 페이지가 서비스(엔진 호스트)와 액티비티
-// (뷰어) 양쪽에서 뜨므로, 호스트별 차이는 Host 콜백으로만 가르고
-// 나머지(실행 의도 미러·하트비트·스냅샷 캐시·주문 전송·업데이트)는 공용이다.
+import com.roomedia.boringmech.write.RedeemSubmitter;
+
+// WebView ↔ 네이티브 다리. 페이지는 액티비티(뷰어)에서만 뜨고, 엔진은
+// 네이티브 스레드(NativeEngine)가 돌린다. 호스트별 차이는 Host 콜백으로만
+// 가르고 나머지(실행 의도 미러·하트비트·스냅샷 캐시·주문 전송·업데이트)는
+// 공용이다. 네이티브 엔진은 이 클래스의 static 코어(비밀 복호·알림·미러
+// 조회)를 직접 쓴다.
 public class Bridge {
     public interface Host {
         String hostMode();
@@ -259,10 +263,15 @@ public class Bridge {
 
     @JavascriptInterface
     public void notify(final String title, final String body) {
-        main.post(() -> {
+        notifyMoney(ctx, title, body);
+    }
+
+    // 네이티브 엔진도 같은 경로로 알림을 보낸다 (본문은 돈 정보만 — 호출자 책임).
+    static void notifyMoney(final Context context, final String title, final String body) {
+        new Handler(Looper.getMainLooper()).post(() -> {
             try {
                 NotificationManager nm = (NotificationManager)
-                        ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+                        context.getSystemService(Context.NOTIFICATION_SERVICE);
                 if (nm == null) return;
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     NotificationChannel ch = new NotificationChannel(
@@ -270,11 +279,11 @@ public class Bridge {
                     nm.createNotificationChannel(ch);
                 }
                 SharedPreferences prefs =
-                        ctx.getSharedPreferences(NOTIFY_PREFS, Context.MODE_PRIVATE);
+                        context.getSharedPreferences(NOTIFY_PREFS, Context.MODE_PRIVATE);
                 int id = prefs.getInt("next_id", 100) + 1;
                 prefs.edit().putInt("next_id", id).apply();
-                Notification n = new Notification.Builder(ctx, EVENTS_CHANNEL)
-                        .setSmallIcon(ctx.getApplicationInfo().icon)
+                Notification n = new Notification.Builder(context, EVENTS_CHANNEL)
+                        .setSmallIcon(context.getApplicationInfo().icon)
                         .setContentTitle(title)
                         .setContentText(body)
                         .setAutoCancel(true)
@@ -348,6 +357,11 @@ public class Bridge {
 
     @JavascriptInterface
     public String encryptSecret(final String plain) {
+        return encryptSecretText(plain);
+    }
+
+    // 암호화 코어 — 네이티브 엔진이 파생한 creds를 미러에 저장할 때도 쓴다.
+    static String encryptSecretText(final String plain) {
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.ENCRYPT_MODE, secretKey());
@@ -383,11 +397,11 @@ public class Bridge {
         }
     }
 
-    // ── 네이티브 섀도우용 미러 ──────────────────────────────────────
-    // 섀도우 스냅샷(읽기 전용 대조)은 WebView localStorage에 접근할 수
-    // 없어, JS가 boot/link 시점에 funder와 creds 암호문을 네이티브
-    // 미러(bm_engine)에도 남긴다. creds는 암호문 그대로만 보관하고
-    // 복호화는 조회 시점에만 한다 — 평문을 prefs에 두지 않는다.
+    // ── 네이티브 엔진용 미러 ────────────────────────────────────────
+    // 네이티브 엔진은 WebView localStorage에 접근할 수 없어, JS가
+    // boot/link 시점에 funder·creds·개인키·Relayer 키 암호문을 네이티브
+    // 미러(bm_engine)에도 남긴다. 암호문 그대로만 보관하고 복호화는
+    // 조회 시점에만 한다 — 평문을 prefs에 두지 않는다.
 
     @JavascriptInterface
     public void setFunderMirror(final String funder) {
@@ -400,6 +414,29 @@ public class Bridge {
     public void setCredsMirror(final String eoa, final String cipher) {
         EngineService.setEoa(ctx, eoa);
         EngineService.setCredsCipher(ctx, cipher);
+    }
+
+    // 네이티브 엔진(전환 통합)은 개인키와 Relayer 키도 미러로 받는다.
+    // 둘 다 LS 원문(암호문) 그대로만 보관하고 복호화는 조회 시점에만 한다.
+    @JavascriptInterface
+    public void setPkMirror(final String cipher) {
+        EngineService.setPkCipher(ctx, cipher);
+    }
+
+    @JavascriptInterface
+    public void setRelayerMirror(final String cipher) {
+        EngineService.setRelayerCipher(ctx, cipher);
+    }
+
+    // 연동 해제(unlink) — 비밀 미러를 전부 비운다. funder·eoa도 함께 지워
+    // 네이티브 엔진이 이전 계정의 자격증명으로 복원되지 않게 한다.
+    @JavascriptInterface
+    public void clearSecretMirrors() {
+        EngineService.setPkCipher(ctx, null);
+        EngineService.setCredsCipher(ctx, null);
+        EngineService.setRelayerCipher(ctx, null);
+        EngineService.setFunder(ctx, null);
+        EngineService.setEoa(ctx, null);
     }
 
     /** 섀도우가 쓰는 자격증명 — 복호화된 값은 이 객체 안에서만 산다. */
@@ -441,9 +478,85 @@ public class Bridge {
 
     private static final String SECRET_PREFIX = "enc1:";
 
+    /** 네이티브 엔진 복원용 비밀 묶음 — 복호화된 값은 이 객체 안에서만 산다. */
+    public static final class NativeSecrets {
+        public final String privateKey;
+        public final Creds creds;
+        public final RedeemSubmitter.RelayerCreds relayer;
+        public final String funder;
+
+        NativeSecrets(String privateKey, Creds creds,
+                      RedeemSubmitter.RelayerCreds relayer, String funder) {
+            this.privateKey = privateKey;
+            this.creds = creds;
+            this.relayer = relayer;
+            this.funder = funder;
+        }
+    }
+
+    private static String decryptMirror(String cipher) {
+        if (cipher == null) return null;
+        return cipher.startsWith(SECRET_PREFIX)
+                ? decryptSecretText(cipher.substring(SECRET_PREFIX.length()))
+                : cipher; // 마이그레이션 전 레거시 평문 (JS readSecret와 같은 취급)
+    }
+
+    // 개인키 미러가 없거나 복호화에 실패하면 null — 네이티브 엔진은 복원을
+    // 보류하고 뷰어가 연동·미러를 마칠 때까지 기다린다.
+    static NativeSecrets loadNativeSecrets(Context ctx) {
+        String pk = decryptMirror(EngineService.getPkCipher(ctx));
+        if (pk == null || pk.isEmpty()) return null;
+        return new NativeSecrets(pk, loadShadowCreds(ctx), loadRelayerCreds(ctx),
+                EngineService.getFunder(ctx));
+    }
+
+    // Relayer 키는 매 리딤 회차마다 새로 읽는다 (JS readRelayerCreds와 같다).
+    static RedeemSubmitter.RelayerCreds loadRelayerCreds(Context ctx) {
+        String plain = decryptMirror(EngineService.getRelayerCipher(ctx));
+        if (plain == null) return null;
+        try {
+            JSONObject o = new JSONObject(plain);
+            String key = o.optString("key", "");
+            String address = o.optString("address", "");
+            if (key.isEmpty() || address.isEmpty()) return null;
+            return new RedeemSubmitter.RelayerCreds(key, address);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     // 뷰어 표시용 섀도우 대조 상태 (bm_shadow prefs의 JSON 그대로).
     @JavascriptInterface
     public String getShadowStatus() {
         return EngineService.getShadowStatusJson(ctx);
+    }
+
+    // ── 네이티브 엔진 상태 (뷰어 읽기·승계) ─────────────────────────
+    // 네이티브 엔진은 로그·stage·업데이트 정보를 bm_engine prefs에 남긴다.
+    // 뷰어는 LS보다 이쪽을 우선 읽고, 첫 실행에는 LS 값을 한 번 승계한다.
+
+    @JavascriptInterface
+    public String getNativeLog() {
+        return DurableStore.logJson(ctx);
+    }
+
+    @JavascriptInterface
+    public boolean seedNativeLog(final String json) {
+        return json != null && DurableStore.seedLog(ctx, json);
+    }
+
+    @JavascriptInterface
+    public String getNativeStage() {
+        return DurableStore.stageJson(ctx);
+    }
+
+    @JavascriptInterface
+    public boolean seedNativeStage(final String json) {
+        return json != null && DurableStore.seedStage(ctx, json);
+    }
+
+    @JavascriptInterface
+    public String getNativeUpdateInfo() {
+        return DurableStore.updateInfoJson(ctx);
     }
 }

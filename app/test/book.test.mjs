@@ -966,7 +966,10 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
     "utf8",
   );
   eq(svc.includes("getSubmitInFlight"), true, "guard: watchdog consults submit guard");
-  eq(svc.includes("onRenderProcessGone"), true, "guard: engine recreates webview on renderer death");
+  // 네이티브 전환 — 엔진 호스트 WebView가 없어 렌더러 사망 자체가 없고,
+  // JS 엔진과 네이티브가 동시에 도는 경로도 구조적으로 없다.
+  eq(svc.includes("NativeEngine"), true, "guard: engine runs on native engine thread");
+  eq(svc.includes("new WebView"), false, "guard: service never creates an engine webview (no dual execution)");
   const act = readFileSync(
     new URL("../../android/src/com/roomedia/boringmech/MainActivity.java", import.meta.url),
     "utf8",

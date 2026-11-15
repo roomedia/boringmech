@@ -2665,10 +2665,12 @@ async function link(privateKeyRaw) {
     throw new Error("키 암호화 저장에 실패했습니다 — 다시 시도하세요.");
   }
   localStorage.setItem(LS.funder, funder);
-  // 네이티브 섀도우(읽기 전용 대조)용 미러 — funder와 creds 암호문을
+  // 네이티브 엔진용 미러 — funder·creds·개인키·Relayer 키 암호문을
   // SharedPreferences에도 남긴다. 실패해도 연동 동작에는 영향 없다.
   try { window.AndroidBridge?.setFunderMirror?.(funder); } catch {}
   try { window.AndroidBridge?.setCredsMirror?.(eoa, localStorage.getItem(LS.creds)); } catch {}
+  try { window.AndroidBridge?.setPkMirror?.(localStorage.getItem(LS.key)); } catch {}
+  try { window.AndroidBridge?.setRelayerMirror?.(localStorage.getItem(LS.relayer)); } catch {}
   log(`연동 완료 · funder ${funder.slice(0, 10)}…`);
   void checkForUpdate();
   return snap;
@@ -2699,15 +2701,19 @@ function boot() {
   if (funder && !/^0x[0-9a-fA-F]{40}$/.test(funder)) funder = null;
   state.eoa = account.address;
   state.funder = funder;
-  // 네이티브 섀도우용 미러 (link와 같은 지점) — boot는 뷰어 새로고침마다
+  // 네이티브 엔진용 미러 (link와 같은 지점) — boot는 뷰어 새로고침마다
   // 불리므로 미러가 항상 최신 저장분을 따라간다. 값은 멱등하게 덮는다.
+  // 단 creds는 LS에 값이 있을 때만 덮는다 — 네이티브 엔진이 파생해
+  // 미러에 직접 남긴 creds를 낡은 LS 상태로 지우지 않기 위해서다.
   try { window.AndroidBridge?.setFunderMirror?.(funder); } catch {}
   try {
-    window.AndroidBridge?.setCredsMirror?.(
-      account.address,
-      localStorage.getItem(LS.creds),
-    );
+    const credsRaw = localStorage.getItem(LS.creds);
+    if (credsRaw) {
+      window.AndroidBridge?.setCredsMirror?.(account.address, credsRaw);
+    }
   } catch {}
+  try { window.AndroidBridge?.setPkMirror?.(localStorage.getItem(LS.key)); } catch {}
+  try { window.AndroidBridge?.setRelayerMirror?.(localStorage.getItem(LS.relayer)); } catch {}
   return {
     view: bootView(true, peekRunIntent()),
     snap: cachedSnapshot(),
@@ -2814,6 +2820,9 @@ function unlink() {
       window.AndroidBridge?.removeDurable?.(k);
     } catch {}
   }
+  // 비밀 미러(개인키·creds·Relayer·funder·eoa)도 비운다 — 네이티브
+  // 엔진이 이전 계정의 자격증명으로 복원되지 않게 한다.
+  try { window.AndroidBridge?.clearSecretMirrors?.(); } catch {}
 }
 
 window.BM = {
@@ -2839,13 +2848,17 @@ window.BM = {
     const a = String(address || "").trim();
     if (!k || !/^0x[0-9a-fA-F]{40}$/.test(a)) return false;
     const ok = storeSecret(LS.relayer, JSON.stringify({ key: k, address: a }));
-    if (ok) state.redeemKeyWarnedDay = "";
+    if (ok) {
+      state.redeemKeyWarnedDay = "";
+      try { window.AndroidBridge?.setRelayerMirror?.(localStorage.getItem(LS.relayer)); } catch {}
+    }
     return ok;
   },
   clearRelayerKey() {
     try {
       localStorage.removeItem(LS.relayer);
     } catch {}
+    try { window.AndroidBridge?.setRelayerMirror?.(null); } catch {}
   },
   get version() {
     return APP_VERSION;

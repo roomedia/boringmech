@@ -136,6 +136,46 @@ public final class Js {
         return Math.round((x + EPSILON) * 100) / 100.0;
     }
 
+    /** engine.js round4 — Math.round((x + Number.EPSILON) * 10000) / 10000. */
+    public static double round4(double x) {
+        if (!Double.isFinite(x)) {
+            return x;
+        }
+        return Math.round((x + EPSILON) * 10000) / 10000.0;
+    }
+
+    /** JS `v || 0` 뒤 Number 변환 — falsy면 0, truthy면 Number(v). */
+    public static double numOrZero(Object v) {
+        return truthy(v) ? num(v) : 0;
+    }
+
+    /**
+     * JS Number.prototype.toFixed(digits) 뒤 Number() 재해석.
+     * 명세는 정확한 이진값에 가장 가까운 10진 n을 고르고 동률이면 큰 쪽 —
+     * BigDecimal(정확값) + HALF_UP(절댓값 기준)가 그 규칙과 같다.
+     */
+    public static double toFixed(double x, int digits) {
+        if (!Double.isFinite(x)) {
+            return x; // Number("NaN")=NaN, Number("Infinity")=Infinity
+        }
+        boolean neg = x < 0;
+        java.math.BigDecimal bd = new java.math.BigDecimal(Math.abs(x))
+                .setScale(digits, java.math.RoundingMode.HALF_UP);
+        double v = bd.doubleValue();
+        return neg ? -v : v;
+    }
+
+    /** engine.js roundTick — Math.floor(price / tick + 0.5) 뒤 틱 배수를 toFixed(6). */
+    public static double roundTick(double price, double tick) {
+        double q = Math.floor(price / tick + 0.5);
+        return toFixed(q * tick, 6);
+    }
+
+    /** JS String.prototype.trim (화이트스페이스 집합은 parseNumber와 같은 기준). */
+    public static String trimJs(String s) {
+        return trimJsWhitespace(s);
+    }
+
     // --- Number(String) 파싱 ---
 
     private static final Pattern DECIMAL =
