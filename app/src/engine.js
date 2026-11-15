@@ -2546,6 +2546,10 @@ async function link(privateKeyRaw) {
     throw new Error("키 암호화 저장에 실패했습니다 — 다시 시도하세요.");
   }
   localStorage.setItem(LS.funder, funder);
+  // 네이티브 섀도우(읽기 전용 대조)용 미러 — funder와 creds 암호문을
+  // SharedPreferences에도 남긴다. 실패해도 연동 동작에는 영향 없다.
+  try { window.AndroidBridge?.setFunderMirror?.(funder); } catch {}
+  try { window.AndroidBridge?.setCredsMirror?.(eoa, localStorage.getItem(LS.creds)); } catch {}
   log(`연동 완료 · funder ${funder.slice(0, 10)}…`);
   void checkForUpdate();
   return snap;
@@ -2576,6 +2580,15 @@ function boot() {
   if (funder && !/^0x[0-9a-fA-F]{40}$/.test(funder)) funder = null;
   state.eoa = account.address;
   state.funder = funder;
+  // 네이티브 섀도우용 미러 (link와 같은 지점) — boot는 뷰어 새로고침마다
+  // 불리므로 미러가 항상 최신 저장분을 따라간다. 값은 멱등하게 덮는다.
+  try { window.AndroidBridge?.setFunderMirror?.(funder); } catch {}
+  try {
+    window.AndroidBridge?.setCredsMirror?.(
+      account.address,
+      localStorage.getItem(LS.creds),
+    );
+  } catch {}
   return {
     view: bootView(true, peekRunIntent()),
     snap: cachedSnapshot(),

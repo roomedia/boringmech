@@ -1,0 +1,999 @@
+{
+  "meta": {
+    "description": "boringmech 네이티브 이관 골든 데이터. JS SDK 출력이 정본이며, Java 구현은 input만으로 expected를 재현해야 한다.",
+    "generatedBy": "native-golden/gen_golden.mjs",
+    "sdk": {
+      "@polymarket/clob-client-v2": "1.2.1",
+      "viem": "2.57.19"
+    },
+    "testPrivateKey": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "eoa": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+    "funderUsed": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+    "fixedSalt": "1234567890123456789",
+    "fixedOrderTimestamp": "1760000000000",
+    "note": "테스트 키(0x1111…)는 실계정이 아니다. funderUsed는 이 EOA의 UUPS 파생 주소다."
+  },
+  "funderDerivation": {
+    "input": {
+      "eoa": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A"
+    },
+    "expected": {
+      "uups": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+      "beacon": "0x8154deDBDAAA46c07453E47b5b6C0Ff60B8542b9"
+    }
+  },
+  "amounts": [
+    {
+      "name": "buy_tick0.01_price_on_tick",
+      "input": {
+        "side": "BUY",
+        "amount": "5",
+        "price": "0.75",
+        "tickSize": "0.01"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 2,
+          "size": 2,
+          "amount": 4
+        },
+        "rawMakerAmt": "5",
+        "rawTakerAmt": "6.6666",
+        "makerAmount": "5000000",
+        "takerAmount": "6666600"
+      }
+    },
+    {
+      "name": "buy_tick0.01_price_rounds_down",
+      "input": {
+        "side": "BUY",
+        "amount": "5",
+        "price": "0.755",
+        "tickSize": "0.01"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 2,
+          "size": 2,
+          "amount": 4
+        },
+        "rawMakerAmt": "5",
+        "rawTakerAmt": "6.6666",
+        "makerAmount": "5000000",
+        "takerAmount": "6666600"
+      }
+    },
+    {
+      "name": "buy_tick0.01_repeating_taker",
+      "input": {
+        "side": "BUY",
+        "amount": "5",
+        "price": "0.73",
+        "tickSize": "0.01"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 2,
+          "size": 2,
+          "amount": 4
+        },
+        "rawMakerAmt": "5",
+        "rawTakerAmt": "6.8493",
+        "makerAmount": "5000000",
+        "takerAmount": "6849300"
+      }
+    },
+    {
+      "name": "buy_tick0.1",
+      "input": {
+        "side": "BUY",
+        "amount": "10",
+        "price": "0.7",
+        "tickSize": "0.1"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 1,
+          "size": 2,
+          "amount": 3
+        },
+        "rawMakerAmt": "10",
+        "rawTakerAmt": "14.285",
+        "makerAmount": "10000000",
+        "takerAmount": "14285000"
+      }
+    },
+    {
+      "name": "buy_tick0.1_price_rounds_down",
+      "input": {
+        "side": "BUY",
+        "amount": "10",
+        "price": "0.79",
+        "tickSize": "0.1"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 1,
+          "size": 2,
+          "amount": 3
+        },
+        "rawMakerAmt": "10",
+        "rawTakerAmt": "14.285",
+        "makerAmount": "10000000",
+        "takerAmount": "14285000"
+      }
+    },
+    {
+      "name": "buy_tick0.005",
+      "input": {
+        "side": "BUY",
+        "amount": "5",
+        "price": "0.755",
+        "tickSize": "0.005"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 3,
+          "size": 2,
+          "amount": 5
+        },
+        "rawMakerAmt": "5",
+        "rawTakerAmt": "6.62251",
+        "makerAmount": "5000000",
+        "takerAmount": "6622510"
+      }
+    },
+    {
+      "name": "buy_tick0.0025",
+      "input": {
+        "side": "BUY",
+        "amount": "5",
+        "price": "0.7525",
+        "tickSize": "0.0025"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 4,
+          "size": 2,
+          "amount": 6
+        },
+        "rawMakerAmt": "5",
+        "rawTakerAmt": "6.644518",
+        "makerAmount": "5000000",
+        "takerAmount": "6644518"
+      }
+    },
+    {
+      "name": "buy_tick0.001_near_one",
+      "input": {
+        "side": "BUY",
+        "amount": "5",
+        "price": "0.999",
+        "tickSize": "0.001"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 3,
+          "size": 2,
+          "amount": 5
+        },
+        "rawMakerAmt": "5",
+        "rawTakerAmt": "5.005",
+        "makerAmount": "5000000",
+        "takerAmount": "5005000"
+      }
+    },
+    {
+      "name": "buy_tick0.0001",
+      "input": {
+        "side": "BUY",
+        "amount": "5",
+        "price": "0.1234",
+        "tickSize": "0.0001"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 4,
+          "size": 2,
+          "amount": 6
+        },
+        "rawMakerAmt": "5",
+        "rawTakerAmt": "40.518638",
+        "makerAmount": "5000000",
+        "takerAmount": "40518638"
+      }
+    },
+    {
+      "name": "buy_amount_excess_decimals",
+      "input": {
+        "side": "BUY",
+        "amount": "5.009",
+        "price": "0.75",
+        "tickSize": "0.01"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 2,
+          "size": 2,
+          "amount": 4
+        },
+        "rawMakerAmt": "5",
+        "rawTakerAmt": "6.6666",
+        "makerAmount": "5000000",
+        "takerAmount": "6666600"
+      }
+    },
+    {
+      "name": "buy_small_amount",
+      "input": {
+        "side": "BUY",
+        "amount": "2.87",
+        "price": "0.61",
+        "tickSize": "0.01"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 2,
+          "size": 2,
+          "amount": 4
+        },
+        "rawMakerAmt": "2.87",
+        "rawTakerAmt": "4.7049",
+        "makerAmount": "2870000",
+        "takerAmount": "4704900"
+      }
+    },
+    {
+      "name": "buy_band_low",
+      "input": {
+        "side": "BUY",
+        "amount": "5",
+        "price": "0.60",
+        "tickSize": "0.01"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 2,
+          "size": 2,
+          "amount": 4
+        },
+        "rawMakerAmt": "5",
+        "rawTakerAmt": "8.3333",
+        "makerAmount": "5000000",
+        "takerAmount": "8333300"
+      }
+    },
+    {
+      "name": "buy_tick0.001_price_rounds_down",
+      "input": {
+        "side": "BUY",
+        "amount": "5",
+        "price": "0.7499",
+        "tickSize": "0.001"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 3,
+          "size": 2,
+          "amount": 5
+        },
+        "rawMakerAmt": "5",
+        "rawTakerAmt": "6.67556",
+        "makerAmount": "5000000",
+        "takerAmount": "6675560"
+      }
+    },
+    {
+      "name": "sell_tick0.01_exact",
+      "input": {
+        "side": "SELL",
+        "amount": "6.66",
+        "price": "0.72",
+        "tickSize": "0.01"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 2,
+          "size": 2,
+          "amount": 4
+        },
+        "rawMakerAmt": "6.66",
+        "rawTakerAmt": "4.7952",
+        "makerAmount": "6660000",
+        "takerAmount": "4795200"
+      }
+    },
+    {
+      "name": "sell_shares_excess_decimals",
+      "input": {
+        "side": "SELL",
+        "amount": "6.666",
+        "price": "0.73",
+        "tickSize": "0.01"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 2,
+          "size": 2,
+          "amount": 4
+        },
+        "rawMakerAmt": "6.66",
+        "rawTakerAmt": "4.8618",
+        "makerAmount": "6660000",
+        "takerAmount": "4861800"
+      }
+    },
+    {
+      "name": "sell_tick0.005",
+      "input": {
+        "side": "SELL",
+        "amount": "13.37",
+        "price": "0.755",
+        "tickSize": "0.005"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 3,
+          "size": 2,
+          "amount": 5
+        },
+        "rawMakerAmt": "13.37",
+        "rawTakerAmt": "10.09435",
+        "makerAmount": "13370000",
+        "takerAmount": "10094350"
+      }
+    },
+    {
+      "name": "sell_tick0.0025",
+      "input": {
+        "side": "SELL",
+        "amount": "3.33",
+        "price": "0.7525",
+        "tickSize": "0.0025"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 4,
+          "size": 2,
+          "amount": 6
+        },
+        "rawMakerAmt": "3.33",
+        "rawTakerAmt": "2.505825",
+        "makerAmount": "3330000",
+        "takerAmount": "2505825"
+      }
+    },
+    {
+      "name": "sell_tick0.1_price_rounds_down",
+      "input": {
+        "side": "SELL",
+        "amount": "10",
+        "price": "0.79",
+        "tickSize": "0.1"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 1,
+          "size": 2,
+          "amount": 3
+        },
+        "rawMakerAmt": "10",
+        "rawTakerAmt": "7",
+        "makerAmount": "10000000",
+        "takerAmount": "7000000"
+      }
+    },
+    {
+      "name": "sell_tick0.01_high_price",
+      "input": {
+        "side": "SELL",
+        "amount": "100",
+        "price": "0.99",
+        "tickSize": "0.01"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 2,
+          "size": 2,
+          "amount": 4
+        },
+        "rawMakerAmt": "100",
+        "rawTakerAmt": "99",
+        "makerAmount": "100000000",
+        "takerAmount": "99000000"
+      }
+    },
+    {
+      "name": "sell_tick0.0001",
+      "input": {
+        "side": "SELL",
+        "amount": "7.77",
+        "price": "0.1234",
+        "tickSize": "0.0001"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 4,
+          "size": 2,
+          "amount": 6
+        },
+        "rawMakerAmt": "7.77",
+        "rawTakerAmt": "0.958818",
+        "makerAmount": "7770000",
+        "takerAmount": "958818"
+      }
+    }
+  ],
+  "orderSignatures": [
+    {
+      "name": "v2_general_buy",
+      "input": {
+        "userMarketOrder": {
+          "tokenID": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+          "side": "BUY",
+          "amount": 5,
+          "price": 0.75,
+          "orderType": "FOK"
+        },
+        "options": {
+          "tickSize": "0.01",
+          "negRisk": false
+        },
+        "version": 2,
+        "chainId": 137,
+        "exchangeContract": "0xE111180000d2663C0091e4f400237545B87B996B",
+        "domain": {
+          "name": "Polymarket CTF Exchange",
+          "version": "2",
+          "chainId": 137,
+          "verifyingContract": "0xE111180000d2663C0091e4f400237545B87B996B"
+        },
+        "order": {
+          "salt": "1234567890123456789",
+          "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "tokenId": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+          "makerAmount": "5000000",
+          "takerAmount": "6666600",
+          "side": "BUY",
+          "signatureType": 3,
+          "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "builder": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "timestamp": "1760000000000",
+          "expiration": "0"
+        }
+      },
+      "expected": {
+        "signature": "0x35dd0848e8179976ba443c3cd2e4cea48a60b116e00611133bd838cf4c8bf1de3bf0aa4085a66cd3c8f860aad4be00c53bc62376e295b964d5ede04890062d9a1b3264e159346253e26a64e00b69032db0e7d32f94628de3e6eecb50304d7af3d27c5c44cf46434b27c5450199acc44f8f31bbd31f2e3565c163bfd2db4782fb484f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba"
+      }
+    },
+    {
+      "name": "v2_general_sell",
+      "input": {
+        "userMarketOrder": {
+          "tokenID": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+          "side": "SELL",
+          "amount": 6.66,
+          "price": 0.72,
+          "orderType": "FOK"
+        },
+        "options": {
+          "tickSize": "0.01",
+          "negRisk": false
+        },
+        "version": 2,
+        "chainId": 137,
+        "exchangeContract": "0xE111180000d2663C0091e4f400237545B87B996B",
+        "domain": {
+          "name": "Polymarket CTF Exchange",
+          "version": "2",
+          "chainId": 137,
+          "verifyingContract": "0xE111180000d2663C0091e4f400237545B87B996B"
+        },
+        "order": {
+          "salt": "1234567890123456789",
+          "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "tokenId": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+          "makerAmount": "6660000",
+          "takerAmount": "4795200",
+          "side": "SELL",
+          "signatureType": 3,
+          "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "builder": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "timestamp": "1760000000000",
+          "expiration": "0"
+        }
+      },
+      "expected": {
+        "signature": "0xa0b01affbb7f4da4930277c0f0789fb4be51a31454cf132d8ff892b304a352bb322e1eb07ccd438d13caff2a38bdac70b8cc5f9acf2bf54b6dd16b54c25e369c1c3264e159346253e26a64e00b69032db0e7d32f94628de3e6eecb50304d7af3d2d3eae3061b8d3b1afe383d16f17c34bb5269b3ac18b0beb6856d37bcd25b4b644f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba"
+      }
+    },
+    {
+      "name": "v2_negrisk_buy",
+      "input": {
+        "userMarketOrder": {
+          "tokenID": "9800787273216002583860617742040128587601631587605531883592612768894865019786",
+          "side": "BUY",
+          "amount": 5,
+          "price": 0.61,
+          "orderType": "FOK"
+        },
+        "options": {
+          "tickSize": "0.01",
+          "negRisk": true
+        },
+        "version": 2,
+        "chainId": 137,
+        "exchangeContract": "0xe2222d279d744050d28e00520010520000310F59",
+        "domain": {
+          "name": "Polymarket CTF Exchange",
+          "version": "2",
+          "chainId": 137,
+          "verifyingContract": "0xe2222d279d744050d28e00520010520000310F59"
+        },
+        "order": {
+          "salt": "1234567890123456789",
+          "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "tokenId": "9800787273216002583860617742040128587601631587605531883592612768894865019786",
+          "makerAmount": "5000000",
+          "takerAmount": "8196700",
+          "side": "BUY",
+          "signatureType": 3,
+          "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "builder": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "timestamp": "1760000000000",
+          "expiration": "0"
+        }
+      },
+      "expected": {
+        "signature": "0xd357960157bb767c6af9744daa2ea75b8ef30e88bbf295df9ebd5ec08f5adaa150997eaafec271156a3af2dcf360345ae39cd401c7ea16e06c2e33b36126155f1b9b858f53327b0bd13af8ec14cfb35234fb9eb7b0504d1a4e61f433840d30e81a52a5e995658738b2f17d2b614eb9eac00f8dc34391cf6200a03bb1106ad62a244f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba"
+      }
+    },
+    {
+      "name": "v2_negrisk_sell",
+      "input": {
+        "userMarketOrder": {
+          "tokenID": "9800787273216002583860617742040128587601631587605531883592612768894865019786",
+          "side": "SELL",
+          "amount": 12.5,
+          "price": 0.335,
+          "orderType": "FOK"
+        },
+        "options": {
+          "tickSize": "0.005",
+          "negRisk": true
+        },
+        "version": 2,
+        "chainId": 137,
+        "exchangeContract": "0xe2222d279d744050d28e00520010520000310F59",
+        "domain": {
+          "name": "Polymarket CTF Exchange",
+          "version": "2",
+          "chainId": 137,
+          "verifyingContract": "0xe2222d279d744050d28e00520010520000310F59"
+        },
+        "order": {
+          "salt": "1234567890123456789",
+          "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "tokenId": "9800787273216002583860617742040128587601631587605531883592612768894865019786",
+          "makerAmount": "12500000",
+          "takerAmount": "4187500",
+          "side": "SELL",
+          "signatureType": 3,
+          "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "builder": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "timestamp": "1760000000000",
+          "expiration": "0"
+        }
+      },
+      "expected": {
+        "signature": "0xd4b66c4ae958103637e9cff3e9a2650067a90463ec0211ea9639439bffd4a32e2219b41e4e8ea291b709f09def98581c274369c425c70777c5bf7d997ebe88771c9b858f53327b0bd13af8ec14cfb35234fb9eb7b0504d1a4e61f433840d30e81a52f29c387c0d863a06e58a7f93e4611d5e27d5cf2e93321aef742ccec35e58d54f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba"
+      }
+    },
+    {
+      "name": "v3_buy",
+      "input": {
+        "userMarketOrder": {
+          "tokenID": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+          "side": "BUY",
+          "amount": 5,
+          "price": 0.75,
+          "orderType": "FOK"
+        },
+        "options": {
+          "tickSize": "0.01",
+          "negRisk": false
+        },
+        "version": 3,
+        "chainId": 137,
+        "exchangeContract": "0xe3333700cA9d93003F00f0F71f8515005F6c00Aa",
+        "domain": {
+          "name": "Polymarket CTF Exchange",
+          "version": "3",
+          "chainId": 137,
+          "verifyingContract": "0xe3333700cA9d93003F00f0F71f8515005F6c00Aa"
+        },
+        "order": {
+          "salt": "1234567890123456789",
+          "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "tokenId": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+          "makerAmount": "5000000",
+          "takerAmount": "6666600",
+          "side": "BUY",
+          "signatureType": 3,
+          "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "builder": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "timestamp": "1760000000000",
+          "expiration": "0"
+        }
+      },
+      "expected": {
+        "signature": "0xa8956d244005cdf99c2de735c05523bf049040a4ad476f67f152379f2537cb39113aa12ff8bf2fc51523869be7c62244657213b4ec6f71a9030b2d1e741c712b1c466c63910185bbd55e8679264200c4e0abdcbb0c6264eb3d41d13326022e095b7c5c44cf46434b27c5450199acc44f8f31bbd31f2e3565c163bfd2db4782fb484f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba"
+      }
+    },
+    {
+      "name": "v3_sell",
+      "input": {
+        "userMarketOrder": {
+          "tokenID": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+          "side": "SELL",
+          "amount": 6.66,
+          "price": 0.72,
+          "orderType": "FOK"
+        },
+        "options": {
+          "tickSize": "0.01",
+          "negRisk": false
+        },
+        "version": 3,
+        "chainId": 137,
+        "exchangeContract": "0xe3333700cA9d93003F00f0F71f8515005F6c00Aa",
+        "domain": {
+          "name": "Polymarket CTF Exchange",
+          "version": "3",
+          "chainId": 137,
+          "verifyingContract": "0xe3333700cA9d93003F00f0F71f8515005F6c00Aa"
+        },
+        "order": {
+          "salt": "1234567890123456789",
+          "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "tokenId": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+          "makerAmount": "6660000",
+          "takerAmount": "4795200",
+          "side": "SELL",
+          "signatureType": 3,
+          "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "builder": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "timestamp": "1760000000000",
+          "expiration": "0"
+        }
+      },
+      "expected": {
+        "signature": "0x290b1db6221a0512139a903eeda91878646ad0698efd565c90d0389e9faf740f6a8bbdf7deaf802008f41d1cc1916c71772b60c654a1a5f04bdc8a5fd928c39e1b466c63910185bbd55e8679264200c4e0abdcbb0c6264eb3d41d13326022e095bd3eae3061b8d3b1afe383d16f17c34bb5269b3ac18b0beb6856d37bcd25b4b644f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba"
+      }
+    }
+  ],
+  "l1Signature": {
+    "input": {
+      "chainId": 137,
+      "address": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+      "timestamp": "1760000000",
+      "nonce": 0,
+      "message": "This message attests that I control the given wallet",
+      "domain": {
+        "name": "ClobAuthDomain",
+        "version": "1",
+        "chainId": 137
+      }
+    },
+    "expected": {
+      "signature": "0x95da8bdccaf0091205a2dfb3d1fdee53ab50699ede77f476b89b5c94c69f61b30369b2b8cd307712ef8290ec7e8fb9436b77f1eff27b49a36263cd242c4f60771c"
+    }
+  },
+  "l2Hmac": [
+    {
+      "name": "post_order_v2_body",
+      "input": {
+        "secret": "-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXY",
+        "timestamp": 1760000000,
+        "method": "POST",
+        "requestPath": "/order",
+        "body": "{\"deferExec\":false,\"postOnly\":false,\"order\":{\"salt\":1234567890123456800,\"maker\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"signer\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"tokenId\":\"5217830831767552351603457242192184817666125891744021388456190691134219482513\",\"makerAmount\":\"5000000\",\"takerAmount\":\"6666600\",\"side\":\"BUY\",\"signatureType\":3,\"timestamp\":\"1760000000000\",\"expiration\":\"0\",\"metadata\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"builder\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"signature\":\"0x35dd0848e8179976ba443c3cd2e4cea48a60b116e00611133bd838cf4c8bf1de3bf0aa4085a66cd3c8f860aad4be00c53bc62376e295b964d5ede04890062d9a1b3264e159346253e26a64e00b69032db0e7d32f94628de3e6eecb50304d7af3d27c5c44cf46434b27c5450199acc44f8f31bbd31f2e3565c163bfd2db4782fb484f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba\"},\"owner\":\"11111111-2222-3333-4444-555555555555\",\"orderType\":\"FOK\"}"
+      },
+      "expected": {
+        "signature": "hSziBvTjRNyh5CvYZAzD-o0-pcyrorYGbcYQahAW1ac="
+      }
+    },
+    {
+      "name": "get_balance_allowance_no_body",
+      "input": {
+        "secret": "-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXY",
+        "timestamp": 1760000000,
+        "method": "GET",
+        "requestPath": "/balance-allowance",
+        "body": null
+      },
+      "expected": {
+        "signature": "y-ZI9B_aqMKcVR8lCa6_FgNp2YGuauEYLmTOAAkIt6w="
+      }
+    },
+    {
+      "name": "post_order_v3_body",
+      "input": {
+        "secret": "-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXY",
+        "timestamp": 1760000123,
+        "method": "POST",
+        "requestPath": "/order",
+        "body": "{\"deferExec\":false,\"postOnly\":false,\"order\":{\"salt\":1234567890123456800,\"maker\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"signer\":\"0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2\",\"tokenId\":\"5217830831767552351603457242192184817666125891744021388456190691134219482513\",\"makerAmount\":\"5000000\",\"takerAmount\":\"6666600\",\"side\":\"BUY\",\"signatureType\":3,\"timestamp\":\"1760000000000\",\"expiration\":\"0\",\"metadata\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"builder\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"signature\":\"0xa8956d244005cdf99c2de735c05523bf049040a4ad476f67f152379f2537cb39113aa12ff8bf2fc51523869be7c62244657213b4ec6f71a9030b2d1e741c712b1c466c63910185bbd55e8679264200c4e0abdcbb0c6264eb3d41d13326022e095b7c5c44cf46434b27c5450199acc44f8f31bbd31f2e3565c163bfd2db4782fb484f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba\"},\"owner\":\"11111111-2222-3333-4444-555555555555\",\"orderType\":\"FOK\"}"
+      },
+      "expected": {
+        "signature": "TLPq3kSE-Q1M8gKSlphLD0nHUd8pBBZu8vlG2wlc_GU="
+      }
+    }
+  ],
+  "redeemCalldata": [
+    {
+      "name": "ctf_redeem_positions",
+      "input": {
+        "kind": "ctf",
+        "conditionId": "0xababababababababababababababababababababababababababababababab00",
+        "negRisk": false,
+        "collateralToken": "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB",
+        "parentCollectionId": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "indexSets": [
+          "1",
+          "2"
+        ]
+      },
+      "expected": {
+        "target": "0xAdA100Db00Ca00073811820692005400218FcE1f",
+        "value": "0",
+        "data": "0x01b7037c000000000000000000000000c011a7e12a19f7b1f670d46f03b03f3342e82dfb0000000000000000000000000000000000000000000000000000000000000000ababababababababababababababababababababababababababababababab000000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002"
+      }
+    },
+    {
+      "name": "ctf_redeem_positions_negrisk",
+      "input": {
+        "kind": "ctf",
+        "conditionId": "0xababababababababababababababababababababababababababababababab00",
+        "negRisk": true,
+        "collateralToken": "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB",
+        "parentCollectionId": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "indexSets": [
+          "1",
+          "2"
+        ]
+      },
+      "expected": {
+        "target": "0xadA2005600Dec949baf300f4C6120000bDB6eAab",
+        "value": "0",
+        "data": "0x01b7037c000000000000000000000000c011a7e12a19f7b1f670d46f03b03f3342e82dfb0000000000000000000000000000000000000000000000000000000000000000ababababababababababababababababababababababababababababababab000000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002"
+      }
+    },
+    {
+      "name": "v2_router_redeem_outcome0",
+      "input": {
+        "kind": "v2router",
+        "conditionId": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd01",
+        "bytes31": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "outcomeIndex": "0",
+        "amount": "5000000"
+      },
+      "expected": {
+        "target": "0x12121212006e4CD160D18e3f00711DA5c3372600",
+        "value": "0",
+        "data": "0xd217a3cccdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004c4b40"
+      }
+    },
+    {
+      "name": "v2_router_redeem_outcome1",
+      "input": {
+        "kind": "v2router",
+        "conditionId": "0xababababababababababababababababababababababababababababababab00",
+        "bytes31": "0xababababababababababababababababababababababababababababababab",
+        "outcomeIndex": "1",
+        "amount": "1234567"
+      },
+      "expected": {
+        "target": "0x12121212006e4CD160D18e3f00711DA5c3372600",
+        "value": "0",
+        "data": "0xd217a3ccababababababababababababababababababababababababababababababab000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000012d687"
+      }
+    }
+  ],
+  "batchSignatures": [
+    {
+      "name": "batch_ctf_redeem",
+      "input": {
+        "domain": {
+          "name": "DepositWallet",
+          "version": "1",
+          "chainId": 137,
+          "verifyingContract": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2"
+        },
+        "types": {
+          "Batch": [
+            {
+              "name": "wallet",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint256"
+            },
+            {
+              "name": "deadline",
+              "type": "uint256"
+            },
+            {
+              "name": "calls",
+              "type": "Call[]"
+            }
+          ],
+          "Call": [
+            {
+              "name": "target",
+              "type": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256"
+            },
+            {
+              "name": "data",
+              "type": "bytes"
+            }
+          ]
+        },
+        "primaryType": "Batch",
+        "message": {
+          "wallet": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "nonce": "7",
+          "deadline": "1760000600",
+          "calls": [
+            {
+              "target": "0xAdA100Db00Ca00073811820692005400218FcE1f",
+              "value": "0",
+              "data": "0x01b7037c000000000000000000000000c011a7e12a19f7b1f670d46f03b03f3342e82dfb0000000000000000000000000000000000000000000000000000000000000000ababababababababababababababababababababababababababababababab000000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "signature": "0x120319095afc05227624737f3779e7d9981d9f667e22a1d266c688d05a8fb968575102feadf4beb6b85a7ec179351fba3a08443228b6f7e4ddb123be9653ddcd1c"
+      }
+    },
+    {
+      "name": "batch_v2_router_redeem",
+      "input": {
+        "domain": {
+          "name": "DepositWallet",
+          "version": "1",
+          "chainId": 137,
+          "verifyingContract": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2"
+        },
+        "types": {
+          "Batch": [
+            {
+              "name": "wallet",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint256"
+            },
+            {
+              "name": "deadline",
+              "type": "uint256"
+            },
+            {
+              "name": "calls",
+              "type": "Call[]"
+            }
+          ],
+          "Call": [
+            {
+              "name": "target",
+              "type": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256"
+            },
+            {
+              "name": "data",
+              "type": "bytes"
+            }
+          ]
+        },
+        "primaryType": "Batch",
+        "message": {
+          "wallet": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "nonce": "7",
+          "deadline": "1760000600",
+          "calls": [
+            {
+              "target": "0x12121212006e4CD160D18e3f00711DA5c3372600",
+              "value": "0",
+              "data": "0xd217a3cccdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004c4b40"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "signature": "0xf039aa157a4c2ac630ad0fb718b8099754189deb92ce297529e0ff174b061cc22a486fe351edcc7a297645e6eb5d1a768aa6623715da34656e43b22a68f133221b"
+      }
+    },
+    {
+      "name": "batch_two_calls",
+      "input": {
+        "domain": {
+          "name": "DepositWallet",
+          "version": "1",
+          "chainId": 137,
+          "verifyingContract": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2"
+        },
+        "types": {
+          "Batch": [
+            {
+              "name": "wallet",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint256"
+            },
+            {
+              "name": "deadline",
+              "type": "uint256"
+            },
+            {
+              "name": "calls",
+              "type": "Call[]"
+            }
+          ],
+          "Call": [
+            {
+              "name": "target",
+              "type": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256"
+            },
+            {
+              "name": "data",
+              "type": "bytes"
+            }
+          ]
+        },
+        "primaryType": "Batch",
+        "message": {
+          "wallet": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "nonce": "7",
+          "deadline": "1760000600",
+          "calls": [
+            {
+              "target": "0xAdA100Db00Ca00073811820692005400218FcE1f",
+              "value": "0",
+              "data": "0x01b7037c000000000000000000000000c011a7e12a19f7b1f670d46f03b03f3342e82dfb0000000000000000000000000000000000000000000000000000000000000000ababababababababababababababababababababababababababababababab000000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002"
+            },
+            {
+              "target": "0x12121212006e4CD160D18e3f00711DA5c3372600",
+              "value": "0",
+              "data": "0xd217a3cccdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004c4b40"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "signature": "0xaf5d79ac63560b33634d77dc7f0d7747c17ad55e1a330fd51627d3186a53357108514e4586777f01d6b87e3cdc912a4c5af56656f9d5e48d32b6a20e30519dc21b"
+      }
+    }
+  ]
+}

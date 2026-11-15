@@ -176,8 +176,14 @@ public class Bridge {
 
     // 동기 GET — relayer 조회처럼 커스텀 헤더가 필요한 GET도 WebView fetch의
     // CORS에 걸릴 수 있어 주문 POST와 같은 통로로 보낸다. 반환 형식은 postSync와 같다.
+    // 실제 전송은 static 코어가 담당해 서비스의 네이티브 섀도우도 같은
+    // 방식(타임아웃·응답 봉투)으로 재사용한다.
     @JavascriptInterface
     public String getSync(final String url, final String headersJson) {
+        return getSyncRaw(url, headersJson);
+    }
+
+    static String getSyncRaw(final String url, final String headersJson) {
         int status = 0;
         String body = "";
         String error = null;
@@ -299,7 +305,7 @@ public class Bridge {
     // 프로세스 단위 static 락이라 서비스·액티비티의 Bridge 인스턴스가 공유한다.
     private static final Object SECRET_KEY_LOCK = new Object();
 
-    private SecretKey secretKey() throws Exception {
+    private static SecretKey secretKey() throws Exception {
         synchronized (SECRET_KEY_LOCK) {
             KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
             ks.load(null);
@@ -336,6 +342,11 @@ public class Bridge {
 
     @JavascriptInterface
     public String decryptSecret(final String encoded) {
+        return decryptSecretText(encoded);
+    }
+
+    // 복호화 코어 — 서비스의 네이티브 섀도우가 저장된 creds를 풀 때도 쓴다.
+    static String decryptSecretText(final String encoded) {
         try {
             byte[] raw = Base64.decode(encoded, Base64.NO_WRAP);
             if (raw.length <= 12) return null;
@@ -348,5 +359,69 @@ public class Bridge {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    // ── 네이티브 섀도우용 미러 ──────────────────────────────────────
+    // 섀도우 스냅샷(읽기 전용 대조)은 WebView localStorage에 접근할 수
+    // 없어, JS가 boot/link 시점에 funder와 creds 암호문을 네이티브
+    // 미러(bm_engine)에도 남긴다. creds는 암호문 그대로만 보관하고
+    // 복호화는 조회 시점에만 한다 — 평문을 prefs에 두지 않는다.
+
+    @JavascriptInterface
+    public void setFunderMirror(final String funder) {
+        EngineService.setFunder(ctx, funder);
+    }
+
+    // eoa는 L2 헤더의 POLY_ADDRESS용 공개 주소, cipher는 localStorage의
+    // bm_creds 원문("enc1:" 접두사 포함 가능). 형식이 아니면 미러를 비운다.
+    @JavascriptInterface
+    public void setCredsMirror(final String eoa, final String cipher) {
+        EngineService.setEoa(ctx, eoa);
+        EngineService.setCredsCipher(ctx, cipher);
+    }
+
+    /** 섀도우가 쓰는 자격증명 — 복호화된 값은 이 객체 안에서만 산다. */
+    public static final class Creds {
+        public final String eoa;
+        public final String key;
+        public final String secret;
+        public final String passphrase;
+
+        Creds(String eoa, String key, String secret, String passphrase) {
+            this.eoa = eoa;
+            this.key = key;
+            this.secret = secret;
+            this.passphrase = passphrase;
+        }
+    }
+
+    // 미러된 creds 암호문을 복호화해 돌려준다. 미러가 없거나 복호화·형식이
+    // 실패하면 null — 섀도우는 그 회차를 오류로 기록하고 건너뛴다.
+    static Creds loadShadowCreds(Context ctx) {
+        String eoa = EngineService.getEoa(ctx);
+        String cipher = EngineService.getCredsCipher(ctx);
+        if (eoa == null || cipher == null) return null;
+        String plain = cipher.startsWith(SECRET_PREFIX)
+                ? decryptSecretText(cipher.substring(SECRET_PREFIX.length()))
+                : cipher; // 마이그레이션 전 레거시 평문 (JS readSecret와 같은 취급)
+        if (plain == null) return null;
+        try {
+            JSONObject o = new JSONObject(plain);
+            String key = o.optString("key", "");
+            String secret = o.optString("secret", "");
+            String passphrase = o.optString("passphrase", "");
+            if (key.isEmpty() || secret.isEmpty() || passphrase.isEmpty()) return null;
+            return new Creds(eoa, key, secret, passphrase);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static final String SECRET_PREFIX = "enc1:";
+
+    // 뷰어 표시용 섀도우 대조 상태 (bm_shadow prefs의 JSON 그대로).
+    @JavascriptInterface
+    public String getShadowStatus() {
+        return EngineService.getShadowStatusJson(ctx);
     }
 }

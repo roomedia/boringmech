@@ -44,6 +44,13 @@ public class EngineService extends Service {
     private static final String KEY_WD_RELOADS = "wd_reloads";
     private static final String KEY_SNAP_CACHE = "snap_cache";
     private static final String KEY_SUBMIT_IN_FLIGHT = "submit_in_flight";
+    // 네이티브 섀도우용 미러 — JS boot/link가 남긴다 (Bridge.setFunderMirror 등)
+    private static final String KEY_FUNDER = "funder";
+    private static final String KEY_EOA = "eoa";
+    private static final String KEY_CREDS_CIPHER = "creds_cipher";
+    // 섀도우 대조 누적 기록은 별도 prefs 파일에 둔다
+    private static final String SHADOW_PREFS = "bm_shadow";
+    private static final long SHADOW_PERIOD_MS = 60_000;
     private static final String CHANNEL_ID = "bm_engine";
     private static final int NOTIFICATION_ID = 1;
 
@@ -60,6 +67,8 @@ public class EngineService extends Service {
     private Handler handler;
     private BroadcastReceiver reloadReceiver;
     private BroadcastReceiver downloadReceiver;
+    private Thread shadowThread;
+    private volatile boolean shadowRunning;
 
     private final Runnable watchdogTick = new Runnable() {
         @Override
@@ -127,6 +136,108 @@ public class EngineService extends Service {
         return prefs(ctx).getString(KEY_SNAP_CACHE, null);
     }
 
+    // ── 섀도우 미러 ── 주소 형식이 아니면 미러를 비운다 — 손상된 값을
+    // 그대로 쓰면 섀도우 조회가 엉뚱한 대상을 향한다 (JS boot의 검증과 동일).
+    private static final java.util.regex.Pattern ADDRESS_RE =
+            java.util.regex.Pattern.compile("^0x[0-9a-fA-F]{40}$");
+
+    static void setFunder(Context ctx, String funder) {
+        SharedPreferences.Editor e = prefs(ctx).edit();
+        if (funder != null && ADDRESS_RE.matcher(funder).matches()) {
+            e.putString(KEY_FUNDER, funder);
+        } else {
+            e.remove(KEY_FUNDER);
+        }
+        e.apply();
+    }
+
+    static String getFunder(Context ctx) {
+        return prefs(ctx).getString(KEY_FUNDER, null);
+    }
+
+    static void setEoa(Context ctx, String eoa) {
+        SharedPreferences.Editor e = prefs(ctx).edit();
+        if (eoa != null && ADDRESS_RE.matcher(eoa).matches()) {
+            e.putString(KEY_EOA, eoa);
+        } else {
+            e.remove(KEY_EOA);
+        }
+        e.apply();
+    }
+
+    static String getEoa(Context ctx) {
+        return prefs(ctx).getString(KEY_EOA, null);
+    }
+
+    static void setCredsCipher(Context ctx, String cipher) {
+        SharedPreferences.Editor e = prefs(ctx).edit();
+        if (cipher != null && !cipher.isEmpty()) {
+            e.putString(KEY_CREDS_CIPHER, cipher);
+        } else {
+            e.remove(KEY_CREDS_CIPHER);
+        }
+        e.apply();
+    }
+
+    static String getCredsCipher(Context ctx) {
+        return prefs(ctx).getString(KEY_CREDS_CIPHER, null);
+    }
+
+    // ── 섀도우 대조 기록 (bm_shadow) ──
+    private static SharedPreferences shadowPrefs(Context ctx) {
+        return ctx.getSharedPreferences(SHADOW_PREFS, MODE_PRIVATE);
+    }
+
+    /** 섀도우 1회 완료 기록 — runs는 항상, matches는 일치했을 때만 오른다. */
+    static void recordShadowRun(Context ctx, boolean matched, String diffJson) {
+        SharedPreferences p = shadowPrefs(ctx);
+        SharedPreferences.Editor e = p.edit()
+                .putInt("runs", p.getInt("runs", 0) + 1)
+                .putLong("lastRunMs", System.currentTimeMillis())
+                .putString("lastDiff", diffJson != null ? diffJson : "")
+                .remove("lastError");
+        if (matched) {
+            e.putInt("matches", p.getInt("matches", 0) + 1);
+        }
+        e.apply();
+    }
+
+    /** 섀도우 1회 실패 기록 — runs에 세고 사유를 남긴다. */
+    static void recordShadowError(Context ctx, String message) {
+        SharedPreferences p = shadowPrefs(ctx);
+        p.edit()
+                .putInt("runs", p.getInt("runs", 0) + 1)
+                .putLong("lastRunMs", System.currentTimeMillis())
+                .putString("lastError", message != null ? message : "unknown")
+                .apply();
+    }
+
+    /** 기록 단계 자체가 깨졌을 때의 최후 통지 — 카운터는 건드리지 않는다. */
+    static void noteShadowCrash(Context ctx, String message) {
+        try {
+            shadowPrefs(ctx).edit()
+                    .putString("lastError", "shadow crash: " + message)
+                    .apply();
+        } catch (Exception ignored) {
+        }
+    }
+
+    static String getShadowStatusJson(Context ctx) {
+        SharedPreferences p = shadowPrefs(ctx);
+        try {
+            org.json.JSONObject o = new org.json.JSONObject();
+            o.put("runs", p.getInt("runs", 0));
+            o.put("matches", p.getInt("matches", 0));
+            o.put("lastDiff", p.getString("lastDiff", ""));
+            o.put("lastRunMs", p.getLong("lastRunMs", 0));
+            String err = p.getString("lastError", null);
+            if (err != null) o.put("lastError", err);
+            return o.toString();
+        } catch (Exception e) {
+            return "{\"runs\":0,\"matches\":0,\"lastDiff\":\"\",\"lastRunMs\":0}";
+        }
+    }
+
     private static SharedPreferences prefs(Context ctx) {
         return ctx.getSharedPreferences(PREFS, MODE_PRIVATE);
     }
@@ -172,6 +283,34 @@ public class EngineService extends Service {
         } else {
             registerReceiver(downloadReceiver, dlFilter);
         }
+
+        startShadowLoop();
+    }
+
+    // 네이티브 섀도우 루프 — 실행 의도가 켜져 있을 때만 60초 주기로
+    // 읽기 전용 스냅샷을 만들어 JS 스냅샷과 대조한다. 별도 스레드에서
+    // 돌고, 어떤 실패도 워치독·엔진 본체에 닿지 않게 여기서 전부 삼킨다.
+    private void startShadowLoop() {
+        if (shadowThread != null) return;
+        shadowRunning = true;
+        shadowThread = new Thread(() -> {
+            while (shadowRunning) {
+                try {
+                    Thread.sleep(SHADOW_PERIOD_MS);
+                } catch (InterruptedException e) {
+                    break;
+                }
+                if (!shadowRunning) break;
+                if (!getRunIntent(EngineService.this)) continue;
+                try {
+                    ShadowSnapshot.runOnce(EngineService.this);
+                } catch (Throwable t) {
+                    noteShadowCrash(EngineService.this, String.valueOf(t));
+                }
+            }
+        }, "bm-shadow");
+        shadowThread.setDaemon(true);
+        shadowThread.start();
     }
 
     @Override
@@ -304,6 +443,11 @@ public class EngineService extends Service {
 
     @Override
     public void onDestroy() {
+        shadowRunning = false;
+        if (shadowThread != null) {
+            shadowThread.interrupt();
+            shadowThread = null;
+        }
         if (handler != null) {
             handler.removeCallbacks(watchdogTick);
         }

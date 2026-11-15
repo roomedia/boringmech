@@ -100,6 +100,7 @@
       </div>
       <div class="row" style="margin-top:8px"><span class="k">서명 지갑 (EOA)</span><span class="v addr" id="eoaAddr">—</span></div>
       <div class="row"><span class="k">deposit wallet</span><span class="v addr" id="funderAddr">—</span></div>
+      <div class="row"><span class="k">네이티브 섀도우 대조</span><span class="v" id="shadowState">—</span></div>
       <div class="stack" style="margin-top:12px">
         <button class="btn ghost" id="btnUnlink">연동 해제</button>
       </div>
@@ -322,6 +323,25 @@
       $('relayerSaved').classList.toggle('hidden', !has);
     }
 
+    // 네이티브 섀도우 대조 상태 — 실행 횟수·일치 횟수와 최근 불일치 필드만 작게.
+    function renderShadow(){
+      var el = $('shadowState');
+      if (!el) return;
+      var s = null;
+      try { s = JSON.parse(AndroidBridge.getShadowStatus()); } catch (e) {}
+      if (!s || !s.runs) { el.textContent = '대기 중'; return; }
+      var text = s.runs + '회 중 ' + s.matches + '회 일치';
+      if (s.lastError) {
+        text += ' · 최근 오류: ' + String(s.lastError).slice(0, 60);
+      } else if (s.lastDiff) {
+        try {
+          var fields = Object.keys(JSON.parse(s.lastDiff));
+          if (fields.length) text += ' · 최근 불일치: ' + fields.join(', ');
+        } catch (e) {}
+      }
+      el.textContent = text;
+    }
+
     // 뷰어에서 연동할 때 도는 업데이트 확인 결과도 엔진과 같은 저장소에 남긴다
     BM.onUpdate = function(info){
       try { localStorage.setItem('bm_update', JSON.stringify(info)); } catch (e) {}
@@ -364,6 +384,7 @@
       renderLogs();
       renderUpdate();
       renderRelayer();
+      renderShadow();
     }
 
     $('btnUpdate').addEventListener('click', function(){
