@@ -268,8 +268,9 @@ function realizedOf(kind, p) {
 // 수량 current_size, 평균 진입가 avg_price, 현재 가치 current_value.
 // 등락 %는 보유(OPEN) 행만으로 (현재가치 합 − 진입원가 합) / 진입원가 합.
 // 정산 승패는 행의 status 값으로 가르지 않는다 — 상환 가능 패자 행도 status가
-// REDEEMABLE로 보존되므로(문서 명시), 조회 필터 결과로만 가른다
-// (status=REDEEMABLE 조회 = 승, status=REDEEMABLE_LOST 조회 = 패).
+// REDEEMABLE로 보존되고 REDEEMABLE·REDEEMABLE_LOST 양쪽 조회에 동시에
+// 잡히므로(2026-11-15 실측), REDEEMABLE 조회분은 행 필드(judgeClosedRow)로
+// 검증해 가르고 REDEEMABLE_LOST 조회분만 출처 그대로 패로 본다.
 // CLOSED 조회분은 행 필드로 판정한다(judgeClosedRow — 2026-11-14 사용자 결정으로
 // 정산 완료 집계에 포함). 세 목록의 합집합은 positionKey로 중복을 제거한다 —
 // 상태 전이 타이밍에 같은 포지션이 두 목록에 걸려도 한 번만 센다.
@@ -308,11 +309,20 @@ export function summarizeBook(allRows, winRows, lostRows, closedRows, stopLossRe
       for (const p of rows) {
         const key = positionKey(p) ?? `u:${seq++}`;
         if (!entries.has(key)) {
-          entries.set(key, { verdict: verdictOf(p), pnl: realizedOf(kind, p), kind });
+          const verdict = verdictOf(p);
+          // 실현손익 종류는 REDEEMABLE 조회분에 한해 확정 판정을 따른다 —
+          // 그 조회에 섞인 패자 행이 승 종류로 계산되지 않게. CLOSED 행은
+          // 종전대로 realized_pnl 기준(closed 종류)을 유지한다.
+          const kindOf =
+            kind === "win" && (verdict === "win" || verdict === "loss") ? verdict : kind;
+          entries.set(key, { verdict, pnl: realizedOf(kindOf, p), kind });
         }
       }
     };
-    add(winRows, "win", () => "win");
+    // 패자 행도 REDEEMABLE 조회에 함께 잡힌다 (2026-11-15 실측: 0원 확정
+    // 2건이 REDEEMABLE·REDEEMABLE_LOST 양쪽에 동시 존재). 조회 출처만으로
+    // 승 고정하면 패가 승으로 오분류되므로 행 필드로 검증한다.
+    add(winRows, "win", (p) => judgeClosedRow(p) ?? "win");
     add(lostRows, "loss", () => "loss");
     for (const r of stopLossRecords || []) {
       if (!r || typeof r.token_id !== "string" || !r.token_id) continue;

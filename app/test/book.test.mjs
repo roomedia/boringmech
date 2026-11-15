@@ -104,6 +104,19 @@ eq(
   "redeemable-only regression",
 );
 
+// 1b. REDEEMABLE 조회에 섞인 패자 행 — current_price 0이면 패로 분류하고
+// 실현손익도 패 종류(-진입원가)로 계산한다 (2026-11-15 LoL 0원 2건 실측)
+{
+  const loserInWinQuery = row({
+    token_id: "LX1", status: "REDEEMABLE", current_price: 0,
+    current_value: 0, entry_cost_usdc: 5.09, realized_pnl: -5.09,
+  });
+  const book = summarizeBook([], [loserInWinQuery], [loserInWinQuery], []);
+  eq([book.settledCount, book.settledWins, book.settledLosses], [1, 0, 1],
+    "redeemable loser classified as loss, not win");
+  eq(book.settledRealizedPnl, -5.09, "redeemable loser realized as -cost");
+}
+
 // 2. 우리 지갑 실측 예상값: 정산 완료 1건 · 1승 0패
 eq(settled(summarizeBook([], [], [], [closedWinLive])), [1, 1, 0], "live wallet closed win");
 
