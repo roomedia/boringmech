@@ -1,2 +1,55 @@
 universe=1076 targets=1076
   200/1076 markets=138
+  400/1076 markets=259
+  600/1076 markets=390
+  800/1076 markets=504
+  1000/1076 markets=618
+{
+ "markets": 661,
+ "A_permanent_ban": {
+  "n": 213,
+  "win_rate": 0.6948,
+  "avg_net": 5.54,
+  "total_net": 1180.47
+ },
+ "B_all": {
+  "n": 311,
+  "win_rate": 0.6399,
+  "avg_net": 3.6,
+  "total_net": 1119.51
+ },
+ "B_first_entries": {
+  "n": 213,
+  "win_rate": 0.6948,
+  "avg_net": 5.54,
+  "total_net": 1180.47
+ },
+ "B_reentries": {
+  "n": 98,
+  "win_rate": 0.5204,
+  "avg_net": -0.62,
+  "total_net": -60.96
+ },
+ "B_reentry_by_no": {
+  "2": {
+   "n": 62,
+   "win_rate": 0.5645,
+   "avg_net": 6.18,
+   "total_net": 382.95
+  },
+  "3": {
+   "n": 23,
+   "win_rate": 0.4348,
+   "avg_net": -10.94,
+   "total_net": -251.68
+  },
+  "4": {
+   "n": 13,
+   "win_rate": 0.4615,
+   "avg_net": -14.79,
+   "total_net": -192.23
+  }
+ },
+ "stops_A": 65,
+ "stops_B": 112
+}
