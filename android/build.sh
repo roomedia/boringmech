@@ -9,7 +9,7 @@ BT="$ANDROID_HOME/build-tools/34.0.0"
 JAR="$ANDROID_HOME/platforms/android-34/android.jar"
 OUT=build
 APP=../app/index.html
-APK=boringmech-v0.3.25.apk
+APK=boringmech-v0.3.26.apk
 KS=keystore.jks
 KS_PASS="${KEYSTORE_PASS:-boringmech}"
 
@@ -25,11 +25,15 @@ cp ../app/engine.js "$OUT/assets/engine.js"
   -A "$OUT/assets" \
   --java "$OUT/gen" \
   --min-sdk-version 26 --target-sdk-version 34 \
-  --version-code 28 --version-name 0.3.25
+  --version-code 29 --version-name 0.3.26
 
 find src "$OUT/gen" -name '*.java' > "$OUT/sources.txt"
 javac -encoding UTF-8 -cp "$JAR:libs/bcprov-jdk18on-1.78.1.jar" -d "$OUT/classes" @"$OUT/sources.txt"
-"$BT/d8" --output "$OUT/dex" $(find "$OUT/classes" -name '*.class') libs/bcprov-jdk18on-1.78.1.jar
+# R8로 축소·dexing한다 (Bouncy Castle 전체를 넣으면 dex가 4.4MB가 된다.
+# keep.pro로 앱 패키지 이름·멤버를 보존하고 나머지는 도달 가능성으로 줄인다.)
+java -cp "$BT/lib/d8.jar" com.android.tools.r8.R8 --release --min-api 26 \
+  --lib "$JAR" --pg-conf keep.pro --output "$OUT/dex" \
+  $(find "$OUT/classes" -name '*.class') libs/bcprov-jdk18on-1.78.1.jar
 cp "$OUT/unsigned.apk" "$OUT/with-dex.apk"
 (cd "$OUT/dex" && zip -q ../with-dex.apk classes.dex)
 
