@@ -13,7 +13,7 @@ The measured record below is paper trading. A live executor is included under `l
 ## The record so far (forward paper, since 2026-10-30)
 
 <!-- AUTO:stats_en -->
-Paper $10,000 → **$10,304.46** (snapshot 2026-11-16 14:26 KST, auto-updated) · 47 settled, **38 wins**, settled **ROI +13.5%** · avg entry 71.7¢ vs actual win rate 80.9% (calibration gap +9.1pp)
+Paper $10,000 → **$10,294.42** (snapshot 2026-11-16 15:11 KST, auto-updated) · 47 settled, **38 wins**, settled **ROI +13.5%** · avg entry 71.7¢ vs actual win rate 80.9% (calibration gap +9.1pp)
 <!-- /AUTO:stats_en -->
 
 - By entry band (settled): the 0.60–0.70 band was the only loser in the first evaluation (−8.9%); 0.70–0.80 returned +20.4% and 0.80–0.90 +25.1%. Live numbers in [RESULTS.md](RESULTS.md).
@@ -102,7 +102,7 @@ boringmech는 매수 전에 뉴스를 검증하는 판단 기반 자매 전략(`
 ### 핵심 발견 (포워드 페이퍼 실측, 2026-10-30 개시)
 
 <!-- AUTO:stats -->
-가상 $10,000 → **$10,304.46** (2026-11-16 14:26 KST 스냅샷, 자동 갱신) · 정산 47건 중 **38승**, 정산분 **ROI +13.5%**, 평균 진입가 71.7¢ vs 실제 승률 80.9% (캘리브레이션 괴리 +9.1pp)
+가상 $10,000 → **$10,294.42** (2026-11-16 15:11 KST 스냅샷, 자동 갱신) · 정산 47건 중 **38승**, 정산분 **ROI +13.5%**, 평균 진입가 71.7¢ vs 실제 승률 80.9% (캘리브레이션 괴리 +9.1pp)
 <!-- /AUTO:stats -->
 
 - 진입가 구간별 (1차 평가): 0.60–0.70만 손실 (−8.9%), 0.70–0.80 +20.4%, 0.80–0.90 +25.1%. 최신 수치는 [RESULTS.md](RESULTS.md).
