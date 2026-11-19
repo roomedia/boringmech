@@ -225,7 +225,9 @@ public final class StopLoss {
 
     /**
      * recordStopLoss의 순수 목록 연산 — 최근 RECENT_CAP건은 전체 기록을
-     * 유지하고, 밀려난 건은 {token_id, realized_pnl}만 아카이브로 옮긴다.
+     * 유지하고, 밀려난 건은 {token_id, slug, realized_pnl}만 아카이브로
+     * 옮긴다. slug는 재매수 차단 집합(stopLossSlugs)의 근거라 아카이브에서도
+     * 보존한다 (write/StopLossLedger·JS 원본과 동일, v0.3.33 감사).
      * 아카이브는 ARCHIVE_CAP건에서 뒤쪽만 남긴다.
      */
     public static Ledger appendRecord(List<Object> recentIn, List<Object> archiveIn, Object rec) {
@@ -236,6 +238,7 @@ public final class StopLoss {
             Object old = recent.remove(0);
             Map<String, Object> slim = new java.util.LinkedHashMap<>();
             slim.put("token_id", Js.field(old, "token_id"));
+            slim.put("slug", Js.field(old, "slug"));
             slim.put("realized_pnl", Js.num(Js.field(old, "realized_pnl")));
             archive.add(slim);
         }

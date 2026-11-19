@@ -60,6 +60,7 @@ const {
   stopLossRecords,
   recordStopLoss,
   STOPLOSS_RECENT_CAP,
+  isOpenRow,
 } = await import("../src/engine.js");
 const { decodeFunctionData, parseAbi } = await import("viem");
 const { readFileSync } = await import("node:fs");
@@ -1058,6 +1059,131 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   eq(boughtCorrupted(), true, "audit: non-array json is corrupted");
   store.delete("bm_bought");
   eq(boughtCorrupted(), false, "audit: missing bought is not corrupted");
+}
+
+// 39. 종목 목록 캐시 가드 — 스냅샷 캐시를 거쳐도 positions가 살아남는다
+// (v0.3.31~32 실기기 결함: snapshotFromCache가 positions를 버려 뷰어의
+// 보유 종목 카드·수동 매도가 어떤 버전에서도 뜰 수 없었다)
+{
+  const row = {
+    slug: "will-btc-hit-100k",
+    token_id: "tok-yes-1",
+    title: "Will BTC hit 100k?",
+    outcome: "Yes",
+    avg_price: 0.72,
+    current_price: 0.81,
+    current_size: 6.94,
+    current_value: 5.62,
+    fee_rate: 0.04,
+  };
+  // ① 네이티브가 쓴 캐시 원문(JSON)을 파서가 그대로 통과시킨다
+  const fromNative = snapshotFromCache(
+    JSON.stringify({ cash: 12.5, equity: 40.1, openCount: 1, positions: [row] }),
+  );
+  eq(fromNative.positions.length, 1, "positions: parsed cache keeps rows");
+  eq(fromNative.positions[0].slug, "will-btc-hit-100k", "positions: slug kept");
+  eq(fromNative.positions[0].token_id, "tok-yes-1", "positions: token_id kept (sell path)");
+  eq(fromNative.positions[0].title, "Will BTC hit 100k?", "positions: title kept");
+  eq(fromNative.positions[0].outcome, "Yes", "positions: outcome kept");
+  eq(fromNative.positions[0].avg_price, 0.72, "positions: avg_price kept");
+  eq(fromNative.positions[0].current_price, 0.81, "positions: current_price kept");
+  eq(fromNative.positions[0].current_size, 6.94, "positions: current_size kept");
+  eq(fromNative.positions[0].current_value, 5.62, "positions: current_value kept");
+  eq(fromNative.positions[0].fee_rate, 0.04, "positions: fee_rate kept");
+
+  // 라운드트립 — 기록(snapshotCacheOf)도 읽기도 positions를 유지한다
+  const roundTrip = snapshotFromCache(
+    JSON.stringify(
+      snapshotCacheOf({
+        cash: 12.5, positionsValue: 27.6, equity: 40.1, openCount: 1,
+        settledCount: 0, settledWins: 0, settledLosses: 0,
+        settledRealizedPnl: 0, positionsPnlPct: 1.2,
+        heldSlugs: new Set(["will-btc-hit-100k"]),
+        cashFloor: 12.03, available: 0, bet: 5, slots: 0,
+        positions: [row],
+      }),
+    ),
+  );
+  eq(roundTrip.positions.length, 1, "positions: round trip keeps rows");
+  eq(roundTrip.positions[0].token_id, "tok-yes-1", "positions: round trip token_id");
+
+  // ② positions 없는 옛 캐시는 빈 배열로 안전하게 떨어진다
+  const legacy = snapshotFromCache('{"cash":10,"equity":10}');
+  eq(Array.isArray(legacy.positions), true, "positions: missing field is array");
+  eq(legacy.positions.length, 0, "positions: missing field is empty");
+
+  // 형식이 깨진 행은 제외하고, 깨진 숫자는 null로 떨어진다
+  const messy = snapshotFromCache(
+    JSON.stringify({
+      cash: 10, equity: 10,
+      positions: [
+        null, "junk", 42, [1, 2], {},
+        { outcome: "Yes" },
+        { slug: "ok-mkt", token_id: "t2", avg_price: "0.7", current_size: null },
+      ],
+    }),
+  );
+  eq(messy.positions.length, 1, "positions: malformed rows dropped");
+  eq(messy.positions[0].slug, "ok-mkt", "positions: surviving row slug");
+  eq(messy.positions[0].title, "ok-mkt", "positions: title falls back to slug");
+  eq(messy.positions[0].avg_price, null, "positions: non-numeric price is null");
+  eq(messy.positions[0].current_size, null, "positions: null size stays null");
+
+  // ③ 뷰어 구조 가드 — posCard는 처음부터 숨김이 아니고, renderPositions는
+  // 카드를 숨기지 않으며 빈 상태를 표시한다
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  eq(html.includes('<div class="card" id="posCard">'), true, "positions: card not hidden initially");
+  const renderSrc = html.slice(html.indexOf("function renderPositions"));
+  const renderBody = renderSrc.slice(0, renderSrc.indexOf("\n    function "));
+  eq(renderBody.includes("card.classList.add('hidden')"), false, "positions: render never hides card");
+  eq(renderBody.includes("보유 종목 없음"), true, "positions: render shows empty state");
+  eq(renderBody.includes("openSellPopup(p)"), true, "positions: sell button wired per row");
+}
+
+// 40. open 판정 패리티 가드 — JS snapshot()·폴백이 장부와 같은 단일 기준을
+// 쓴다 (v0.3.33 감사: 종전에는 status === "OPEN" 필터라 status 없는 보유
+// 행이 종목 목록·손절 대상에서 빠졌다)
+{
+  eq(isOpenRow({ status: "OPEN", current_size: 0 }), true, "open: OPEN status");
+  eq(isOpenRow({ current_size: 5 }), true, "open: no status with size");
+  eq(isOpenRow({ status: "", current_size: 5 }), true, "open: empty status with size");
+  eq(isOpenRow({ current_size: 0 }), false, "open: no status no size");
+  eq(isOpenRow({ current_size: "x" }), false, "open: no status bad size");
+  eq(isOpenRow({ status: "CLOSED", current_size: 5 }), false, "open: CLOSED excluded");
+  eq(isOpenRow({ status: "REDEEMABLE", current_size: 5 }), false, "open: REDEEMABLE excluded");
+  eq(isOpenRow(null), false, "open: null row");
+
+  const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+  eq(src.includes("positions.filter(isOpenRow)"), true, "open: snapshot uses single criterion");
+  eq(src.includes("rows.filter(isOpenRow)"), true, "open: fallback uses single criterion");
+  eq(src.includes('filter((p) => p.status === "OPEN")'), false, "open: legacy filter gone");
+  const snapSrc = src.slice(src.indexOf("async function snapshot()"), src.indexOf("async function verifyCandidate"));
+  eq(snapSrc.includes("positions: openRows.map"), true, "open: snapshot fills snap.positions");
+}
+
+// 41. 수동 매도 장부 주입 가드 — 수동 매도로 청산된 토큰은 CLOSED 행의
+// 최종가가 아니라 실제 매도 실현손익으로 집계되고 손절 건수에는 안 잡힌다
+// (v0.3.33 감사: bm_manual_sell이 쓰기만 되고 읽히지 않던 결함)
+{
+  const closedRow = {
+    token_id: "mtok", slug: "m-mkt", status: "CLOSED",
+    current_price: 1, current_size: 0, current_value: 0, realized_pnl: 2.5,
+  };
+  const withManual = summarizeBook(
+    [], [], [], [closedRow], [], new Set(),
+    [{ token_id: "mtok", slug: "m-mkt", realized_pnl: -2 }],
+  );
+  eq(withManual.settledCount, 1, "manual-book: settled count");
+  eq(withManual.settledLosses, 1, "manual-book: judged by sell pnl");
+  eq(withManual.settledWins, 0, "manual-book: final price does not flip to win");
+  eq(withManual.settledRealizedPnl, -2, "manual-book: realized is sell value");
+  eq(withManual.settledStopLoss, 0, "manual-book: not counted as stop loss");
+  const withoutManual = summarizeBook([], [], [], [closedRow], [], new Set());
+  eq(withoutManual.settledWins, 1, "manual-book: baseline judges by final price");
+
+  const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+  eq(src.includes("manualSellRecords()"), true, "manual-book: snapshot wires records");
+  eq(src.includes("manualSellAttemptedTokens()"), true, "manual-book: snapshot wires attempted");
 }
 
 console.log(`book tests: ${passed} passed, ${failed} failed`);

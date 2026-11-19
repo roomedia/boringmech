@@ -89,7 +89,8 @@ final class ShadowSnapshot {
 
         PositionBook.Book book = PositionBook.summarizeBook(
                 positions, winRows, lostRows, closedRows,
-                stopLossRecords(ctx), stopLossAttemptedTokens(ctx));
+                stopLossRecords(ctx), manualSellRecords(ctx),
+                mergedAttemptedTokens(ctx));
         PositionBook.Sizing sizing = PositionBook.sizing(cash, equity, book.openCount);
 
         JSONObject diff = compare(ctx, cash, positionsValue, equity, book, sizing);
@@ -188,8 +189,22 @@ final class ShadowSnapshot {
     }
 
     private static Set<Object> stopLossAttemptedTokens(Context ctx) {
+        return parseTokenList(durable(ctx, "bm_stoploss_attempted"));
+    }
+
+    // 수동 매도 원장·시도 토큰 — NativeCycle 집계와 같은 입력으로 대조한다.
+    private static List<Object> manualSellRecords(Context ctx) {
+        return parseStopLossList(durable(ctx, "bm_manual_sell"));
+    }
+
+    private static Set<Object> mergedAttemptedTokens(Context ctx) {
+        Set<Object> out = stopLossAttemptedTokens(ctx);
+        out.addAll(parseTokenList(durable(ctx, "bm_manual_sell_attempted")));
+        return out;
+    }
+
+    private static Set<Object> parseTokenList(String raw) {
         Set<Object> out = new HashSet<>();
-        String raw = durable(ctx, "bm_stoploss_attempted");
         if (raw == null) {
             return out;
         }

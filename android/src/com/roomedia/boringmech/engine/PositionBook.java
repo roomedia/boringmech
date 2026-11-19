@@ -192,6 +192,24 @@ public final class PositionBook {
             List<Object> closedRows,
             List<Object> stopLossRecords,
             Set<Object> attemptedTokens) {
+        return summarizeBook(allRows, winRows, lostRows, closedRows,
+                stopLossRecords, null, attemptedTokens);
+    }
+
+    /**
+     * manualSellRecords — 수동 매도 원장 기록. 손절 기록과 같은 우선순위로
+     * 집계에 먼저 들어가되 kind가 달라 settledStopLoss에는 세지 않는다.
+     * 기록이 없으면 수동 매도로 청산된 토큰이 CLOSED 행의 최종가로 잘못
+     * 가려지고 실현손익도 실제 회수액과 어긋난다 (v0.3.33 감사).
+     */
+    public static Book summarizeBook(
+            List<Object> allRows,
+            List<Object> winRows,
+            List<Object> lostRows,
+            List<Object> closedRows,
+            List<Object> stopLossRecords,
+            List<Object> manualSellRecords,
+            Set<Object> attemptedTokens) {
         Set<Object> attempted = attemptedTokens != null ? attemptedTokens : Set.of();
         Book book = new Book();
 
@@ -254,6 +272,27 @@ public final class PositionBook {
                     boolean known = Double.isFinite(rp);
                     String verdict = known ? (rp > 0 ? "win" : rp < 0 ? "loss" : null) : null;
                     entries.put(key, new Entry(verdict, known ? rp : null, "stoploss"));
+                }
+            }
+            // 수동 매도 기록도 조회 목록보다 먼저다 — 실제 매도 실현손익으로
+            // 가르고, 손절 건수에는 넣지 않는다 (kind "manual").
+            if (manualSellRecords != null) {
+                for (Object r : manualSellRecords) {
+                    if (!Js.truthy(r)) {
+                        continue;
+                    }
+                    Object tokenId = Js.field(r, "token_id");
+                    if (!(tokenId instanceof String) || ((String) tokenId).isEmpty()) {
+                        continue;
+                    }
+                    String key = "t:" + tokenId;
+                    if (entries.containsKey(key)) {
+                        continue;
+                    }
+                    double rp = Js.fieldNum(r, "realized_pnl");
+                    boolean known = Double.isFinite(rp);
+                    String verdict = known ? (rp > 0 ? "win" : rp < 0 ? "loss" : null) : null;
+                    entries.put(key, new Entry(verdict, known ? rp : null, "manual"));
                 }
             }
             // REDEEMABLE 조회분은 행 필드로 검증해 가르고, 못 가릴 때만 출처 폴백.

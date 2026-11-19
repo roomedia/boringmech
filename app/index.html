@@ -93,9 +93,9 @@
       <div class="row"><span class="k">정산 완료</span><span class="v" id="settledCount">—</span></div>
     </div>
 
-    <div class="card hidden" id="posCard">
+    <div class="card" id="posCard">
       <h2>보유 종목</h2>
-      <div id="posList"></div>
+      <div id="posList"><div class="note">보유 종목 없음</div></div>
     </div>
 
     <div class="card">
@@ -376,13 +376,17 @@
       var card = $('posCard');
       var list = $('posList');
       var rows = snap && Array.isArray(snap.positions) ? snap.positions : null;
-      if (!rows || !rows.length){
-        card.classList.add('hidden');
-        list.textContent = '';
-        return;
-      }
+      // 카드는 항상 보인다 — 보유가 없을 때도 "없음"을 표시해야
+      // 수동 매도 진입점이 데이터 상태에 따라 사라지지 않는다.
       card.classList.remove('hidden');
       list.textContent = '';
+      if (!rows || !rows.length){
+        var empty = document.createElement('div');
+        empty.className = 'note';
+        empty.textContent = '보유 종목 없음';
+        list.appendChild(empty);
+        return;
+      }
       rows.forEach(function(p){
         var box = document.createElement('div');
         box.className = 'pos';

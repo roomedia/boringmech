@@ -419,7 +419,7 @@ public class Golden3Test {
         check("ledger.cap.evictedSlim",
                 "tok-0".equals(Js.field(evicted, "token_id"))
                         && Js.fieldNum(evicted, "realized_pnl") == 0
-                        && Js.field(evicted, "slug") == Js.UNDEFINED,
+                        && "m-0".equals(Js.field(evicted, "slug")),
                 String.valueOf(evicted));
         check("ledger.cap.firstKept",
                 "tok-1".equals(Js.field(ledger.recent.get(0), "token_id")),

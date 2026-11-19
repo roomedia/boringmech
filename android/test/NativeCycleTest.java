@@ -488,6 +488,41 @@ public class NativeCycleTest {
         check("manual: 이중 제출 없음", t.posts == 1);
     }
 
+    /** 수동 매도 집계 가드 — 수동 매도로 청산된 토큰은 CLOSED 행의 최종가가
+     *  아니라 실제 매도 실현손익으로 집계되고, 손절 건수에는 안 잡힌다
+     *  (v0.3.33 감사: 원장이 쓰기만 되고 읽히지 않던 결함). */
+    private static void manualSellSettledAggregation() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        manualStage(net);
+        OrderTransport t = new OrderTransport();
+        t.responseBody = "{\"success\":true,\"status\":\"matched\","
+                + "\"makingAmount\":\"10\",\"takingAmount\":\"5.5\","
+                + "\"transactionHashes\":[\"0x123\"]}";
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        env.durable.put("bm_manual_sell_req",
+                "{\"token_id\":\"123456789\",\"slug\":\"test-ms-market\",\"ts\":" + NOW + "}");
+        c.runIteration(1);
+        check("manual-book: 매도 실행", t.posts == 1);
+        // 다음 사이클 — 포지션은 사라지고, 최종가 1.0(승으로 보일) CLOSED
+        // 행만 남는다. 실제 매도는 진입 0.75 → 0.55, 실현 -2.0이다.
+        net.positions = new ArrayList<>();
+        Map<String, Object> closed = manualRow();
+        closed.put("status", "CLOSED");
+        closed.put("current_price", 1.0);
+        closed.put("current_size", 0.0);
+        closed.put("current_value", 0.0);
+        closed.put("realized_pnl", 2.5);
+        net.closedRows = new ArrayList<>(List.of(closed));
+        c.runIteration(1);
+        check("manual-book: 정산 1건", env.snapCache != null
+                && env.snapCache.contains("\"settledCount\":1"));
+        check("manual-book: 실제 매도 기준 패 판정", env.snapCache.contains("\"settledLosses\":1")
+                && env.snapCache.contains("\"settledWins\":0"));
+        check("manual-book: 실현손익은 매도값 -2", env.snapCache.contains("\"settledRealizedPnl\":-2"));
+        check("manual-book: 손절 건수 무오염", env.snapCache.contains("\"settledStopLoss\":0"));
+    }
+
     private static void manualSellStale() {
         FakeEnv env = new FakeEnv();
         FakeNet net = new FakeNet();
@@ -828,6 +863,7 @@ public class NativeCycleTest {
         stopDuringCycle();
         updateCheck();
         manualSellPath();
+        manualSellSettledAggregation();
         manualSellStale();
         manualSellZeroShares();
         manualSellUnknownToken();

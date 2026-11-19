@@ -79,6 +79,8 @@ const LS = {
   redeemClosed: "bm_redeem_closed",
   stage: "bm_stage",
   stopLossAttempted: "bm_stoploss_attempted",
+  manualSell: "bm_manual_sell",
+  manualSellAttempted: "bm_manual_sell_attempted",
 };
 
 // 손절 (2026-11-14 사용자 결정 — 페이퍼 boringmech와 동일 규칙):
@@ -311,18 +313,22 @@ function realizedOf(kind, p) {
 // 먼저 합집합에 넣는다 — 손절로 닫힌 건은 현재가로 승패를 가르지 않고
 // 매도 실현손익 부호로 가르고, 실현도 기록값을 쓴다. 같은 토큰의 CLOSED
 // 행은 dedupe로 걸러져 기록을 덮지 못한다.
-export function summarizeBook(allRows, winRows, lostRows, closedRows, stopLossRecords, attemptedTokens = new Set()) {
-  // open 판정 — status가 "OPEN"인 행이 본체. status가 비어 있는 행은
-  // 종료 상태(REDEEMABLE·CLOSED)가 아니고 수량이 있으면 보유로 본다
-  // (표기 누락 하나로 보유가 장부에서 사라져 중복 매수가 열리는 것 방지).
-  const open = (allRows || []).filter((p) => {
-    if (p.status === "OPEN") return true;
-    if (!p.status) {
-      const size = Number(p.current_size);
-      return Number.isFinite(size) && size > 0;
-    }
-    return false;
-  });
+// open 판정 단일 기준 — 네이티브 PositionBook.isOpenRow와 동일하다.
+// status가 "OPEN"인 행이 본체. status가 비어 있는 행은 종료 상태
+// (REDEEMABLE·CLOSED)가 아니고 수량이 있으면 보유로 본다 (표기 누락
+// 하나로 보유가 장부에서 사라져 중복 매수가 열리는 것 방지).
+export function isOpenRow(p) {
+  if (!p || typeof p !== "object") return false;
+  if (p.status === "OPEN") return true;
+  if (!p.status) {
+    const size = Number(p.current_size);
+    return Number.isFinite(size) && size > 0;
+  }
+  return false;
+}
+
+export function summarizeBook(allRows, winRows, lostRows, closedRows, stopLossRecords, attemptedTokens = new Set(), manualSellRecords = []) {
+  const open = (allRows || []).filter(isOpenRow);
   let value = 0;
   let cost = 0;
   for (const p of open) {
@@ -371,6 +377,20 @@ export function summarizeBook(allRows, winRows, lostRows, closedRows, stopLossRe
         verdict: known ? (rp > 0 ? "win" : rp < 0 ? "loss" : null) : null,
         pnl: known ? rp : null,
         kind: "stoploss",
+      });
+    }
+    // 수동 매도 기록도 조회 목록보다 먼저다 — 실제 매도 실현손익으로
+    // 가르고, 손절 건수에는 넣지 않는다 (kind "manual", v0.3.33 감사).
+    for (const r of manualSellRecords || []) {
+      if (!r || typeof r.token_id !== "string" || !r.token_id) continue;
+      const key = `t:${r.token_id}`;
+      if (entries.has(key)) continue;
+      const rp = Number(r.realized_pnl);
+      const known = Number.isFinite(rp);
+      entries.set(key, {
+        verdict: known ? (rp > 0 ? "win" : rp < 0 ? "loss" : null) : null,
+        pnl: known ? rp : null,
+        kind: "manual",
       });
     }
     // 패자 행도 REDEEMABLE 조회에 함께 잡힌다 (2026-11-15 실측: 0원 확정
@@ -860,6 +880,35 @@ export function bootView(hasKey, runIntent) {
 // 스냅샷 로컬 캐시 — 재진입 시 네트워크 왕복을 기다리지 않고 마지막 숫자를
 // 즉시 표시하기 위한 직렬화 쌍. 핵심 숫자(현금·평가금)가 숫자가 아닌 캐시는
 // 버린다: 깨진 캐시를 그럴듯한 숫자로 보여주는 게 자리표시보다 나쁘다.
+// 보유 종목 행 정규화 — 뷰어 종목 목록·수동 매도가 쓰는 필드만 추리고,
+// 형식이 깨진 행은 버린다. 식별자(slug·title·token_id)가 전혀 없는 행은
+// 표시도 매도도 할 수 없어 제외한다. 숫자는 유한한 값만, 아니면 null.
+function snapshotPositionsOf(rows) {
+  if (!Array.isArray(rows)) return [];
+  const strOrNull = (v) => (typeof v === "string" && v ? v : null);
+  const numOrNull = (v) => (Number.isFinite(v) ? v : null);
+  const out = [];
+  for (const p of rows) {
+    if (!p || typeof p !== "object" || Array.isArray(p)) continue;
+    const slug = strOrNull(p.slug);
+    const title = strOrNull(p.title);
+    const tokenId = strOrNull(p.token_id);
+    if (!slug && !title && !tokenId) continue;
+    out.push({
+      slug,
+      token_id: tokenId,
+      title: title || slug,
+      outcome: strOrNull(p.outcome),
+      avg_price: numOrNull(p.avg_price),
+      current_price: numOrNull(p.current_price),
+      current_size: numOrNull(p.current_size),
+      current_value: numOrNull(p.current_value),
+      fee_rate: numOrNull(p.fee_rate),
+    });
+  }
+  return out;
+}
+
 export function snapshotCacheOf(snap) {
   if (!snap) return null;
   const num = (v) => (Number.isFinite(v) ? v : null);
@@ -879,6 +928,7 @@ export function snapshotCacheOf(snap) {
     available: num(snap.available),
     bet: num(snap.bet),
     slots: num(snap.slots),
+    positions: snapshotPositionsOf(snap.positions),
   };
 }
 
@@ -916,6 +966,9 @@ export function snapshotFromCache(raw) {
     available: numOr(o.available, 0),
     bet: numOr(o.bet, betUsdFor(o.equity)),
     slots: numOr(o.slots, 0),
+    // 종목 목록은 캐시를 거쳐도 살아남아야 한다 — 이 필드를 빠뜨리면
+    // 뷰어가 보유 종목을 영영 못 본다 (v0.3.31~32 실기기 결함).
+    positions: snapshotPositionsOf(o.positions),
   };
 }
 
@@ -952,10 +1005,15 @@ async function snapshot() {
     // 정산 집계를 못 읽으면 settled*는 null로 남아 화면이 미표시한다
   }
   const book = summarizeBook(
-    positions, winRows, lostRows, closedRows, stopLossRecords(), stopLossAttemptedTokens(),
+    positions, winRows, lostRows, closedRows, stopLossRecords(),
+    new Set([...stopLossAttemptedTokens(), ...manualSellAttemptedTokens()]),
+    manualSellRecords(),
   );
   state.lastClosedRows = closedRows;
   const s = sizing(cash, equity, book.openCount);
+  // 종목 목록·손절 대상은 장부와 같은 단일 기준으로 추린다 — status 없는
+  // 보유 행이 목록에서도 손절에서도 빠지지 않게 한다 (네이티브 패리티).
+  const openRows = positions.filter(isOpenRow);
   const snap = {
     cash,
     positionsValue,
@@ -969,10 +1027,11 @@ async function snapshot() {
     positionsPnlPct: book.positionsPnlPct,
     heldSlugs: book.heldSlugs,
     stopLossSlugs: book.stopLossSlugs,
+    positions: openRows.map((p) => snapshotPositionsOf([p])[0]).filter(Boolean),
     ...s,
   };
   state.lastSnapshot = snap;
-  state.lastOpenRows = positions.filter((p) => p.status === "OPEN");
+  state.lastOpenRows = openRows;
   state.lastWinRows = winRows;
   state.lastLostRows = lostRows;
   try {
@@ -1348,6 +1407,21 @@ export function stopLossAttemptedTokens() {
   }
 }
 
+// 수동 매도 원장·시도 토큰 — 네이티브가 쓴 기록을 장부 집계에 반영한다.
+// 기록 형식이 손절과 같아 같은 파싱 필터를 쓴다 (v0.3.33 감사).
+export function manualSellRecords() {
+  return parseStopLossList(durableRead(LS.manualSell));
+}
+
+export function manualSellAttemptedTokens() {
+  try {
+    const parsed = JSON.parse(durableRead(LS.manualSellAttempted) || "[]");
+    return new Set(Array.isArray(parsed) ? parsed.filter((t) => typeof t === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
 function recordStopLossAttempt(tokenId) {
   if (!tokenId) return;
   const set = stopLossAttemptedTokens();
@@ -1557,7 +1631,7 @@ async function runCycle(gen) {
     // 포지션만 다시 읽어 손절을 시도한 뒤 원래 오류로 사이클을 끝낸다.
     try {
       const rows = await fetchPositions(state.funder);
-      state.lastOpenRows = rows.filter((p) => p.status === "OPEN");
+      state.lastOpenRows = rows.filter(isOpenRow);
       setStage("stoploss");
       await runStopLoss(gen);
       log(`스냅샷 실패로 손절만 단독 실행함 — 원래 오류: ${String(e?.message ?? e).slice(0, 100)}`);

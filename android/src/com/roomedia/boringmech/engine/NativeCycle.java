@@ -306,7 +306,8 @@ public final class NativeCycle {
             closedRows = null;
         }
         PositionBook.Book book = PositionBook.summarizeBook(positions, winRows, lostRows, closedRows,
-                StopLossLedger.records(ledgerStore), attemptedObjects());
+                StopLossLedger.records(ledgerStore),
+                loadDurableJsonList(ManualSell.LEDGER_KEY), attemptedObjects());
         lastClosedRows = closedRows;
         PositionBook.Sizing sizing = PositionBook.sizing(cash, equity, book.openCount);
         Snap snap = new Snap();
@@ -369,7 +370,15 @@ public final class NativeCycle {
     }
 
     private Set<Object> attemptedObjects() {
-        return new HashSet<>(StopLossLedger.attemptedTokens(ledgerStore));
+        Set<Object> out = new HashSet<>(StopLossLedger.attemptedTokens(ledgerStore));
+        // 결과 불명 수동 매도 시도 토큰도 같은 보호를 받는다 — CLOSED 행이
+        // 최종가로 뒤집혀 집계되지 않게 한다 (v0.3.33 감사).
+        for (Object t : loadDurableJsonList(ManualSell.ATTEMPTED_KEY)) {
+            if (t instanceof String && !((String) t).isEmpty()) {
+                out.add(t);
+            }
+        }
+        return out;
     }
 
     private static Object numOrNull(Double v) {
