@@ -723,7 +723,14 @@
         var nstage = window.AndroidBridge && AndroidBridge.getNativeStage && AndroidBridge.getNativeStage();
         payload.stage = nstage ? JSON.parse(nstage) : JSON.parse(localStorage.getItem('bm_stage') || 'null');
       } catch (e) {}
-      try { payload.snap = JSON.parse(localStorage.getItem('bm_snap') || 'null'); } catch (e) {}
+      // snap도 로그·stage와 같은 기준으로 네이티브를 정본으로 읽는다.
+      // LS bm_snap은 뷰어 JS가 복원 시점에 쓴 값이라 엔진이 그 뒤로
+      // 매매해도 얼어붙어, 제보 snap이 로그보다 뒤처져 보이는 사고가
+      // 났다 (2026-11-19 제보 38: snap 현금 $12.67 vs 로그 $26.63).
+      try { payload.snap = readSnap(); } catch (e) {}
+      if (!payload.snap) {
+        try { payload.snap = JSON.parse(localStorage.getItem('bm_snap') || 'null'); } catch (e) {}
+      }
       try { payload.bought = JSON.parse(localStorage.getItem('bm_bought') || '[]'); } catch (e) {}
       // 네이티브 워치독 상태 — 워치독이 돌았는지·재로드가 걸렸는지·
       // 부팅이 실패했는지를 다음 사고 때 원격으로 가르기 위한 재료.
@@ -794,7 +801,15 @@
         }
       } catch (e) {}
       if (ok) {
-        $('sellMsg').textContent = '매도 요청을 보냈습니다 — 결과는 최근 로그에서 확인하세요.';
+        // 엔진이 멈춰 있으면 요청은 재개 시점에 소비되는데, 10분
+        // 신선도를 넘기면 만료로 버려진다 (2026-11-19 만료 2회).
+        // 요청은 그대로 보내되, 그 사실을 먼저 알린다.
+        var hb = bridgeHeartbeat();
+        if (!hb || Date.now() - hb > 180000) {
+          $('sellMsg').textContent = '요청은 보냈지만 엔진이 멈춰 있습니다 — 재개가 10분을 넘기면 만료됩니다.';
+        } else {
+          $('sellMsg').textContent = '매도 요청을 보냈습니다 — 결과는 최근 로그에서 확인하세요.';
+        }
         pendingSell = null;
         setTimeout(closeSellPopup, 1600);
       } else {
