@@ -48,9 +48,15 @@ R8 enum unboxing이 Bouncy Castle `DefaultServiceProperties`의
 바꿔, 서명 경로 전체가 실기기에서 VerifyError로 죽었다. JVM 테스트는
 축소 전 바이트코드를 돌리므로 이 계열을 구조적으로 못 잡는다.
 
-- `android/dex_gate.py`가 build.sh의 서명 직후에 상시 실행된다. 실패하면
-  빌드가 중단된다. 검사 항목: ① 전체 dex에서 instance-of/check-cast의
-  원시 타입 참조 0건 ② JavascriptInterface 존재 ③ 쓰기 경로 앱 클래스
+- `android/dex_gate.py`가 build.sh에서 서명 전에 상시 실행된다. 실패하면
+  빌드가 중단된다. 검사 항목: ① 전체 dex에서 참조 타입 opcode
+  (instance-of·check-cast·const-class·new-instance·new-array·
+  filled-new-array(-range))의 원시 타입 참조 0건 — 2026-11-19 제보 37
+  후속으로 instance-of·check-cast 2종에서 전수로 확장했다. 같은
+  unboxing이 다른 opcode로 새면 통과한 채 출하되는 구멍이 있었다.
+  ①b DefaultServiceProperties의 instance-of 대상에 CryptoServicePurpose
+  포함 (instance-of가 남아 있는 경우) ② JavascriptInterface 존재
+  ③ 쓰기 경로 앱 클래스
   (매수·손절·수동 매도·리딤 제출) 전부 존재 ④ 매핑 기준 서명 경로 BC
   클래스(DefaultServiceProperties·CryptoServicePurpose·Keccak·SHA256·
   ECDSASigner) 전부 존재 ⑤ 수명주기 앱 클래스(EngineService·
@@ -72,3 +78,16 @@ R8 enum unboxing이 Bouncy Castle `DefaultServiceProperties`의
 출하 dex 게이트·축소 스모크는 빌드 시점 검증이고, 실기기 검증은 그
 다음 단계로 별개 항목이다. 둘을 혼동해 빌드 검증만으로 서명 경로가
 검증됐다고 표기하지 않는다.
+
+## 제보 로그 판독 규칙 (2026-11-19 추가 — 제보 37 오판 후속)
+
+제보 payload의 로그는 누적 durable 로그의 최근 200줄 창이다. 같은
+오류 줄이 여러 제보에 반복해서 실려도, 그게 각 버전에서 새로 발생한
+것이 아니다. 오류의 발생 버전을 확정할 때는 반드시 로그 줄의 시각을
+그 버전의 릴리스 시각과 대조해 구간을 나눈다.
+
+- 사례: 제보 37(v0.3.35)의 14:15:08 VerifyError는 v0.3.34 릴리스
+  (15:05)보다 앞선 v0.3.33 세션의 기록이 누적 창에 실린 것이었다.
+  "3빌드 연속 동일 오류 출하"로 읽으면 이미 고쳐진 결함을 다시
+  고치게 된다. 출하본 판정은 로그가 아니라 해당 APK의 dex를 직접
+  열어 확인한다 (dexdump로 문제 클래스의 문제 오프셋을 대조).

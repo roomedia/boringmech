@@ -8,9 +8,18 @@ v0.3.33 서명 VerifyError). 이 게이트는 출하 APK의 classes.dex를
 중단시킨다.
 
 검사 항목:
-1. instance-of / check-cast가 원시 타입을 참조하지 않는가 (전체 dex).
+1. 참조 타입을 받는 opcode(instance-of / check-cast / const-class /
+   new-instance / new-array / filled-new-array(-range))가 원시 타입을
+   참조하지 않는가 (전체 dex).
    — R8 enum unboxing이 enum에 대한 instanceof를 원시 타입 I에 대한
    instance-of로 바꿔 ART 검증기가 클래스 전체를 거부한 결함의 패턴.
+   v0.3.35까지는 instance-of·check-cast만 봤는데, 같은 unboxing이 다른
+   참조 opcode로 새면 게이트를 통과한 채 출하되는 구멍이 남아 전수로
+   넓혔다 (2026-11-19 제보 37 후속).
+1b. DefaultServiceProperties(매핑 기준)의 instance-of 대상에
+   CryptoServicePurpose가 포함되는가 — instance-of 자체가 남아 있는
+   경우에만 본다. enum이 보존돼도 검사식이 다른 타입으로 바뀌어 있으면
+   서명 경로의 의미가 달라진 것이므로 실패로 본다.
 2. dex 문자열 테이블에 JavascriptInterface 어노테이션이 있는가.
    — 없으면 브리지 메서드가 JS에 노출되지 않는다.
 3. 쓰기 경로 앱 클래스가 dex에 전부 존재하는가.
@@ -144,11 +153,26 @@ def uleb(d, off):
     return r, p
 
 
+# 참조 타입 인덱스를 두 번째 코드 단위에서 받는 opcode 전부.
+# 0x1c const-class(21c), 0x1f check-cast(21c), 0x20 instance-of(21c),
+# 0x22 new-instance(21c), 0x23 new-array(22c), 0x24 filled-new-array(35c),
+# 0x25 filled-new-array-range(3rc) — 다섯째 열 형식이 달라도 타입
+# 인덱스의 위치(두 번째 단위)는 같다.
+TYPE_REF_OPS = {0x1C, 0x1F, 0x20, 0x22, 0x23, 0x24, 0x25}
+OP_NAMES = {
+    0x1C: "const-class", 0x1F: "check-cast", 0x20: "instance-of",
+    0x22: "new-instance", 0x23: "new-array", 0x24: "filled-new-array",
+    0x25: "filled-new-array-range",
+}
+
+
 def scan_malformed(d, types):
-    """(원시 타입 참조 목록, instance-of/check-cast 총수)를 돌려준다.
-    총수는 dexdump 같은 외부 도구와 교차 검증하는 용도다."""
+    """(원시 타입 참조 목록, 참조 타입 opcode 총수, 클래스별 instance-of
+    대상 집합)를 돌려준다. 총수는 dexdump 같은 외부 도구와 교차
+    검증하는 용도다."""
     bad = []
     total = 0
+    instanceof_targets = {}
     cd_n, cd_off = u32(d, 0x60), u32(d, 0x64)
     for ci in range(cd_n):
         base = cd_off + 32 * ci
@@ -193,19 +217,23 @@ def scan_malformed(d, types):
                         size = u32(d, insns_off + 2 * (i + 2))
                         i += 4 + (width * size + 1) // 2
                         continue
-                    if op in (0x1F, 0x20):
+                    if op in TYPE_REF_OPS:
                         total += 1
                         tidx = u16(d, insns_off + 2 * (i + 1))
-                        if tidx < len(types) and types[tidx] in PRIMITIVES:
-                            bad.append((types[cidx],
-                                        "check-cast" if op == 0x1F else "instance-of",
-                                        types[tidx]))
+                        if tidx < len(types):
+                            if types[tidx] in PRIMITIVES:
+                                bad.append((types[cidx],
+                                            OP_NAMES[op],
+                                            types[tidx]))
+                            if op == 0x20:
+                                instanceof_targets.setdefault(
+                                    types[cidx], set()).add(types[tidx])
                     step = OP_LEN.get(op)
                     if step is None:
                         bad.append((types[cidx], "unknown-opcode", hex(op)))
                         break
                     i += step
-    return bad, total
+    return bad, total, instanceof_targets
 
 
 def class_descriptors(d):
@@ -240,12 +268,12 @@ def main():
     strings = parse_strings(d)
     types = parse_types(d, strings)
 
-    bad, total_casts = scan_malformed(d, types)
+    bad, total_casts, instanceof_targets = scan_malformed(d, types)
     if bad:
         for cls, kind, t in bad:
             failures.append(f"원시 타입 {kind}: {cls} -> {t}")
     else:
-        print(f"gate OK: instance-of/check-cast 원시 타입 참조 0건 (총 {total_casts}건 검사)")
+        print(f"gate OK: 참조 타입 opcode 원시 타입 참조 0건 (총 {total_casts}건 검사)")
 
     if "Landroid/webkit/JavascriptInterface;" not in strings:
         failures.append("JavascriptInterface 어노테이션이 dex에 없음")
@@ -279,6 +307,29 @@ def main():
         failures.append("서명 경로 BC 클래스 누락(축소로 소실): " + ", ".join(missing_bc))
     else:
         print("gate OK: 서명 경로 BC 클래스 전부 존재")
+
+    # DefaultServiceProperties의 instance-of 대상 대조 — 클래스 존재와
+    # 원시 타입 부재만으로는, 검사식이 엉뚱한 참조 타입으로 바뀐 경우를
+    # 못 잡는다. instance-of가 남아 있으면 그 대상에 CryptoServicePurpose
+    # (원본 기술자 또는 매핑된 기술자)가 있어야 한다.
+    dsp_desc = None
+    for original in ("org.bouncycastle.crypto.constraints.DefaultServiceProperties",):
+        if to_descriptor(original) in classes:
+            dsp_desc = to_descriptor(original)
+        elif mapping.get(original):
+            dsp_desc = to_descriptor(mapping[original])
+    csp_descs = {to_descriptor("org.bouncycastle.crypto.CryptoServicePurpose")}
+    if mapping.get("org.bouncycastle.crypto.CryptoServicePurpose"):
+        csp_descs.add(to_descriptor(
+            mapping["org.bouncycastle.crypto.CryptoServicePurpose"]))
+    if dsp_desc is not None:
+        targets = instanceof_targets.get(dsp_desc, set())
+        if targets and not (targets & csp_descs):
+            failures.append(
+                "DefaultServiceProperties의 instance-of 대상에 "
+                "CryptoServicePurpose가 없음: " + ", ".join(sorted(targets)))
+        else:
+            print("gate OK: DefaultServiceProperties instance-of 대상 대조")
 
     if failures:
         print("DEX GATE FAILED:", file=sys.stderr)

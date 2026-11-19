@@ -78,6 +78,8 @@ final class NativeEngine {
     private volatile NativeCycle currentCycle;
     private Thread thread;
     private long lastRestoreFailMs;
+    /** 현재 세션 시작 시각 — RestartGuard의 중복 재시작 판정 재료. */
+    private volatile long sessionStartMs;
 
     NativeEngine(Context ctx, Host host) {
         this.ctx = ctx.getApplicationContext();
@@ -99,6 +101,7 @@ final class NativeEngine {
         guard.resetInFlight();
         EngineService.setSubmitInFlight(ctx, false);
         started = true;
+        sessionStartMs = System.currentTimeMillis();
         final int gen = ++generation;
         host.onEngineAliveChanged(true);
         thread = new Thread(() -> runSession(gen, null), "bm-engine");
@@ -108,8 +111,18 @@ final class NativeEngine {
 
     /** 워치독 지시·자격증명 변경에 대한 재시작 — 복원 게이트를 건너뛴다. */
     synchronized void restart() {
+        // 중복 재개 가드 — 방금 시작한 세션이 살아 있으면 재시작 요청을
+        // 건너뛴다 (제보 37: 시작 1초 뒤 재시작으로 로그 쌍이 중복됨).
+        // 동결 복구 재시작은 데드라인·정체 판정이 훨씬 긴 시간축에서
+        // 내리므로 이 가드에 걸리지 않는다.
+        if (RestartGuard.shouldSkipRestart(sessionStartMs,
+                System.currentTimeMillis(),
+                thread != null && thread.isAlive())) {
+            return;
+        }
         lastRestoreFailMs = 0;
         started = true;
+        sessionStartMs = System.currentTimeMillis();
         // 세대부터 올린다 — 이 순간부터 구 세션은 SubmitGuard 세대
         // 게이트에서 새 제출을 시작할 수 없다.
         final int gen = ++generation;
