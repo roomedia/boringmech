@@ -32,6 +32,16 @@ public final class JudgeFill {
         }
     }
 
+    /** status 문자열이 HTTP 5xx 숫자 코드인가. "matched" 같은 단어 상태와 구분한다. */
+    private static boolean isHttp5xx(String status) {
+        try {
+            double code = Double.parseDouble(status);
+            return code >= 500 && code < 600;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
     public static Verdict judgeFill(Object resp) {
         if (!(resp instanceof Map)) {
             return new Verdict(false, "unfilled", "", null);
@@ -42,8 +52,10 @@ public final class JudgeFill {
             // resp.status ?? "" — null·undefined일 때만 빈 문자열
             Object st = field(r, "status");
             String status = (st == Js.UNDEFINED || st == null) ? "" : Js.str(st);
-            // HTTP 상태가 없는 error는 전송 단계 실패 — 결과 불명
-            boolean transport = status.isEmpty() || status.equals("0");
+            // HTTP 상태가 없는 error는 전송 단계 실패 — 결과 불명.
+            // HTTP 5xx도 서버 처리 여부를 확정할 수 없어 결과 불명으로
+            // 분류한다 (본문이 있어도 명시 거부로 보지 않는다).
+            boolean transport = status.isEmpty() || status.equals("0") || isHttp5xx(status);
             return new Verdict(false, transport ? "unknown" : "error", status,
                     error instanceof String ? (String) error : ModelJson.stringify(error));
         }

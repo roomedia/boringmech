@@ -96,6 +96,7 @@
     <div class="card" id="posCard">
       <h2>보유 종목</h2>
       <div id="posList"><div class="note">보유 종목 없음</div></div>
+      <div class="note" id="manualSellStatus" style="display:none;margin-top:8px"></div>
     </div>
 
     <div class="card">
@@ -116,6 +117,7 @@
       <div class="row" style="margin-top:8px"><span class="k">서명 지갑 (EOA)</span><span class="v addr" id="eoaAddr">—</span></div>
       <div class="row"><span class="k">deposit wallet</span><span class="v addr" id="funderAddr">—</span></div>
       <div class="row"><span class="k">네이티브 섀도우 대조</span><span class="v" id="shadowState">—</span></div>
+      <div class="note" style="margin-top:8px">거래·오류 알림은 폰 설정 &gt; 앱 &gt; boringmech &gt; 알림에서 켤 수 있습니다.</div>
       <div class="stack" style="margin-top:12px">
         <button class="btn ghost" id="btnUnlink">연동 해제</button>
       </div>
@@ -526,6 +528,31 @@
       chip.className = 'chip warn';
     }
 
+    // 수동 매도 마지막 처리 결과 — 엔진이 bm_manual_sell_status에 남긴
+    // 종단 결과(체결·만료·실패)를 한 줄로 보여준다. 만료처럼 로그에만
+    // 남으면 사용자가 조용한 실패로 겪기 때문이다. 24시간 지난 기록은
+    // 보여주지 않는다.
+    function renderManualSellStatus(){
+      var el = $('manualSellStatus');
+      if (!el) return;
+      var st = null;
+      try {
+        var raw = window.AndroidBridge && AndroidBridge.getDurable
+          ? AndroidBridge.getDurable('bm_manual_sell_status') : null;
+        if (raw) st = JSON.parse(raw);
+      } catch (e) { st = null; }
+      if (!st || !st.ts || Date.now() - st.ts > 24 * 3600 * 1000) {
+        el.style.display = 'none';
+        return;
+      }
+      var d = new Date(st.ts);
+      var hh = ('0' + d.getHours()).slice(-2);
+      var mm = ('0' + d.getMinutes()).slice(-2);
+      el.textContent = '수동 매도: ' + (st.detail || st.outcome || '')
+        + (st.slug ? ' (' + st.slug + ')' : '') + ' · ' + hh + ':' + mm;
+      el.style.display = '';
+    }
+
     function refresh(){
       try { hasKey = !!localStorage.getItem('bm_pk'); } catch (e) { hasKey = false; }
       intentOn = bridgeIntent();
@@ -544,6 +571,7 @@
       }
       showMain();
       render(readSnap());
+      renderManualSellStatus();
       renderLogs();
       renderUpdate();
       renderRelayer();

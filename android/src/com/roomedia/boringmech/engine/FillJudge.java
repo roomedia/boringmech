@@ -47,6 +47,16 @@ public final class FillJudge {
         }
     }
 
+    /** status 문자열이 HTTP 5xx 숫자 코드인가. "matched" 같은 단어 상태와 구분한다. */
+    private static boolean isHttp5xx(String status) {
+        try {
+            double code = Double.parseDouble(status);
+            return code >= 500 && code < 600;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
     public static Fill judgeFill(Object resp) {
         // JS: !resp || typeof resp !== "object" — 배열은 object라 통과시킨다.
         if (resp == null || (!(resp instanceof Map) && !(resp instanceof List))) {
@@ -57,7 +67,11 @@ public final class FillJudge {
             Object stRaw = Js.field(resp, "status");
             // resp.status ?? "" — null·undefined일 때만 빈 문자열
             String status = (stRaw == Js.UNDEFINED || stRaw == null) ? "" : Js.str(stRaw);
-            boolean transport = status.isEmpty() || status.equals("0");
+            // HTTP 5xx는 서버가 주문을 처리했는지 확정할 수 없다 — 본문이
+            // 있어도 명시 거부가 아니라 결과 불명으로 분류한다 (v0.3.34
+            // 감사 축 1 발견: 5xx+본문이 error로 떨어져 같은 사이클에
+            // 재제출 후보로 다시 오르는 비대칭 차단).
+            boolean transport = status.isEmpty() || status.equals("0") || isHttp5xx(status);
             String error = err instanceof String ? (String) err : JsonText.stringify(err);
             return new Fill(false, transport ? "unknown" : "error", status, error);
         }

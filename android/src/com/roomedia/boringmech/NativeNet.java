@@ -55,6 +55,23 @@ final class NativeNet implements NativeCycle.Net {
     private final OrderBridge orderBridge;
     private final String funder;
     private final Bridge.Creds creds;
+    private Runnable progressBeat;
+
+    /** 페이지네이션 진행 신호 — 단계 데드라인이 느린 조회를 동결로 오인하지 않게 한다. */
+    void setProgressBeat(Runnable beat) {
+        this.progressBeat = beat;
+    }
+
+    private void beat() {
+        if (progressBeat == null) {
+            return;
+        }
+        try {
+            progressBeat.run();
+        } catch (Exception ignored) {
+            // 진행 신호 실패가 조회를 깨면 안 된다.
+        }
+    }
 
     NativeNet(RawHttp.Transport transport, String funder, Bridge.Creds creds) {
         this.transport = transport;
@@ -105,7 +122,7 @@ final class NativeNet implements NativeCycle.Net {
             }
             return fetchJsonModel(u.toString());
         };
-        return PositionsFetcher.fetchPositions(funder, status, source);
+        return PositionsFetcher.fetchPositions(funder, status, source, this::beat);
     }
 
     @Override
@@ -143,6 +160,7 @@ final class NativeNet implements NativeCycle.Net {
             @SuppressWarnings("unchecked")
             List<Object> rows = (List<Object>) page;
             markets.addAll(rows);
+            beat();
             if (rows.size() < 100) {
                 break;
             }

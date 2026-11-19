@@ -39,6 +39,16 @@ public final class PositionsFetcher {
      */
     public static List<Object> fetchPositions(String funder, String status, PageSource source)
             throws Exception {
+        return fetchPositions(funder, status, source, null);
+    }
+
+    /**
+     * onPage는 페이지가 한 장 성공적으로 돌아올 때마다 불린다 — 느린
+     * 페이지네이션이 단계 데드라인(StageDeadline)에 동결로 오인되지
+     * 않게 진행 신호를 남기는 용도다. null이면 부르지 않는다.
+     */
+    public static List<Object> fetchPositions(String funder, String status, PageSource source,
+                                              Runnable onPage) throws Exception {
         List<Object> out = new ArrayList<>();
         Set<String> seenKeys = new HashSet<>();
         String cursor = null;
@@ -48,6 +58,9 @@ public final class PositionsFetcher {
                 throw new FetchException("포지션 조회 페이지 상한 초과 — 커서 순환 의심");
             }
             Object data = source.fetchPage(funder, status, cursor);
+            if (onPage != null) {
+                onPage.run();
+            }
             Object rows = Js.field(data, "data");
             // data가 배열이 아닌 200 응답을 빈 목록으로 삼키면 보유 0건으로
             // 오독한다 — 형식 오류는 실패로 던진다.

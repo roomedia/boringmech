@@ -29,6 +29,13 @@ public final class ManualSell {
     public static final String REQUEST_KEY = "bm_manual_sell_req";
     public static final String LEDGER_KEY = "bm_manual_sell";
     public static final String ATTEMPTED_KEY = "bm_manual_sell_attempted";
+    /**
+     * 마지막 수동 매도 요청의 처리 결과 — 엔진이 종단 결과마다 JSON
+     * ({ts, slug, outcome, detail})으로 남기고 뷰어가 한 줄로 보여준다.
+     * 만료처럼 로그에만 남으면 사용자가 "조용한 실패"로 겪는 경로를
+     * 막기 위한 표시 전용 기록이다 (판정에는 쓰지 않는다).
+     */
+    public static final String STATUS_KEY = "bm_manual_sell_status";
 
     /** 요청 신선도 상한 — 사이클 주기(60초)의 10배. 넘긴 요청은 버린다. */
     public static final long MAX_REQUEST_AGE_MS = 600_000L;

@@ -39,6 +39,10 @@ import android.os.PowerManager;
 //  - 부팅 감시 90초 — 엔진 시작·재시작 뒤 첫 하트비트가 없으면 부팅
 //    실패로 세고 엔진을 재생성한다. 복원 진행 신호가 오면 기한은
 //    그만큼 미뤄진다.
+//  - 단계 데드라인 180초 (StageDeadline) — 작업 단계(snapshot 등)가
+//    상한을 넘겨 멈추면 로그·오류 알림 후 세션을 자가 재시작한다.
+//    제출 가드 의미론은 워치독과 같다. 워치독 스레드까지 멈추는
+//    프로세스 단위 정지는 앱 내부로 감지할 수 없다는 한계가 있다.
 //  - 엔진 스레드 소멸 시 재생성.
 // 재로드 횟수는 네이티브 엔진이 복원 직후 읽어 로그로 남긴다.
 public class EngineService extends Service {
@@ -59,6 +63,8 @@ public class EngineService extends Service {
     private static final String KEY_SNAP_CACHE = "snap_cache";
     private static final String KEY_SUBMIT_IN_FLIGHT = "submit_in_flight";
     private static final String KEY_SUBMIT_SINCE_MS = "submit_since_ms";
+    private static final String KEY_STAGE_RESTARTS = "stage_restarts";
+    private static final String KEY_LAST_STAGE_RESTART_MS = "last_stage_restart_ms";
     // 네이티브 섀도우용 미러 — JS boot/link가 남긴다 (Bridge.setFunderMirror 등)
     private static final String KEY_FUNDER = "funder";
     private static final String KEY_EOA = "eoa";
@@ -209,6 +215,7 @@ public class EngineService extends Service {
             o.put("heartbeat_cycle", p.getInt(KEY_HEARTBEAT_CYCLE, 0));
             o.put("boot_failures", p.getInt(KEY_BOOT_FAILURES, 0));
             o.put("directive_unacked", p.getInt(KEY_DIRECTIVE_UNACKED, 0));
+            o.put("stage_restarts", p.getInt(KEY_STAGE_RESTARTS, 0));
             o.put("tick_alive", lastTickMs);
             return o.toString();
         } catch (Exception e) {
@@ -547,6 +554,15 @@ public class EngineService extends Service {
         }
 
         SharedPreferences p = prefs(this);
+
+        // 단계 데드라인 — 부팅 감시 구간(bootSince>0)에서는 부팅 판정이
+        // 복구를 소유하므로 건드리지 않는다. 그 외 구간에서 작업 단계가
+        // 상한을 넘겨 멈춰 있으면, 워치독 정체 판정(240초)보다 먼저
+        // 180초에 로그·알림을 남기고 세션을 자가 재시작한다.
+        if (wdBootSinceMs <= 0 && checkStageDeadline(now, p)) {
+            return;
+        }
+
         WatchdogLogic.Input in = new WatchdogLogic.Input();
         in.now = now;
         in.runIntent = getRunIntent(this);
@@ -592,6 +608,58 @@ public class EngineService extends Service {
         // 신호가 오면 판정이 다시 미뤄진다.
         wdBootSinceMs = now;
         issueDirective(d.action, now);
+    }
+
+    /**
+     * 단계 데드라인 점검 — 동결이면 로그·알림·카운터를 남기고 엔진을
+     * 재시작한 뒤 true를 돌려준다 (이번 틱의 일반 판정은 건너뜀).
+     * 판정 자체는 StageDeadline 순수 로직이 맡는다.
+     */
+    private boolean checkStageDeadline(long now, SharedPreferences p) {
+        String stage = null;
+        long stageTs = 0;
+        try {
+            String stageJson = DurableStore.stageJson(this);
+            if (stageJson != null) {
+                org.json.JSONObject o = new org.json.JSONObject(stageJson);
+                stage = o.optString("stage", null);
+                stageTs = o.optLong("ts", 0);
+            }
+        } catch (Exception ignored) {
+        }
+        StageDeadline.Input in = new StageDeadline.Input();
+        in.now = now;
+        in.runIntent = getRunIntent(this);
+        in.engineAlive = wdEngineAlive;
+        in.stage = stage;
+        in.stageSinceMs = stageTs;
+        in.progressMs = p.getLong(KEY_PROGRESS_MS, 0);
+        in.submitInFlight = getSubmitInFlight(this);
+        in.submitSinceMs = getSubmitSinceMs(this);
+        in.lastStageRestartMs = p.getLong(KEY_LAST_STAGE_RESTART_MS, 0);
+        if (!StageDeadline.isStageFrozen(in)) {
+            return false;
+        }
+        long ageSec = StageDeadline.stageAgeSec(in);
+        String ts = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+                .format(new java.util.Date());
+        DurableStore.appendLog(this, "[" + ts + "] 단계 데드라인 — " + stage + " 단계 "
+                + ageSec + "초 정지 (상한 " + (StageDeadline.STAGE_DEADLINE_MS / 1000)
+                + "초), 엔진을 재시작합니다");
+        Bridge.notifyError(this, com.roomedia.boringmech.write.NotifyPolicy.KEY_STAGE_DEADLINE,
+                "엔진 동결 감지", stage + " 단계 " + ageSec + "초 정지 — 엔진을 재시작합니다");
+        p.edit()
+                .putInt(KEY_STAGE_RESTARTS, p.getInt(KEY_STAGE_RESTARTS, 0) + 1)
+                .putLong(KEY_LAST_STAGE_RESTART_MS, now)
+                // RELOAD 경로와 동일하게 제출 상태를 지운다. 제출 가드 상한을
+                // 지난 제출 때문에 발동한 경우 옛 submit_since가 남아 있으면
+                // 새 세션의 워치독 판정이 오염된다.
+                .putBoolean(KEY_SUBMIT_IN_FLIGHT, false)
+                .putLong(KEY_SUBMIT_SINCE_MS, 0)
+                .apply();
+        restartNativeEngine();
+        wdBootSinceMs = now;
+        return true;
     }
 
     private void issueDirective(WatchdogLogic.Action action, long now) {

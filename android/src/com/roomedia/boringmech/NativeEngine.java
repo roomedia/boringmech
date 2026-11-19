@@ -358,6 +358,7 @@ final class NativeEngine {
         env.beatProgress(0);
 
         NativeNet net = new NativeNet(transport, funder, creds);
+        net.setProgressBeat(() -> EngineService.recordProgress(ctx));
         ClobWriteClient.TimeoutRunner timeout = ClobWriteClient.executorTimeout(20_000);
         ClobWriteClient client = new ClobWriteClient.Builder()
                 .privateKey(pk)
@@ -541,6 +542,11 @@ final class NativeEngine {
         @Override
         public void notifyMoney(String title, String body) {
             Bridge.notifyMoney(ctx, title, body);
+        }
+
+        @Override
+        public void notifyError(String key, String title, String body) {
+            Bridge.notifyError(ctx, key, title, body);
         }
 
         @Override

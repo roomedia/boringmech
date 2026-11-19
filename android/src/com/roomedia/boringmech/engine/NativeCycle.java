@@ -70,6 +70,9 @@ public final class NativeCycle {
 
         void notifyMoney(String title, String body);
 
+        /** 오류 알림 (오류 채널) — key는 NotifyPolicy dedupe 사유 키. */
+        void notifyError(String key, String title, String body);
+
         String durableRead(String key);
 
         void durableWrite(String key, String value);
@@ -219,7 +222,7 @@ public final class NativeCycle {
                         return JsNumber.toString(net.tickSize(tokenId));
                     }
                 },
-                guard, ledgerStore, env::log, env::notifyMoney, timeoutRunner, env::nowMs,
+                guard, ledgerStore, env::log, this::moneyNotify, timeoutRunner, env::nowMs,
                 new StopLossSeller.ManualSellRecorder() {
                     @Override
                     public void record(Map<String, Object> rec) {
@@ -235,6 +238,7 @@ public final class NativeCycle {
                                 ModelJson.stringify(ManualSell.appendAttempted(list, tokenId)));
                     }
                 });
+        this.seller.setErrorNotifier(this::errorNotify);
         this.gammaSource = net::gammaPageBySlug;
         this.bookSource = new CandidateVerifier.BookSource() {
             @Override
@@ -270,6 +274,27 @@ public final class NativeCycle {
 
     private void log(String body) {
         env.log(body);
+    }
+
+    /**
+     * 오류 알림 발송 — 알림 경로는 거래 판정에 절대 닿지 않는다.
+     * 어댑터가 삼키는 것이 규약이지만, 여기서도 한 번 더 감싸 어떤
+     * 어댑터 결함도 사이클 흐름을 바꾸지 못하게 한다.
+     */
+    /** 체결 알림 래퍼 — 알림 예외가 체결 판정·원장 기록을 뒤집지 않게 삼킨다. */
+    private void moneyNotify(String title, String body) {
+        try {
+            env.notifyMoney(title, body);
+        } catch (Exception ignored) {
+            // 알림 실패는 거래 로직에 영향을 주지 않는다.
+        }
+    }
+
+    private void errorNotify(String key, String title, String body) {
+        try {
+            env.notifyError(key, title, body);
+        } catch (Exception ignored) {
+        }
     }
 
     private static String msg(Throwable e) {
@@ -543,16 +568,23 @@ public final class NativeCycle {
             model = JsonText.parse(raw);
         } catch (Exception e) {
             log("수동 매도 요청 형식 오류 — 버립니다");
+            saveManualSellStatus("", "bad_format", "요청 형식 오류로 버려졌습니다");
             return 0;
         }
         ManualSell.Request req = ManualSell.parseRequest(model);
         if (req == null) {
             log("수동 매도 요청 형식 오류 — 버립니다");
+            saveManualSellStatus("", "bad_format", "요청 형식 오류로 버려졌습니다");
             return 0;
         }
         String label = req.slug.isEmpty() ? req.tokenId : req.slug;
         if (ManualSell.isStale(req, env.nowMs())) {
             log("수동 매도 요청 만료 — 오래된 요청이라 버립니다 (" + label + ")");
+            saveManualSellStatus(req.slug, "expired",
+                    "요청이 만료돼 실행되지 않았습니다 — 다시 요청하세요");
+            errorNotify(com.roomedia.boringmech.write.NotifyPolicy.KEY_MANUAL_EXPIRED,
+                    "수동 매도 요청 만료",
+                    label + " · 요청이 만료돼 실행되지 않았습니다");
             return 0;
         }
         Map<String, Object> row = null;
@@ -566,14 +598,32 @@ public final class NativeCycle {
         }
         if (row == null) {
             log("수동 매도 건너뜀 — 보유 중인 종목이 아닙니다 (" + label + ")");
+            saveManualSellStatus(req.slug, "not_held", "보유 중인 종목이 아닙니다");
             return 0;
         }
         double current = Js.fieldNum(row, "current_price");
         if (!Double.isFinite(current) || current <= 0) {
             log("수동 매도 건너뜀 — 현재가를 확인할 수 없습니다 (" + label + ")");
+            saveManualSellStatus(req.slug, "no_price", "현재가를 확인할 수 없습니다");
             return 0;
         }
-        return seller.executeManualSell(row, current, gen) ? 1 : 0;
+        boolean done = seller.executeManualSell(row, current, gen);
+        saveManualSellStatus(req.slug, done ? "filled" : "failed",
+                done ? "매도가 체결됐습니다" : "체결되지 않았습니다 — 최근 로그를 확인하세요");
+        return done ? 1 : 0;
+    }
+
+    /** 수동 매도 종단 결과를 뷰어 표시용으로 남긴다 — 실패해도 흐름에 영향 없다. */
+    private void saveManualSellStatus(String slug, String outcome, String detail) {
+        try {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("ts", (double) env.nowMs());
+            m.put("slug", slug);
+            m.put("outcome", outcome);
+            m.put("detail", detail);
+            env.durableWrite(ManualSell.STATUS_KEY, ModelJson.stringify(m));
+        } catch (Exception ignored) {
+        }
     }
 
     /** runStopLoss 이식 — 보유 행마다 예외를 격리한다. 반환값은 매도 성공 건수. */
@@ -893,6 +943,9 @@ public final class NativeCycle {
                         + (recovered == null ? "미확인" : "$" + n(recovered)) + " · " + verifyStatus);
             } catch (Exception e) {
                 log("리딤 실패 " + slice(cid, 10) + "…: " + slice(msg(e), 140) + " — 다음 사이클에 재시도");
+                errorNotify(com.roomedia.boringmech.write.NotifyPolicy.KEY_REDEEM_FAILED,
+                        "리딤 실패", slice(cid, 10) + "… · " + slice(msg(e), 120)
+                                + " — 다음 사이클에 재시도합니다");
             } finally {
                 guard.endSubmit();
                 guard.releaseSubmitLock(lockKey);
@@ -1113,7 +1166,7 @@ public final class NativeCycle {
             snap = snapshot();
         }
         if (settleNotice != null) {
-            env.notifyMoney("정산 확정", "실현 " + com.roomedia.boringmech.write.StopLoss.signedUsd(settleNotice.realizedDelta)
+            moneyNotify("정산 확정", "실현 " + com.roomedia.boringmech.write.StopLoss.signedUsd(settleNotice.realizedDelta)
                     + (recovered > 0 ? " · 회수 $" + n(recovered) : ""));
         }
         if (snap.settledCount != null) {
@@ -1203,6 +1256,8 @@ public final class NativeCycle {
                     } catch (Exception e) {
                         failedCount++;
                         log("주문 서명 실패 " + cand.slug + ": " + slice(msg(e), 120));
+                        errorNotify(com.roomedia.boringmech.write.NotifyPolicy.KEY_SIGN_FAIL,
+                                "주문 서명 실패", cand.slug + " · " + slice(msg(e), 120));
                         continue;
                     }
                     if (!env.isRunning(gen)) {
@@ -1217,6 +1272,9 @@ public final class NativeCycle {
                         slotsLeft--;
                         String m = msg(e);
                         log("주문 결과 불명 " + cand.slug + ": " + slice(m, 120) + " — 중복 방지 기록");
+                        errorNotify(com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_UNKNOWN,
+                                "주문 결과 불명",
+                                cand.slug + " · 제출 응답이 끊겨 체결 여부를 모릅니다 — 보유 목록에서 확인하세요");
                         if (com.roomedia.boringmech.engine.FillJudge.isFailsafe(m)) {
                             env.requestStop();
                             log("failsafe 감지 — 엔진 정지. 정지 사유를 확인한 뒤 다시 실행하세요.");
@@ -1231,11 +1289,16 @@ public final class NativeCycle {
                         slotsLeft--;
                         log("주문 결과 불명 " + cand.slug + ": " + slice(verdict.error == null ? "" : verdict.error, 120)
                                 + " — 중복 방지 기록");
+                        errorNotify(com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_UNKNOWN,
+                                "주문 결과 불명",
+                                cand.slug + " · 체결 여부를 확정하지 못했습니다 — 보유 목록에서 확인하세요");
                         continue;
                     }
                     if (!verdict.filled && !"unfilled".equals(verdict.kind)) {
                         failedCount++;
                         String m = verdict.error != null ? verdict.error : "주문 거부 (success=false)";
+                        errorNotify(com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_FAILED,
+                                "주문 실패", cand.slug + " · " + slice(m, 120));
                         log("주문 실패 " + cand.slug + ": " + slice(m, 120)
                                 + " · 응답 원문: " + slice(ModelJson.stringify(resp), 200));
                         if (com.roomedia.boringmech.engine.FillJudge.isFailsafe(m)
@@ -1272,8 +1335,13 @@ public final class NativeCycle {
                     Object respStatus = Js.field(resp, "status");
                     log("매수 " + cand.slug + " · $" + n(snap.bet) + " @ " + n(detail.limitPrice) + fill
                             + " · 상태 " + (Js.truthy(respStatus) ? Js.str(respStatus) : "matched"));
-                    env.notifyMoney("매수 체결", "건당 $" + n(snap.bet) + " · 체결가 "
-                            + n(hasFillPrice ? fillPrice : detail.limitPrice));
+                    // 응답에 실제 체결 수량·가격이 있을 때만 본문에 넣는다.
+                    // 없는데 추정 수량·지정가를 넣으면 체결값으로 오독된다.
+                    boolean hasTaking = Js.truthy(taking) && Double.isFinite(Js.num(taking));
+                    moneyNotify("매수 체결", cand.slug + " · " + cand.side
+                            + (hasTaking ? " · " + n(Js.num(taking)) + "주" : "")
+                            + (hasFillPrice ? " · 체결가 " + n(fillPrice) : "")
+                            + " · $" + n(snap.bet));
                 } finally {
                     guard.endSubmit();
                 }
@@ -1310,6 +1378,9 @@ public final class NativeCycle {
             if (shouldSelfReload(cycleErrors, env.lastSelfReloadMs(), env.nowMs())) {
                 env.saveSelfReloadMs(env.nowMs());
                 log("사이클 오류 " + cycleErrors + "회 연속 — 페이지 자가 재로드로 복구를 시도합니다");
+                errorNotify(com.roomedia.boringmech.write.NotifyPolicy.KEY_CYCLE_ERRORS,
+                        "엔진 오류", "사이클 오류 " + cycleErrors
+                                + "회 연속 — 자가 재시작으로 복구를 시도합니다");
                 return Result.RESTART;
             }
         } else {

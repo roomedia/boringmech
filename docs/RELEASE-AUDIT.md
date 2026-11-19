@@ -40,3 +40,22 @@
   없으면 브리지 메서드가 JS에 전혀 노출되지 않아 앱 전체가 무반응이 된다
   (keep.pro의 `-keepattributes *Annotation*`가 지킨다).
 - 확인 명령: APK를 풀어 `strings classes.dex | grep JavascriptInterface`.
+
+## 출하 dex 쓰기 경로 검증 게이트 (2026-11-19 추가 — v0.3.33 서명 VerifyError 사고, 상시 항목)
+
+R8 enum unboxing이 Bouncy Castle `DefaultServiceProperties`의
+`instanceof CryptoServicePurpose`를 원시 타입 `I`에 대한 instance-of로
+바꿔, 서명 경로 전체가 실기기에서 VerifyError로 죽었다. JVM 테스트는
+축소 전 바이트코드를 돌리므로 이 계열을 구조적으로 못 잡는다.
+
+- `android/dex_gate.py`가 build.sh의 서명 직후에 상시 실행된다. 실패하면
+  빌드가 중단된다. 검사 항목: ① 전체 dex에서 instance-of/check-cast의
+  원시 타입 참조 0건 ② JavascriptInterface 존재 ③ 쓰기 경로 앱 클래스
+  (매수·손절·수동 매도·리딤 제출) 전부 존재 ④ 매핑 기준 서명 경로 BC
+  클래스(DefaultServiceProperties·CryptoServicePurpose·Keccak·SHA256·
+  ECDSASigner) 전부 존재.
+- 축소 코드 실행 스모크: `android/test/run_shrunk_smoke.sh`가 출하와
+  같은 keep.pro로 R8 축소(classfile)를 돌려 그 바이트코드로 골든 38건
+  (주문 서명 포함)을 실행한다. 릴리스 전 실행해 통과를 확인한다.
+- keep.pro에 규칙을 추가할 때는 어떤 결함을 막는 규칙인지 주석으로
+  남긴다. 근거 없는 keep 누적 금지.

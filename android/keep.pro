@@ -8,3 +8,11 @@
 -keepclassmembers class com.roomedia.boringmech.** {
   @android.webkit.JavascriptInterface <methods>;
 }
+# Bouncy Castle의 CryptoServicePurpose는 enum이다. R8의 enum unboxing이
+# 이 enum을 int로 바꾸면, DefaultServiceProperties 생성자의
+# "params instanceof CryptoServicePurpose"가 원시 타입 I에 대한
+# instance-of로 기록돼 ART 검증기가 클래스 전체를 거부한다 — 서명 경로
+# (다이제스트의 cryptoServiceProperties가 이 클래스를 생성)에서 모든
+# 서명이 VerifyError로 죽는다 (v0.3.33 실기기에서 확정). enum 자체를
+# 보존해 unboxing을 막는다. 재발은 dex 게이트(dex_gate.py)가 잡는다.
+-keep class org.bouncycastle.crypto.CryptoServicePurpose { *; }

@@ -257,8 +257,13 @@ public class Bridge {
     }
 
     // 돈 이벤트 알림 — 엔진이 체결·정산·손절 시점에 부른다.
-    // 본문 구성(돈 정보만, 종목명 금지)은 JS가 책임진다.
+    // 채널은 둘로 나뉜다: 거래(체결·정산, 기본 중요도)와 오류(사용자
+    // 행동이 필요하거나 거래에 영향이 있는 오류, 높은 중요도).
+    // 알림 권한이 없으면 조용히 건너뛰고 로그만 남긴다 — 권한 요청
+    // UI는 만들지 않는다 (뷰어에 설정 안내 한 줄만 있다).
+    // 발송 실패는 어떤 경우에도 호출자(거래 흐름)로 전파하지 않는다.
     private static final String EVENTS_CHANNEL = "bm_events";
+    private static final String ERROR_CHANNEL = "bm_errors";
     private static final String NOTIFY_PREFS = "bm_notify";
 
     @JavascriptInterface
@@ -266,32 +271,100 @@ public class Bridge {
         notifyMoney(ctx, title, body);
     }
 
-    // 네이티브 엔진도 같은 경로로 알림을 보낸다 (본문은 돈 정보만 — 호출자 책임).
+    // 네이티브 엔진도 같은 경로로 알림을 보낸다 (본문 구성은 호출자 책임).
     static void notifyMoney(final Context context, final String title, final String body) {
+        postNotification(context, EVENTS_CHANNEL, "거래 알림",
+                NotificationManager.IMPORTANCE_DEFAULT, title, body);
+    }
+
+    /**
+     * 오류 알림 — 같은 사유 키는 NotifyPolicy 간격(30분) 안에 1회만
+     * 나간다. dedupe 상태는 bm_notify prefs가 보관한다.
+     */
+    static void notifyError(final Context context, final String key,
+                            final String title, final String body) {
+        // 권한이 없어 어차피 건너뛸 발송이면 dedupe를 기록하지 않는다 —
+        // 기록해 두면 권한을 켠 뒤에도 30분간 같은 사유가 침묵한다
+        // (NotifyPolicy 규약: 실제로 보냈을 때만 기록).
+        try {
+            NotificationManager nm = (NotificationManager)
+                    context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null || !notificationsAllowed(context, nm)) {
+                android.util.Log.i("boringmech", "알림 권한 없음 — 오류 알림 건너뜀 (dedupe 미기록): " + title);
+                return;
+            }
+        } catch (Exception ignored) {
+            // 확인이 깨지면 발송 시도로 떨어진다 (postNotification이 다시 막는다)
+        }
+        try {
+            SharedPreferences prefs =
+                    context.getSharedPreferences(NOTIFY_PREFS, Context.MODE_PRIVATE);
+            java.util.Map<String, Long> last = new java.util.HashMap<>();
+            for (java.util.Map.Entry<String, ?> e : prefs.getAll().entrySet()) {
+                if (e.getKey().startsWith("err_last_") && e.getValue() instanceof Long) {
+                    last.put(e.getKey().substring("err_last_".length()), (Long) e.getValue());
+                }
+            }
+            long now = System.currentTimeMillis();
+            if (!com.roomedia.boringmech.write.NotifyPolicy.shouldSendError(last, key, now)) {
+                return;
+            }
+            com.roomedia.boringmech.write.NotifyPolicy.markErrorSent(last, key, now);
+            if (key != null) {
+                prefs.edit().putLong("err_last_" + key, now).apply();
+            }
+        } catch (Exception ignored) {
+            // dedupe 기록이 깨져도 알림 자체는 시도한다
+        }
+        postNotification(context, ERROR_CHANNEL, "오류 알림",
+                NotificationManager.IMPORTANCE_HIGH, title, body);
+    }
+
+    private static void postNotification(final Context context, final String channelId,
+                                         final String channelName, final int importance,
+                                         final String title, final String body) {
         new Handler(Looper.getMainLooper()).post(() -> {
             try {
                 NotificationManager nm = (NotificationManager)
                         context.getSystemService(Context.NOTIFICATION_SERVICE);
                 if (nm == null) return;
+                if (!notificationsAllowed(context, nm)) {
+                    android.util.Log.i("boringmech", "알림 권한 없음 — 건너뜀: " + title);
+                    return;
+                }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     NotificationChannel ch = new NotificationChannel(
-                            EVENTS_CHANNEL, "거래 알림", NotificationManager.IMPORTANCE_DEFAULT);
+                            channelId, channelName, importance);
                     nm.createNotificationChannel(ch);
                 }
                 SharedPreferences prefs =
                         context.getSharedPreferences(NOTIFY_PREFS, Context.MODE_PRIVATE);
                 int id = prefs.getInt("next_id", 100) + 1;
                 prefs.edit().putInt("next_id", id).apply();
-                Notification n = new Notification.Builder(context, EVENTS_CHANNEL)
+                Notification n = new Notification.Builder(context, channelId)
                         .setSmallIcon(context.getApplicationInfo().icon)
                         .setContentTitle(title)
                         .setContentText(body)
+                        .setStyle(new Notification.BigTextStyle().bigText(body))
                         .setAutoCancel(true)
                         .build();
                 nm.notify(id, n);
             } catch (Exception ignored) {
             }
         });
+    }
+
+    /** 알림을 실제로 띄울 수 있는 상태인가 — 권한·전역 스위치 확인. */
+    private static boolean notificationsAllowed(Context context, NotificationManager nm) {
+        if (!nm.areNotificationsEnabled()) {
+            return false;
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            return context.checkSelfPermission(
+                    android.Manifest.permission.POST_NOTIFICATIONS)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        }
+        return true;
     }
 
     // 영속 미러 (부수1) — localStorage의 비동기 디스크 반영으로 사라질 수

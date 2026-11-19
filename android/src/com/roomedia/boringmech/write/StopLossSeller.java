@@ -60,6 +60,15 @@ public final class StopLossSeller {
         void notifyMoney(String title, String body);
     }
 
+    /**
+     * 오류 알림 장치 — 서명 실패·결과 불명·명시 실패처럼 사용자가 알아야
+     * 하는 거래 경로 오류만 나간다 (미체결 같은 확정 결과는 로그만).
+     * 발송 실패가 매도 흐름을 바꾸면 안 되므로 호출 지점에서 전부 삼킨다.
+     */
+    public interface ErrorNotifier {
+        void notifyError(String key, String title, String body);
+    }
+
     public interface Clock {
         long nowMs();
     }
@@ -85,6 +94,23 @@ public final class StopLossSeller {
     private final ClobWriteClient.TimeoutRunner timeout;
     private final Clock clock;
     private final ManualSellRecorder manualRecorder;
+    private ErrorNotifier errorNotifier;
+
+    /** 오류 알림 장치 연결 (선택) — 없으면 오류는 로그로만 남는다. */
+    public void setErrorNotifier(ErrorNotifier errorNotifier) {
+        this.errorNotifier = errorNotifier;
+    }
+
+    /** 오류 알림 — 발송 경로의 어떤 실패도 매도 흐름에 전파하지 않는다. */
+    private void errorNotify(String key, String title, String body) {
+        if (errorNotifier == null) {
+            return;
+        }
+        try {
+            errorNotifier.notifyError(key, title, body);
+        } catch (Exception ignored) {
+        }
+    }
 
     public StopLossSeller(ClobWriteClient client, BalanceSource balanceSource,
                           OrderBookSource orderBookSource, SubmitGuard guard,
@@ -207,6 +233,8 @@ public final class StopLossSeller {
             signed = client.createMarketOrder(req);
         } catch (Exception e) {
             logger.log(prefix + " 서명 실패 " + slug + ": " + slice(msg(e), 120));
+            errorNotify(NotifyPolicy.KEY_SIGN_FAIL, prefix + " 서명 실패",
+                    slug + " · " + slice(msg(e), 120));
             return false;
         }
         Object resp;
@@ -216,12 +244,19 @@ public final class StopLossSeller {
             recordAttempt(tokenId, manual);
             logger.log(prefix + " 결과 불명 " + slug + ": " + slice(msg(e), 120)
                     + (manual ? " — 체결 여부는 보유 목록에서 확인하세요" : " — 다음 사이클에 재확인"));
+            errorNotify(NotifyPolicy.KEY_ORDER_UNKNOWN, prefix + " 결과 불명",
+                    slug + " · 제출 응답이 끊겨 체결 여부를 모릅니다 — 보유 목록에서 확인하세요");
             return false;
         }
         JudgeFill.Verdict verdict = JudgeFill.judgeFill(resp);
         if (!verdict.filled) {
             if ("unknown".equals(verdict.kind)) {
                 recordAttempt(tokenId, manual);
+                errorNotify(NotifyPolicy.KEY_ORDER_UNKNOWN, prefix + " 결과 불명",
+                        slug + " · 체결 여부를 확정하지 못했습니다 — 보유 목록에서 확인하세요");
+            } else if ("error".equals(verdict.kind) || "rejected".equals(verdict.kind)) {
+                errorNotify(NotifyPolicy.KEY_ORDER_FAILED, prefix + " 실패",
+                        slug + " · " + slice(verdict.error != null ? verdict.error : "주문 거부", 120));
             }
             String msgText = verdict.error != null
                     ? verdict.error
@@ -259,10 +294,16 @@ public final class StopLossSeller {
                 + " · 손익 " + (fill.realized < 0 ? "-" : "+") + "$"
                 + JsNumber.toString(Math.abs(fill.realized)));
         if (notifier != null) {
-            notifier.notifyMoney(manual ? "수동 매도 실행" : "손절 실행",
-                    "진입 " + JsNumber.toString(entry)
-                            + " · 청산 " + JsNumber.toString(StopLoss.round4(fill.exitPrice))
-                            + " · 실현 " + StopLoss.signedUsd(fill.realized));
+            // 원장 기록 뒤의 알림이다. 예외가 새어 나가면 호출자가 체결을
+            // 실패로 뒤집으므로 여기서 삼킨다.
+            try {
+                notifier.notifyMoney(manual ? "수동 매도 체결" : "손절 체결",
+                        slug + " · " + JsNumber.toString(fill.soldShares) + "주"
+                                + " · 체결가 " + JsNumber.toString(StopLoss.round4(fill.exitPrice))
+                                + " · 실현손익 " + StopLoss.signedUsd(fill.realized));
+            } catch (Exception ignored) {
+                // 알림 실패는 체결 판정에 영향을 주지 않는다.
+            }
         }
         return true;
     }

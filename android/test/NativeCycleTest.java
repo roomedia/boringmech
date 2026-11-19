@@ -79,6 +79,7 @@ public class NativeCycleTest {
         final List<String> stages = new ArrayList<>();
         final Map<String, String> durable = new HashMap<>();
         final List<String> notifications = new ArrayList<>();
+        final List<String> errorNotifications = new ArrayList<>();
         String snapCache;
         String updateInfo;
         long selfReloadMs = 0;
@@ -91,7 +92,23 @@ public class NativeCycleTest {
         @Override public void beatProgress(int cycle) {}
         @Override public void setStage(String stage, int cycle) { stages.add(stage); }
         @Override public void putSnapCache(String json) { snapCache = json; }
-        @Override public void notifyMoney(String t, String b) { notifications.add(t + "|" + b); }
+        boolean throwOnNotify = false;
+        @Override public void notifyMoney(String t, String b) {
+            if (throwOnNotify) {
+                throw new RuntimeException("notify boom");
+            }
+            notifications.add(t + "|" + b);
+        }
+        @Override public void notifyError(String k, String t, String b) {
+            errorNotifications.add(k + "|" + t + "|" + b);
+        }
+
+        boolean errorNotified(String key) {
+            for (String n : errorNotifications) {
+                if (n.startsWith(key + "|")) return true;
+            }
+            return false;
+        }
         @Override public String durableRead(String k) { return durable.get(k); }
         @Override public void durableWrite(String k, String v) { durable.put(k, v); }
         @Override public void requestStop() { running = false; gen++; }
@@ -215,6 +232,8 @@ public class NativeCycleTest {
 
     static final class OrderTransport implements RawHttp.Transport {
         int posts = 0;
+        boolean throwOnPost = false;
+        int responseStatus = 200;
         String responseBody = "{\"success\":true,\"status\":\"matched\","
                 + "\"makingAmount\":\"6\",\"takingAmount\":\"7.79\","
                 + "\"transactionHashes\":[\"0xabc\"]}";
@@ -222,7 +241,10 @@ public class NativeCycleTest {
         @Override
         public RawHttp.Raw post(String url, Map<String, String> h, String body) {
             posts++;
-            return new RawHttp.Raw(200, responseBody, null);
+            if (throwOnPost) {
+                throw new RuntimeException("transport boom");
+            }
+            return new RawHttp.Raw(responseStatus, responseBody, null);
         }
 
         @Override
@@ -256,6 +278,42 @@ public class NativeCycleTest {
                 ms -> {}, () -> NOW);
         return new NativeCycle(env, net, client(t), submitter, new SubmitGuard(), store,
                 FUNDER, relayer, ClobWriteClient.DIRECT_TIMEOUT);
+    }
+
+    /** 서명 실패 재현용 — 개인키 0은 서명 단계에서 예외를 던진다. */
+    private static NativeCycle newCycleZeroKey(FakeEnv env, FakeNet net, RawHttp.Transport t,
+                                               FakeLedgerStore store) {
+        ClobWriteClient zeroClient = new ClobWriteClient.Builder()
+                .privateKey(BigInteger.ZERO)
+                .funder(FUNDER)
+                .creds(new ClobWriteClient.Creds(EOA, "key", "c2VjcmV0", "pass"))
+                .transport(t)
+                .codec(CODEC)
+                .timeout(ClobWriteClient.DIRECT_TIMEOUT)
+                .versionResolver(force -> 2)
+                .marketInfo(new ClobWriteClient.MarketInfoSource() {
+                    @Override public void ensureMarketInfoCached(String tokenId) {}
+                    @Override public String getTickSize(String tokenId) { return "0.01"; }
+                    @Override public boolean getNegRisk(String tokenId) { return false; }
+                })
+                .tradesSource(id -> new ArrayList<>())
+                .build();
+        RedeemSubmitter submitter = new RedeemSubmitter(t, CODEC, PK, EOA, FUNDER,
+                ms -> {}, () -> NOW);
+        return new NativeCycle(env, net, zeroClient, submitter, new SubmitGuard(), store,
+                FUNDER, () -> null, ClobWriteClient.DIRECT_TIMEOUT);
+    }
+
+    /** 매수 무대 공용 — buyPath와 같은 후보·북. */
+    private static void buyStage(FakeNet net) {
+        net.markets = new ArrayList<>(List.of(market("test-buy-market", "[\"0.75\",\"0.25\"]")));
+        Map<String, Object> gamma = market("test-buy-market", "[\"0.75\",\"0.25\"]");
+        gamma.put("outcomes", "[\"Yes\",\"No\"]");
+        gamma.put("clobTokenIds", "[\"111\",\"222\"]");
+        net.gammaPages.put("test-buy-market", new ArrayList<>(List.of(gamma)));
+        net.books.put("111", jmap("{\"tick_size\":\"0.01\",\"neg_risk\":false,\"min_order_size\":\"5\","
+                + "\"asks\":[{\"price\":\"0.75\",\"size\":\"100\"}],"
+                + "\"bids\":[{\"price\":\"0.74\",\"size\":\"100\"}]}"));
     }
 
     private static Map<String, Object> market(String slug, String prices) {
@@ -306,7 +364,10 @@ public class NativeCycleTest {
         check("buy: 결과 OK", r == NativeCycle.Result.OK);
         check("buy: 주문 1회 제출", t.posts == 1);
         check("buy: 매수 로그", env.logged("매수 test-buy-market · $6 @ 0.77 체결가 0.77 · 상태 matched"));
-        check("buy: 체결 알림", env.notifications.contains("매수 체결|건당 $6 · 체결가 0.77"));
+        check("buy: 체결 알림", env.notifications.stream().anyMatch(ntx ->
+                ntx.startsWith("매수 체결|test-buy-market") && ntx.contains("체결가 0.77")
+                        && ntx.contains("7.79주") && ntx.contains("$6")));
+        check("buy: 오류 알림 없음", env.errorNotifications.isEmpty());
         check("buy: 기매수 기록", env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
         check("buy: 요약 제출 1", env.logged("사이클 요약 · 후보 1 · 검증 1 · 조회 1 · 제출 1"));
     }
@@ -342,7 +403,9 @@ public class NativeCycleTest {
         check("stoploss: 매도 로그", env.logged("손절 매도 test-sl-market · 진입 0.75 → 매도 0.4"));
         check("stoploss: 원장 기록", !store.map.isEmpty());
         check("stoploss: 매도 후 재스냅샷", net.positionsCalls >= 2);
-        check("stoploss: 알림", env.notifications.stream().anyMatch(n -> n.startsWith("손절 실행|")));
+        check("stoploss: 알림", env.notifications.stream().anyMatch(n -> n.startsWith("손절 체결|")
+                && n.contains("test-sl-market") && n.contains("체결가 0.4") && n.contains("실현손익")));
+        check("stoploss: 오류 알림 없음", env.errorNotifications.isEmpty());
     }
 
     private static void snapshotFailureFallback() {
@@ -474,7 +537,11 @@ public class NativeCycleTest {
         check("manual: 결과 OK", r == NativeCycle.Result.OK);
         check("manual: 주문 1회 제출", t.posts == 1);
         check("manual: 매도 로그", env.logged("수동 매도 test-ms-market · 진입 0.75 → 매도 0.55"));
-        check("manual: 알림", env.notifications.stream().anyMatch(n -> n.startsWith("수동 매도 실행|")));
+        check("manual: 알림", env.notifications.stream().anyMatch(n -> n.startsWith("수동 매도 체결|")
+                && n.contains("test-ms-market") && n.contains("실현손익")));
+        check("manual: 상태 기록 filled", env.durable.getOrDefault("bm_manual_sell_status", "")
+                .contains("\"outcome\":\"filled\""));
+        check("manual: 오류 알림 없음", env.errorNotifications.isEmpty());
         String ledger = env.durable.getOrDefault("bm_manual_sell", "");
         check("manual: 별도 장부 기록", ledger.contains("\"kind\":\"manual\"")
                 && ledger.contains("test-ms-market"));
@@ -536,6 +603,10 @@ public class NativeCycleTest {
         check("manual-stale: 제출 없음", t.posts == 0);
         check("manual-stale: 만료 로그", env.logged("수동 매도 요청 만료"));
         check("manual-stale: 요청 소비됨", "".equals(env.durable.get("bm_manual_sell_req")));
+        check("manual-stale: 상태 기록 expired (뷰어 표시)", env.durable
+                .getOrDefault("bm_manual_sell_status", "").contains("\"outcome\":\"expired\""));
+        check("manual-stale: 만료 오류 알림", env.errorNotified(
+                com.roomedia.boringmech.write.NotifyPolicy.KEY_MANUAL_EXPIRED));
     }
 
     private static void manualSellZeroShares() {
@@ -815,6 +886,162 @@ public class NativeCycleTest {
         check("manual-gen: 요청 보존", req.equals(env.durable.get("bm_manual_sell_req")));
     }
 
+    // ── 알림 가드 (v0.3.34) ─────────────────────────────────────────────
+    // 체결 판정 결과에 따라 알림 이벤트가 갈리는지, 오류 알림 중복
+    // 억제가 동작하는지를 검증한다. 알림은 판정 이후에만 생성되고,
+    // 미체결 같은 확정 결과에는 오류 알림이 없어야 한다.
+
+    private static void notifyBuySignFailure() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        buyStage(net);
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycleZeroKey(env, net, t, new FakeLedgerStore());
+        c.runIteration(1);
+        check("notify-sign: 제출 없음", t.posts == 0);
+        check("notify-sign: 서명 실패 로그", env.logged("주문 서명 실패 test-buy-market"));
+        check("notify-sign: 서명 실패 오류 알림", env.errorNotified(
+                com.roomedia.boringmech.write.NotifyPolicy.KEY_SIGN_FAIL));
+        check("notify-sign: 체결 알림 없음", env.notifications.isEmpty());
+        check("notify-sign: 기매수 기록 없음",
+                !env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+    }
+
+    private static void notifyBuyUnknown() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        buyStage(net);
+        OrderTransport t = new OrderTransport();
+        t.throwOnPost = true;
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        c.runIteration(1);
+        check("notify-unknown: 결과 불명 로그", env.logged("주문 결과 불명 test-buy-market"));
+        check("notify-unknown: 결과 불명 알림 (오류로 표기하지 않음)", env.errorNotifications.stream()
+                .anyMatch(n -> n.startsWith(com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_UNKNOWN
+                        + "|주문 결과 불명|")));
+        check("notify-unknown: 중복 방지 기록", env.durable.getOrDefault("bm_bought", "")
+                .contains("test-buy-market"));
+        check("notify-unknown: 체결 알림 없음", env.notifications.isEmpty());
+    }
+
+    private static void notifyBuyRejected() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        buyStage(net);
+        OrderTransport t = new OrderTransport();
+        t.responseBody = "{\"success\":false,\"status\":\"rejected\"}";
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        c.runIteration(1);
+        check("notify-rejected: 주문 실패 로그", env.logged("주문 실패 test-buy-market"));
+        check("notify-rejected: 주문 실패 오류 알림", env.errorNotified(
+                com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_FAILED));
+        check("notify-rejected: 체결 알림 없음", env.notifications.isEmpty());
+    }
+
+    private static void notifyBuyUnfilledQuiet() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        buyStage(net);
+        OrderTransport t = new OrderTransport();
+        t.responseBody = "{\"success\":true,\"status\":\"unmatched\"}";
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        c.runIteration(1);
+        check("notify-unfilled: 미체결 로그", env.logged("미체결 test-buy-market"));
+        check("notify-unfilled: 오류 알림 없음 (확정 결과는 잡음이 아니다)",
+                env.errorNotifications.isEmpty());
+        check("notify-unfilled: 체결 알림 없음", env.notifications.isEmpty());
+    }
+
+    private static void notifyManualSellUnknown() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        manualStage(net);
+        OrderTransport t = new OrderTransport();
+        t.throwOnPost = true;
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        env.durable.put("bm_manual_sell_req",
+                "{\"token_id\":\"123456789\",\"slug\":\"test-ms-market\",\"ts\":" + NOW + "}");
+        c.runIteration(1);
+        check("notify-ms-unknown: 실패 로그 (판정 경유)", env.logged("수동 매도 실패 test-ms-market"));
+        check("notify-ms-unknown: 결과 불명 알림", env.errorNotified(
+                com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_UNKNOWN));
+        check("notify-ms-unknown: 시도 토큰 기록", env.durable
+                .getOrDefault("bm_manual_sell_attempted", "").contains("123456789"));
+        check("notify-ms-unknown: 상태 기록 failed", env.durable
+                .getOrDefault("bm_manual_sell_status", "").contains("\"outcome\":\"failed\""));
+        check("notify-ms-unknown: 체결 알림 없음", env.notifications.isEmpty());
+    }
+
+    private static void notifyCycleErrorEscalation() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.failValue = true;
+        NativeCycle c = newCycle(env, net, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = null;
+        for (int i = 0; i < NativeCycle.ERROR_SELF_RESTART_THRESHOLD; i++) {
+            r = c.runIteration(1);
+        }
+        check("notify-cycle: 임계에서 RESTART", r == NativeCycle.Result.RESTART);
+        check("notify-cycle: 엔진 오류 알림", env.errorNotified(
+                com.roomedia.boringmech.write.NotifyPolicy.KEY_CYCLE_ERRORS));
+    }
+
+    private static void notifyPolicyDedupe() {
+        java.util.Map<String, Long> last = new java.util.HashMap<>();
+        String key = com.roomedia.boringmech.write.NotifyPolicy.KEY_SIGN_FAIL;
+        check("policy: 첫 발송 허용", com.roomedia.boringmech.write.NotifyPolicy
+                .shouldSendError(last, key, 1_000_000L));
+        com.roomedia.boringmech.write.NotifyPolicy.markErrorSent(last, key, 1_000_000L);
+        check("policy: 간격 안 재발송 억제", !com.roomedia.boringmech.write.NotifyPolicy
+                .shouldSendError(last, key, 1_000_000L
+                        + com.roomedia.boringmech.write.NotifyPolicy.ERROR_DEDUPE_MS - 1));
+        check("policy: 간격 지나면 허용", com.roomedia.boringmech.write.NotifyPolicy
+                .shouldSendError(last, key, 1_000_000L
+                        + com.roomedia.boringmech.write.NotifyPolicy.ERROR_DEDUPE_MS));
+        check("policy: 다른 사유는 독립", com.roomedia.boringmech.write.NotifyPolicy
+                .shouldSendError(last,
+                        com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_FAILED, 1_000_001L));
+        check("policy: 키 없음은 항상 허용", com.roomedia.boringmech.write.NotifyPolicy
+                .shouldSendError(last, null, 1_000_000L));
+    }
+
+    // HTTP 5xx+본문은 명시 거부가 아니라 결과 불명이다 — 감사 축 1 발견.
+    // 결과 불명이면 중복 방지를 위해 기매수 기록이 남아야 한다.
+    private static void notifyBuyHttp5xxIsUnknown() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        buyStage(net);
+        OrderTransport t = new OrderTransport();
+        t.responseStatus = 502;
+        t.responseBody = "Bad Gateway";
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        c.runIteration(1);
+        check("notify-5xx: 결과 불명 로그", env.logged("주문 결과 불명 test-buy-market"));
+        check("notify-5xx: 결과 불명 알림", env.errorNotified(
+                com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_UNKNOWN));
+        check("notify-5xx: 주문 실패 알림 아님", !env.errorNotified(
+                com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_FAILED));
+        check("notify-5xx: 중복 방지 기록", env.durable.getOrDefault("bm_bought", "")
+                .contains("test-buy-market"));
+    }
+
+    // 알림 발송이 예외를 던져도 체결 판정이 뒤집히지 않는지 — 감사 축 2
+    // 발견 F-1의 가드. 체결은 원장에 남고 상태는 filled로 기록돼야 한다.
+    private static void notifyThrowDoesNotFlipFill() {
+        FakeEnv env = new FakeEnv();
+        env.throwOnNotify = true;
+        FakeNet net = new FakeNet();
+        buyStage(net);
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        c.runIteration(1);
+        check("notify-throw: 매수 체결 로그 유지", env.logged("매수 test-buy-market"));
+        check("notify-throw: 기매수 기록 유지",
+                env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+        check("notify-throw: 오류 알림으로 뒤집히지 않음",
+                !env.errorNotified(com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_FAILED));
+    }
+
     private static void pureLogic() {
         check("reload: 9회는 부족", !NativeCycle.shouldSelfReload(9, 0, NOW));
         check("reload: 10회+쿨다운 경과", NativeCycle.shouldSelfReload(10, 0, NOW));
@@ -878,6 +1105,15 @@ public class NativeCycleTest {
         buySlugsIncompleteCursor();
         positionsFetcherPartial();
         manualSellStaleGeneration();
+        notifyBuySignFailure();
+        notifyBuyUnknown();
+        notifyBuyRejected();
+        notifyBuyUnfilledQuiet();
+        notifyManualSellUnknown();
+        notifyCycleErrorEscalation();
+        notifyPolicyDedupe();
+        notifyThrowDoesNotFlipFill();
+        notifyBuyHttp5xxIsUnknown();
         pureLogic();
         System.out.println("NativeCycleTest: " + passed + " passed, " + failed + " failed");
         if (failed > 0) {
