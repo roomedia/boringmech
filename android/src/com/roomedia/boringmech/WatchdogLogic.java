@@ -42,6 +42,10 @@ public final class WatchdogLogic {
         // 중이면 이 값만으로 정체가 아니라고 판정할 수 있다.
         public long progressMs;     // 0=없음
         public boolean submitInFlight;
+        // 제출이 시작된 시각, 0=없음/미상. 가드 상한은 이 시각부터의
+        // 경과로 잰다 — 네이티브 하트비트는 전용 타이머 스레드가 찍어
+        // 엔진 스레드 정지와 무관하게 신선하므로 경과 기준이 못 된다.
+        public long submitSinceMs;
         // 현재 페이지 세대의 부팅을 기다리기 시작한 시각, 0=부팅 완료.
         // 로드·재로드·재생성 지시 때마다 새로 잡힌다.
         public long bootSinceMs;
@@ -100,9 +104,11 @@ public final class WatchdogLogic {
         long cycleBase = Math.max(Math.max(in.cycleChangedMs, in.progressMs), anchor);
         boolean cycleStalled = in.now - cycleBase > CYCLE_STALL_MS;
         if (!stale && !cycleStalled) return d;
-        // 제출 진행 중이면 재로드를 미룬다 (F1) — 단, 하트비트가 가드
-        // 상한보다 오래됐으면 제출이 끝난 것으로 보고 무시한다.
-        if (in.submitInFlight && in.now - in.heartbeatMs <= SUBMIT_GUARD_MAX_MS) {
+        // 제출 진행 중이면 재로드를 미룬다 (F1) — 단, 제출 시작부터
+        // 가드 상한보다 오래됐으면 제출이 멈춘 것으로 보고 무시한다.
+        // 시작 시각이 없으면(미상) 무기한 미루지 않는다.
+        if (in.submitInFlight && in.submitSinceMs > 0
+                && in.now - in.submitSinceMs <= SUBMIT_GUARD_MAX_MS) {
             return d;
         }
         d.action = Action.RELOAD;

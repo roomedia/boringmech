@@ -217,12 +217,21 @@ public final class RedeemPlan {
             List<Object> winRows, List<Object> lostRows, List<Object> closedRows) {
         List<Object> pending = new ArrayList<>();
         Map<String, Object> byKey = new LinkedHashMap<>();
+        boolean droppedDone = false;
         for (Object e : pendingIn != null ? pendingIn : List.<Object>of()) {
+            // 이미 회수·종결한 condition이 pending에 남아 있어도 다시 넣지
+            // 않는다 — 신규 행에만 done 검사를 하면, history 기록 후 pending
+            // 제거가 실패한 비원자 구간에서 기리딤 건이 재제출된다.
+            Object cidRaw = Js.field(e, "condition_id");
+            if (Js.truthy(cidRaw) && doneConds.contains(cidRaw)) {
+                droppedDone = true;
+                continue;
+            }
             Object copy = e instanceof Map ? new LinkedHashMap<>((Map<?, ?>) e) : e;
             pending.add(copy);
             byKey.putIfAbsent(keyOf(copy), copy);
         }
-        boolean[] changed = {false};
+        boolean[] changed = {droppedDone};
         addRows(pending, byKey, doneConds, winRows, "REDEEMABLE", changed);
         addRows(pending, byKey, doneConds, lostRows, "REDEEMABLE_LOST", changed);
 

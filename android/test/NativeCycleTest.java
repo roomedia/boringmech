@@ -5,6 +5,9 @@ import com.roomedia.boringmech.engine.BoughtReconcile;
 import com.roomedia.boringmech.engine.JsonText;
 import com.roomedia.boringmech.engine.NativeCycle;
 import com.roomedia.boringmech.engine.PositionBook;
+import com.roomedia.boringmech.engine.PositionsFetcher;
+import com.roomedia.boringmech.engine.RedeemPlan;
+import com.roomedia.boringmech.engine.StopLoss;
 import com.roomedia.boringmech.write.ClobWriteClient;
 import com.roomedia.boringmech.write.JsonCodec;
 import com.roomedia.boringmech.write.ManualSell;
@@ -19,9 +22,11 @@ import java.math.BigInteger;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Supplier;
 
 public class NativeCycleTest {
@@ -121,16 +126,19 @@ public class NativeCycleTest {
         boolean failValue = false;
         boolean failMarkets = false;
         boolean failBuySlugs = false;
+        boolean failSettled = false;
+        NativeCycle.MarketContext marketContext;
         Runnable onFetchMarkets;
         int positionsCalls = 0;
         Object latestRelease;
 
         @Override
-        public List<Object> fetchPositions(String status) {
+        public List<Object> fetchPositions(String status) throws Exception {
             if (status == null) {
                 positionsCalls++;
                 return positions;
             }
+            if (failSettled) throw new Exception("settled boom");
             switch (status) {
                 case "REDEEMABLE": return winRows;
                 case "REDEEMABLE_LOST": return lostRows;
@@ -164,7 +172,7 @@ public class NativeCycleTest {
 
         @Override
         public NativeCycle.MarketContext fetchMarketContext(String conditionId) {
-            return null;
+            return marketContext;
         }
 
         @Override
@@ -587,6 +595,191 @@ public class NativeCycleTest {
                 && env.snapCache.contains("\"fee_rate\":0.04"));
     }
 
+    /** open 판정 통일 가드 — PositionBook 장부 기준과 스냅샷 종목 목록이
+     *  어긋나던 v0.3.31 실기기 결함(status 없는 보유 행 누락)의 재발 방지. */
+    private static void openFilterConsistency() {
+        Map<String, Object> noStatus = manualRow();
+        noStatus.remove("status");
+        Map<String, Object> closedUnit = manualRow();
+        closedUnit.put("status", "CLOSED");
+        check("open-filter: status 없는 행은 open", PositionBook.isOpenRow(noStatus));
+        check("open-filter: 명시적 OPEN은 open", PositionBook.isOpenRow(manualRow()));
+        check("open-filter: CLOSED 행은 제외", !PositionBook.isOpenRow(closedUnit));
+
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        manualStage(net);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> liveRow = (Map<String, Object>) net.positions.get(0);
+        liveRow.remove("status");
+        Map<String, Object> closedRow = manualRow();
+        closedRow.put("slug", "closed-market");
+        closedRow.put("title", "Closed market?");
+        closedRow.put("token_id", "987654321");
+        closedRow.put("status", "CLOSED");
+        net.positions.add(closedRow);
+        NativeCycle c = newCycle(env, net, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        c.runIteration(1);
+        check("open-filter: 스냅샷 종목 목록에 status 없는 행 포함", env.snapCache != null
+                && env.snapCache.contains("\"title\":\"Test market question?\""));
+        check("open-filter: 스냅샷 종목 목록에서 CLOSED 행 제외", env.snapCache != null
+                && !env.snapCache.contains("Closed market?"));
+        check("open-filter: openCount는 1건", env.snapCache != null
+                && env.snapCache.contains("\"openCount\":1"));
+    }
+
+    // ── v0.3.32 전면 감사 수리 가드 ─────────────────────────────────────
+
+    /** 감사 F2 — 십진으로 정확히 −0.25인 가격 쌍이 double 오차로 미발화하면 안 된다. */
+    private static void stopLossBoundary() {
+        check("boundary: 0.30→0.05 발화", "triggered".equals(StopLoss.verdict(0.30, 0.05)));
+        check("boundary: 0.35→0.10 발화", "triggered".equals(StopLoss.verdict(0.35, 0.10)));
+        check("boundary: 0.41→0.16 발화", "triggered".equals(StopLoss.verdict(0.41, 0.16)));
+        check("boundary: 0.57→0.32 발화", "triggered".equals(StopLoss.verdict(0.57, 0.32)));
+        check("boundary: 0.70→0.45 발화", "triggered".equals(StopLoss.verdict(0.70, 0.45)));
+        check("boundary: −0.24는 보유", "holding".equals(StopLoss.verdict(0.30, 0.06)));
+    }
+
+    /** 감사 F1 — 원장 아카이브 회전이 slug를 버리면 재매수 차단이 풀린다. */
+    private static void ledgerArchiveKeepsSlug() {
+        FakeLedgerStore store = new FakeLedgerStore();
+        for (int i = 0; i < 201; i++) {
+            Map<String, Object> rec = new LinkedHashMap<>();
+            rec.put("token_id", "tok" + i);
+            rec.put("slug", "slug-" + i);
+            rec.put("realized_pnl", -1.0);
+            StopLossLedger.recordStopLoss(store, rec);
+        }
+        List<Object> all = StopLossLedger.records(store);
+        check("archive: 전체 201건 유지", all.size() == 201);
+        Object first = all.get(0);
+        check("archive: 회전된 기록도 slug 보존",
+                "slug-0".equals(com.roomedia.boringmech.engine.Js.field(first, "slug")));
+    }
+
+    /** 감사 F3 — ingest는 기존 pending 항목에도 done 검사를 적용해야 한다. */
+    private static void redeemIngestDropsDone() {
+        String doneCid = "0x" + "ab".repeat(32);
+        String liveCid = "0x" + "cd".repeat(32);
+        List<Object> pendingIn = new ArrayList<>();
+        Map<String, Object> doneEntry = new LinkedHashMap<>();
+        doneEntry.put("condition_id", doneCid);
+        doneEntry.put("token_id", "t1");
+        pendingIn.add(doneEntry);
+        Map<String, Object> liveEntry = new LinkedHashMap<>();
+        liveEntry.put("condition_id", liveCid);
+        liveEntry.put("token_id", "t2");
+        pendingIn.add(liveEntry);
+        Set<Object> done = new HashSet<>();
+        done.add(doneCid);
+        RedeemPlan.Ingest ing = RedeemPlan.ingest(pendingIn, done, null, null, null);
+        check("ingest: 기리딤 건은 pending에서 제외", ing.pending.size() == 1
+                && liveCid.equals(com.roomedia.boringmech.engine.Js.field(ing.pending.get(0), "condition_id")));
+        check("ingest: 제외는 변경으로 표시", ing.changed);
+    }
+
+    /** 감사 F4 — CTF 토큰 ID가 없으면 잔고 게이트 없이 제출하지 않는다. */
+    private static void redeemCtfNoGateNoSubmit() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.marketContext = new NativeCycle.MarketContext(false, "v1", null, null);
+        String cid = "0x" + "ab".repeat(32);
+        env.durable.put("bm_redeem_pending",
+                "[{\"condition_id\":\"" + cid + "\",\"status\":\"REDEEMABLE\",\"current_value\":12.5}]");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(),
+                () -> new RedeemSubmitter.RelayerCreds("key", EOA));
+        c.runIteration(1);
+        check("ctf-gate: 제출 없음", t.posts == 0);
+        check("ctf-gate: pending 유지", env.durable.getOrDefault("bm_redeem_pending", "").contains(cid));
+    }
+
+    /** 감사 F5 — 정산 조회 실패(증거 없음) 사이클에서는 worthless streak가 오르지 않는다. */
+    private static void redeemStreakNeedsEvidence() {
+        String cid = "0x" + "ab".repeat(32);
+        String seed = "[{\"condition_id\":\"" + cid + "\",\"status\":\"REDEEMABLE\","
+                + "\"current_value\":0,\"zero_streak\":2}]";
+        // 증거 없는 사이클 — streak 동결, 종결 없음
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.failSettled = true;
+        env.durable.put("bm_redeem_pending", seed);
+        NativeCycle c = newCycle(env, net, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        c.runIteration(1);
+        check("streak: 증거 없으면 동결", env.durable.getOrDefault("bm_redeem_pending", "")
+                .contains("\"zero_streak\":2"));
+        check("streak: 증거 없으면 종결 없음", env.durable.get("bm_redeem_closed") == null);
+        // 증거 있는 사이클 — streak가 올라 3에서 종결된다 (대조군)
+        FakeEnv env2 = new FakeEnv();
+        FakeNet net2 = new FakeNet();
+        env2.durable.put("bm_redeem_pending", seed);
+        NativeCycle c2 = newCycle(env2, net2, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        c2.runIteration(1);
+        check("streak: 증거 있으면 종결", env2.durable.getOrDefault("bm_redeem_closed", "").contains(cid));
+    }
+
+    /** 감사 F6 — has_more인데 커서가 없거나 순환하면 완결로 판정하지 않는다. */
+    private static void buySlugsIncompleteCursor() {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("type", "TRADE");
+        row.put("side", "BUY");
+        row.put("slug", "s1");
+        Map<String, Object> pageNoCursor = new LinkedHashMap<>();
+        pageNoCursor.put("data", new ArrayList<>(List.of(row)));
+        Map<String, Object> pg1 = new LinkedHashMap<>();
+        pg1.put("has_more", true);
+        pageNoCursor.put("pagination", pg1);
+        try {
+            BoughtReconcile.BuySlugs r = BoughtReconcile.fetchBuySlugs(FUNDER, (f, cur) -> pageNoCursor);
+            check("buyslugs: 커서 없으면 미완결", !r.complete);
+        } catch (Exception e) {
+            check("buyslugs: 커서 없으면 미완결", false);
+        }
+        Map<String, Object> pageLast = new LinkedHashMap<>();
+        pageLast.put("data", new ArrayList<>(List.of(row)));
+        Map<String, Object> pg2 = new LinkedHashMap<>();
+        pg2.put("has_more", false);
+        pageLast.put("pagination", pg2);
+        try {
+            BoughtReconcile.BuySlugs r = BoughtReconcile.fetchBuySlugs(FUNDER, (f, cur) -> pageLast);
+            check("buyslugs: has_more=false면 완결", r.complete && r.slugs.contains("s1"));
+        } catch (Exception e) {
+            check("buyslugs: has_more=false면 완결", false);
+        }
+    }
+
+    /** 감사 F8 — has_more인데 next_cursor가 없으면 부분 목록을 확정하지 않는다. */
+    private static void positionsFetcherPartial() {
+        Map<String, Object> page = new LinkedHashMap<>();
+        page.put("data", new ArrayList<>(List.of(manualRow())));
+        Map<String, Object> pg = new LinkedHashMap<>();
+        pg.put("has_more", true);
+        page.put("pagination", pg);
+        boolean threw = false;
+        try {
+            PositionsFetcher.fetchPositions(FUNDER, null, (f, s, cur) -> page);
+        } catch (PositionsFetcher.FetchException e) {
+            threw = true;
+        } catch (Exception e) {
+            threw = false;
+        }
+        check("positions: has_more+커서 없음은 실패", threw);
+    }
+
+    /** 감사 F9 — 구 세대는 수동 매도 요청을 소비하지 않는다 (새 세션이 이어받는다). */
+    private static void manualSellStaleGeneration() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        manualStage(net);
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        String req = "{\"token_id\":\"123456789\",\"slug\":\"test-ms-market\",\"ts\":" + NOW + "}";
+        env.durable.put("bm_manual_sell_req", req);
+        int sold = c.processManualSell(999);
+        check("manual-gen: 구 세대 매도 없음", sold == 0 && t.posts == 0);
+        check("manual-gen: 요청 보존", req.equals(env.durable.get("bm_manual_sell_req")));
+    }
+
     private static void pureLogic() {
         check("reload: 9회는 부족", !NativeCycle.shouldSelfReload(9, 0, NOW));
         check("reload: 10회+쿨다운 경과", NativeCycle.shouldSelfReload(10, 0, NOW));
@@ -640,6 +833,15 @@ public class NativeCycleTest {
         manualSellUnknownToken();
         manualSellLockShared();
         feeRateCache();
+        openFilterConsistency();
+        stopLossBoundary();
+        ledgerArchiveKeepsSlug();
+        redeemIngestDropsDone();
+        redeemCtfNoGateNoSubmit();
+        redeemStreakNeedsEvidence();
+        buySlugsIncompleteCursor();
+        positionsFetcherPartial();
+        manualSellStaleGeneration();
         pureLogic();
         System.out.println("NativeCycleTest: " + passed + " passed, " + failed + " failed");
         if (failed > 0) {

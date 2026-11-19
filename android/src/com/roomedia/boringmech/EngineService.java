@@ -58,6 +58,7 @@ public class EngineService extends Service {
     private static final String KEY_DIRECTIVE_UNACKED = "directive_unacked";
     private static final String KEY_SNAP_CACHE = "snap_cache";
     private static final String KEY_SUBMIT_IN_FLIGHT = "submit_in_flight";
+    private static final String KEY_SUBMIT_SINCE_MS = "submit_since_ms";
     // 네이티브 섀도우용 미러 — JS boot/link가 남긴다 (Bridge.setFunderMirror 등)
     private static final String KEY_FUNDER = "funder";
     private static final String KEY_EOA = "eoa";
@@ -218,11 +219,25 @@ public class EngineService extends Service {
     }
 
     static void setSubmitInFlight(Context ctx, boolean on) {
-        prefs(ctx).edit().putBoolean(KEY_SUBMIT_IN_FLIGHT, on).apply();
+        SharedPreferences p = prefs(ctx);
+        SharedPreferences.Editor e = p.edit().putBoolean(KEY_SUBMIT_IN_FLIGHT, on);
+        if (on) {
+            // 제출 시작 시각을 함께 남긴다 — 워치독 가드 상한의 경과 기준.
+            if (p.getLong(KEY_SUBMIT_SINCE_MS, 0) == 0) {
+                e.putLong(KEY_SUBMIT_SINCE_MS, System.currentTimeMillis());
+            }
+        } else {
+            e.putLong(KEY_SUBMIT_SINCE_MS, 0);
+        }
+        e.apply();
     }
 
     static boolean getSubmitInFlight(Context ctx) {
         return prefs(ctx).getBoolean(KEY_SUBMIT_IN_FLIGHT, false);
+    }
+
+    static long getSubmitSinceMs(Context ctx) {
+        return prefs(ctx).getLong(KEY_SUBMIT_SINCE_MS, 0);
     }
 
     static void putSnapCache(Context ctx, String json) {
@@ -542,6 +557,7 @@ public class EngineService extends Service {
         in.cycleChangedMs = p.getLong(KEY_HEARTBEAT_CYCLE_CHANGED_MS, 0);
         in.progressMs = p.getLong(KEY_PROGRESS_MS, 0);
         in.submitInFlight = getSubmitInFlight(this);
+        in.submitSinceMs = getSubmitSinceMs(this);
         in.bootSinceMs = wdBootSinceMs;
 
         WatchdogLogic.Decision d = WatchdogLogic.decide(in);
@@ -562,7 +578,8 @@ public class EngineService extends Service {
                     .remove(KEY_HEARTBEAT_MS)
                     .remove(KEY_HEARTBEAT_CYCLE)
                     .remove(KEY_HEARTBEAT_CYCLE_CHANGED_MS)
-                    .putBoolean(KEY_SUBMIT_IN_FLIGHT, false);
+                    .putBoolean(KEY_SUBMIT_IN_FLIGHT, false)
+                    .putLong(KEY_SUBMIT_SINCE_MS, 0);
             if (d.cycleReason) {
                 e.putInt(KEY_WD_CYCLE_RELOADS,
                         p.getInt(KEY_WD_CYCLE_RELOADS, 0) + 1);

@@ -76,6 +76,11 @@ public final class PositionsFetcher {
             }
             Object nextCursor = Js.field(pagination, "next_cursor");
             if (!Js.truthy(nextCursor)) {
+                // 뒤가 더 있는데 커서가 없으면 절단된 목록이다 — 빈 페이지
+                // 분기와 같은 이유로 실패로 던진다.
+                if (hasMore) {
+                    throw new FetchException("포지션 조회 부분 응답 — has_more인데 next_cursor 없음");
+                }
                 return out;
             }
             cursor = Js.str(nextCursor);

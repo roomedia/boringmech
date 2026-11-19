@@ -34,7 +34,9 @@ public final class StopLoss {
         if (current >= DECIDED_HIGH || current <= DECIDED_LOW) {
             return "decided";
         }
-        if (current <= entry - STOP_DROP) {
+        // 경계 허용 오차 — 십진으로 정확히 −STOP_DROP인 쌍(예: 0.30→0.05)이
+        // double 연산 오차(0.30-0.25=0.04999…)로 미발화하는 것을 막는다.
+        if (current <= entry - STOP_DROP + 1e-9) {
             return "triggered";
         }
         return "holding";

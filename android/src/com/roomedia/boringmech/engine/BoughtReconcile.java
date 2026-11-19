@@ -106,8 +106,13 @@ public final class BoughtReconcile {
                 }
             }
             Object next = Js.field(pagination, "next_cursor");
-            if (!hasMore || !Js.truthy(next) || (cursor != null && next.equals(cursor))) {
+            if (!hasMore) {
                 return new BuySlugs(slugs, true);
+            }
+            if (!Js.truthy(next) || (cursor != null && next.equals(cursor))) {
+                // 뒤가 더 있는데 진행할 커서가 없거나 순환한다 — 부분 응답이라
+                // 완결로 판정하면 정화가 실체결 기록을 지울 수 있다.
+                return new BuySlugs(slugs, false);
             }
             cursor = next;
         }

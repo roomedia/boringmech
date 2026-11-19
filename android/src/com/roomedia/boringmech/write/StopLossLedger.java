@@ -99,6 +99,9 @@ public final class StopLossLedger {
                 Object old = recent.remove(0);
                 Map<String, Object> slim = new LinkedHashMap<>();
                 slim.put("token_id", Js.field(old, "token_id"));
+                // slug는 재매수 차단 집합(stopLossSlugs)의 유일한 근거라
+                // 아카이브에서도 보존한다 — 버리면 200건 초과분부터 차단이 풀린다.
+                slim.put("slug", Js.field(old, "slug"));
                 slim.put("realized_pnl", Js.fieldNum(old, "realized_pnl"));
                 archive.add(slim);
             }

@@ -146,6 +146,37 @@ public final class PositionBook {
         }
     }
 
+    /**
+     * open 판정 단일 기준 — 장부 집계·스냅샷 종목 목록·손절 대상이 전부
+     * 이 판정을 공유한다. status가 "OPEN"인 행이 본체. status가 비어 있는
+     * 행은 수량이 있으면 보유로 본다 (실기기 응답에는 status가 없는 행이
+     * 있다). 그 외 명시적 status("CLOSED" 등)는 보유가 아니다.
+     */
+    public static boolean isOpenRow(Object p) {
+        Object status = Js.field(p, "status");
+        if ("OPEN".equals(status)) {
+            return true;
+        }
+        if (!Js.truthy(status)) {
+            double size = Js.fieldNum(p, "current_size");
+            return Double.isFinite(size) && size > 0;
+        }
+        return false;
+    }
+
+    /** open 행만 추린다 — 중복 행도 dedupe하지 않는다 (원본 그대로). */
+    public static List<Object> openRows(List<Object> rows) {
+        List<Object> open = new ArrayList<>();
+        if (rows != null) {
+            for (Object p : rows) {
+                if (isOpenRow(p)) {
+                    open.add(p);
+                }
+            }
+        }
+        return open;
+    }
+
     private interface VerdictFn {
         String of(Object row);
     }
@@ -164,22 +195,8 @@ public final class PositionBook {
         Set<Object> attempted = attemptedTokens != null ? attemptedTokens : Set.of();
         Book book = new Book();
 
-        // open 판정 — status가 "OPEN"인 행이 본체. status가 비어 있는 행은
-        // 수량이 있으면 보유로 본다. 중복 행도 dedupe하지 않는다 (원본 그대로).
-        List<Object> open = new ArrayList<>();
-        if (allRows != null) {
-            for (Object p : allRows) {
-                Object status = Js.field(p, "status");
-                if ("OPEN".equals(status)) {
-                    open.add(p);
-                } else if (!Js.truthy(status)) {
-                    double size = Js.fieldNum(p, "current_size");
-                    if (Double.isFinite(size) && size > 0) {
-                        open.add(p);
-                    }
-                }
-            }
-        }
+        // open 판정은 isOpenRow 단일 기준을 쓴다 (스냅샷 종목 목록과 동일).
+        List<Object> open = openRows(allRows);
         book.openCount = open.size();
 
         double value = 0;

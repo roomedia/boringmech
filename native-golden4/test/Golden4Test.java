@@ -379,7 +379,10 @@ public class Golden4Test {
         List<Object> archive = asList(store.read(StopLossLedger.KEY_ARCHIVE));
         eq("ledger archive", 5, archive.size());
         Map<String, Object> slim = asMap(archive.get(0));
-        eq("ledger archive slim keys", 2, slim.size());
+        // slim은 token_id·slug·realized_pnl 3키 — slug는 재매수 차단
+        // 집합의 근거라 아카이브에서도 보존한다 (v0.3.32 감사 수리).
+        eq("ledger archive slim keys", 3, slim.size());
+        eq("ledger archive slim slug", "slug0", slim.get("slug"));
         for (int i = 0; i < 250; i++) {
             StopLossLedger.recordAttempt(store, "att" + i);
         }

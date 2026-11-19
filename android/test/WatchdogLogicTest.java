@@ -110,16 +110,27 @@ public class WatchdogLogicTest {
         check("stuck inside stage reloads", d.action == Action.RELOAD);
         check("stuck inside stage reason", d.cycleReason);
 
-        // 제출 가드 — stale이어도 제출 중 + 하트비트가 상한 안이면 보류
+        // 제출 가드 — 정체여도 제출 경과가 상한 안이면 보류
         in = base();
         in.heartbeatMs = NOW - 300_000L;
         in.cycleChangedMs = NOW - 300_000L;
         in.progressMs = NOW - 300_000L;
         in.submitInFlight = true;
+        in.submitSinceMs = NOW - 300_000L;
         expect("submit guard defers", in, Action.NONE);
-        // 가드 상한 경과 — 제출이 끝난 것으로 보고 재로드
-        in.heartbeatMs = NOW - WatchdogLogic.SUBMIT_GUARD_MAX_MS - 1;
+        // 가드 상한 경과 — 제출이 멈춘 것으로 보고 재로드
+        in.submitSinceMs = NOW - WatchdogLogic.SUBMIT_GUARD_MAX_MS - 1;
         expect("submit guard expired", in, Action.RELOAD);
+        // 회귀: 하트비트가 신선해도(전용 타이머) 제출 경과가 상한을 넘으면
+        // 재로드한다 — 종전 하트비트 기준 판정은 네이티브에서 영원히
+        // 발동하지 않았다.
+        in = base();
+        in.heartbeatMs = NOW - 30_000L;
+        in.cycleChangedMs = NOW - 600_000L;
+        in.progressMs = NOW - 600_000L;
+        in.submitInFlight = true;
+        in.submitSinceMs = NOW - WatchdogLogic.SUBMIT_GUARD_MAX_MS - 1;
+        expect("submit guard expired despite fresh heartbeat", in, Action.RELOAD);
 
         // 부팅 감시 — 로드 직후 유예 안에서는 stale이어도 손대지 않는다
         in = base();

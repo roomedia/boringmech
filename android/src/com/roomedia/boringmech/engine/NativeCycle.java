@@ -328,12 +328,9 @@ public final class NativeCycle {
         snap.bet = sizing.bet;
         snap.slots = (int) sizing.slots;
         lastSnapshot = snap;
-        List<Object> open = new ArrayList<>();
-        for (Object p : positions) {
-            if ("OPEN".equals(Js.field(p, "status"))) {
-                open.add(p);
-            }
-        }
+        // open 판정은 PositionBook 단일 기준 — 장부 openCount와 종목 목록이
+        // 어긋나지 않게 한다 (status 없는 실기기 행 누락 방지).
+        List<Object> open = PositionBook.openRows(positions);
         lastOpenRows = open;
         lastWinRows = winRows;
         lastLostRows = lostRows;
@@ -521,6 +518,12 @@ public final class NativeCycle {
      * 제출하지 않는다. 반환값은 매도 성공 건수(0 또는 1).
      */
     public int processManualSell(int gen) {
+        if (!env.isRunning(gen)) {
+            // 요청을 소비하기 전에 세대를 확인한다 — 구 세션이 키만 비우고
+            // 실행은 세대 게이트에 막히면 요청이 소실된다. 새 세션이 이어서
+            // 처리할 수 있게 남겨 둔다.
+            return 0;
+        }
         String raw = env.durableRead(ManualSell.REQUEST_KEY);
         if (raw == null || raw.isEmpty()) {
             return 0;
@@ -688,7 +691,13 @@ public final class NativeCycle {
             }
             return submitRedeem(target.conditionId, calls, creds);
         }
-        if (ctx.tokenIds != null) {
+        if (ctx.tokenIds == null || ctx.tokenIds.size() < 2) {
+            // 잔고 게이트를 걸 수 없으면 제출하지 않는다 — 제출 확인이 늦어
+            // 다음 사이클에 재시도될 때, 이미 회수된 건을 게이트 없이 다시
+            // 제출하는 중복 온체인 제출을 막기 위해서다 (v2 분기와 동일 원칙).
+            throw new Exception("CTF 토큰 ID 없음 — 잔고 게이트 없이 제출 보류");
+        }
+        {
             List<BigInteger> balances = new ArrayList<>();
             for (int i = 0; i < 2; i++) {
                 balances.add(net.erc1155Balance(CTF_CONTRACT, funder, ctx.tokenIds.get(i)));
@@ -742,7 +751,12 @@ public final class NativeCycle {
             pending = kept;
             log("리딤 계획 제외 " + plan.errors.size() + "건 — condition_id 형식 오류로 대기 목록에서 제거");
         }
-        if (!plan.worthless.isEmpty()) {
+        // worthless streak는 이번 사이클에 정산 조회가 성공해 새 증거가 있을
+        // 때만 올린다. 조회 실패로 win/lost/closed가 전부 null인 사이클에서
+        // 저장된 항목만으로 streak가 올라 종결(bm_redeem_closed, 비가역)까지
+        // 가면, 가치 갱신이 늦은 승자 건이 영구 누락된다.
+        boolean settlementKnown = lastWinRows != null || lastLostRows != null || lastClosedRows != null;
+        if (!plan.worthless.isEmpty() && settlementKnown) {
             Map<Object, Map<String, Object>> byCond = new LinkedHashMap<>();
             for (Object e : pending) {
                 if (e instanceof Map) {
@@ -1053,13 +1067,7 @@ public final class NativeCycle {
         } catch (Exception e) {
             try {
                 List<Object> rows = net.fetchPositions(null);
-                List<Object> open = new ArrayList<>();
-                for (Object p : rows) {
-                    if ("OPEN".equals(Js.field(p, "status"))) {
-                        open.add(p);
-                    }
-                }
-                lastOpenRows = open;
+                lastOpenRows = PositionBook.openRows(rows);
                 env.setStage("stoploss", cycle);
                 runStopLoss(gen);
                 log("스냅샷 실패로 손절만 단독 실행함 — 원래 오류: " + slice(msg(e), 100));

@@ -29,7 +29,9 @@ public final class StopLoss {
         if (current >= DECIDED_HIGH || current <= DECIDED_LOW) {
             return "decided";
         }
-        if (current <= entry - STOP_DROP) {
+        // 경계 허용 오차 — engine/StopLoss.verdict와 동일 (십진 경계 쌍의
+        // double 연산 오차로 인한 미발화 방지).
+        if (current <= entry - STOP_DROP + 1e-9) {
             return "triggered";
         }
         return "holding";

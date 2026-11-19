@@ -236,7 +236,13 @@ export async function fetchPositions(funder, status) {
       out.push(p);
     }
     cursor = data.pagination?.next_cursor;
-    if (!cursor) return out;
+    if (!cursor) {
+      // 뒤가 더 있는데 커서가 없으면 절단된 목록이다 (v0.3.32 감사).
+      if (data.pagination?.has_more) {
+        throw new Error("포지션 조회 부분 응답 — has_more인데 next_cursor 없음");
+      }
+      return out;
+    }
   }
 }
 
@@ -665,7 +671,10 @@ async function fetchBuySlugs(funder) {
       if (r?.type === "TRADE" && r?.side === "BUY" && r?.slug) slugs.add(r.slug);
     }
     const next = data?.pagination?.next_cursor;
-    if (!hasMore || !next || next === cursor) return { slugs, complete: true };
+    if (!hasMore) return { slugs, complete: true };
+    // 뒤가 더 있는데 진행할 커서가 없거나 순환하면 부분 응답이다 —
+    // 완결로 판정하면 정화가 실체결 기록을 지울 수 있다 (v0.3.32 감사).
+    if (!next || next === cursor) return { slugs, complete: false };
     cursor = next;
   }
   // 페이지 상한에 닿아 끊겼다 — 뒤에 남은 이력이 진실에서 빠져 있다
@@ -1244,7 +1253,9 @@ function notifyMoney(title, body) {
 export function stopLossVerdict(entry, current) {
   if (!Number.isFinite(entry) || !Number.isFinite(current)) return "skip";
   if (current >= DECIDED_HIGH || current <= DECIDED_LOW) return "decided";
-  if (current <= entry - STOP_DROP) return "triggered";
+  // 경계 허용 오차 — 십진으로 정확히 −STOP_DROP인 쌍(0.30→0.05 등)이
+  // double 연산 오차로 미발화하는 것을 막는다 (v0.3.32 감사).
+  if (current <= entry - STOP_DROP + 1e-9) return "triggered";
   return "holding";
 }
 
@@ -1312,7 +1323,9 @@ export function recordStopLoss(rec) {
   let archive = parseStopLossList(durableRead(LS.stopLossArchive));
   while (recent.length > STOPLOSS_RECENT_CAP) {
     const old = recent.shift();
-    archive.push({ token_id: old.token_id, realized_pnl: Number(old.realized_pnl) });
+    // slug는 재매수 차단 집합(stopLossSlugs)의 근거라 아카이브에서도
+    // 보존한다 — 버리면 캡 초과분부터 차단이 풀린다 (v0.3.32 감사).
+    archive.push({ token_id: old.token_id, slug: old.slug, realized_pnl: Number(old.realized_pnl) });
   }
   if (archive.length > STOPLOSS_ARCHIVE_CAP) {
     archive = archive.slice(-STOPLOSS_ARCHIVE_CAP);
