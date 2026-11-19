@@ -23,6 +23,11 @@ import java.util.Map;
  * 클라이언트 메서드 호출은 각각 withClientTimeout 등가(TimeoutRunner)로
  * 감싼다 — ClobWriteClient 내부에도 있지만, 잔고·오더북 조회는 별도
  * 메서드라 여기서 감싼다.
+ *
+ * 수동 매도(executeManualSell)는 같은 실행 코어를 트리거만 바꿔 타는
+ * 경로다 — 잠금 키(slug)·제출 가드·잔고 확정·하한가·FOK가 전부 같고,
+ * 로그 접두사와 기록 장부만 "수동 매도"로 갈린다. 손절 원장에 섞으면
+ * 정산 집계의 손절 건수와 재매수 차단 집합이 왜곡되기 때문이다.
  */
 public final class StopLossSeller {
     /** SDK getBalanceAllowance(CONDITIONAL) 등가 — 원시 잔고(1e6 스케일) 반환. */
@@ -59,6 +64,17 @@ public final class StopLossSeller {
         long nowMs();
     }
 
+    /**
+     * 수동 매도 원장 기록 장치 — 손절 원장(bm_stoploss)과 섞이면 정산
+     * 집계의 손절 건수·재매수 차단이 왜곡되므로, 수동 매도 기록은 별도
+     * 장부로 나간다. 통합 단계(NativeCycle)가 bm_durable 어댑터를 붙인다.
+     */
+    public interface ManualSellRecorder {
+        void record(Map<String, Object> rec);
+
+        void recordAttempt(String tokenId);
+    }
+
     private final ClobWriteClient client;
     private final BalanceSource balanceSource;
     private final OrderBookSource orderBookSource;
@@ -68,12 +84,22 @@ public final class StopLossSeller {
     private final MoneyNotifier notifier;
     private final ClobWriteClient.TimeoutRunner timeout;
     private final Clock clock;
+    private final ManualSellRecorder manualRecorder;
 
     public StopLossSeller(ClobWriteClient client, BalanceSource balanceSource,
                           OrderBookSource orderBookSource, SubmitGuard guard,
                           StopLossLedger.Store store, Logger logger,
                           MoneyNotifier notifier, ClobWriteClient.TimeoutRunner timeout,
                           Clock clock) {
+        this(client, balanceSource, orderBookSource, guard, store, logger,
+                notifier, timeout, clock, null);
+    }
+
+    public StopLossSeller(ClobWriteClient client, BalanceSource balanceSource,
+                          OrderBookSource orderBookSource, SubmitGuard guard,
+                          StopLossLedger.Store store, Logger logger,
+                          MoneyNotifier notifier, ClobWriteClient.TimeoutRunner timeout,
+                          Clock clock, ManualSellRecorder manualRecorder) {
         this.client = client;
         this.balanceSource = balanceSource;
         this.orderBookSource = orderBookSource;
@@ -83,6 +109,7 @@ public final class StopLossSeller {
         this.notifier = notifier;
         this.timeout = timeout;
         this.clock = clock;
+        this.manualRecorder = manualRecorder;
     }
 
     /** 현재 세대 기준으로 실행하는 위임형 — 단독 사용·골든 테스트용. */
@@ -92,22 +119,46 @@ public final class StopLossSeller {
 
     /** executeStopLossSell — row는 Data API 포지션 행 모델(Map). gen은 호출 세션의 세대. */
     public boolean executeStopLossSell(Map<String, Object> row, double current, int gen) {
+        return execute(row, current, gen, false);
+    }
+
+    /** 현재 세대 기준으로 실행하는 위임형 — 수동 매도. */
+    public boolean executeManualSell(Map<String, Object> row, double current) {
+        return executeManualSell(row, current, guard.currentGeneration());
+    }
+
+    /**
+     * 수동 매도 — 손절과 같은 제출 경로(FOK·하한가·잔고 확정)를 타되,
+     * 잠금 키(slug)·제출 가드를 공유하고 기록만 별도 장부로 나간다.
+     * 기록 장치가 없으면 제출 자체를 하지 않는다 (기록 없는 매도 방지).
+     */
+    public boolean executeManualSell(Map<String, Object> row, double current, int gen) {
+        if (manualRecorder == null) {
+            logger.log("수동 매도 실행 불가 — 기록 장치가 없어 제출하지 않습니다 "
+                    + Js.str(Js.field(row, "slug")));
+            return false;
+        }
+        return execute(row, current, gen, true);
+    }
+
+    private boolean execute(Map<String, Object> row, double current, int gen, boolean manual) {
+        String label = manual ? "수동 매도" : "손절";
         String slug = Js.str(Js.field(row, "slug"));
         if (!guard.tryAcquireSubmitLock(slug, gen)) {
-            logger.log("손절 제출 잠금 중 — 건너뜀 " + slug);
+            logger.log(label + " 제출 잠금 중 — 건너뜀 " + slug);
             return false;
         }
         try {
             if (!guard.beginSubmit(gen)) {
-                logger.log("손절 제출 중단 — 세션 세대 교체 " + slug);
+                logger.log(label + " 제출 중단 — 세션 세대 교체 " + slug);
                 return false;
             }
             try {
-                return executeLocked(row, current);
+                return executeLocked(row, current, manual);
             } catch (Exception e) {
                 // 원본은 runStopLoss가 행 단위로 잡아 로그한다 — 여기서는
                 // 같은 메시지로 남기고 false로 돌려준다.
-                logger.log("손절 처리 오류 " + slug + ": " + slice(msg(e), 120));
+                logger.log(label + " 처리 오류 " + slug + ": " + slice(msg(e), 120));
                 return false;
             } finally {
                 guard.endSubmit();
@@ -117,7 +168,8 @@ public final class StopLossSeller {
         }
     }
 
-    private boolean executeLocked(Map<String, Object> row, double current) throws Exception {
+    private boolean executeLocked(Map<String, Object> row, double current, boolean manual) throws Exception {
+        String prefix = manual ? "수동 매도" : "손절 매도";
         String slug = Js.str(Js.field(row, "slug"));
         String tokenId = Js.str(Js.field(row, "token_id"));
         double entry = Js.fieldNum(row, "avg_price");
@@ -133,7 +185,7 @@ public final class StopLossSeller {
             // 원본: catch {} — Data API 수량을 그대로 쓴다
         }
         if (!Double.isFinite(shares) || shares < 0.01) {
-            logger.log("손절 건너뜀 " + slug + " — 매도 가능 수량 부족 (" + JsNumber.toString(shares) + ")");
+            logger.log((manual ? "수동 매도 건너뜀 " : "손절 건너뜀 ") + slug + " — 매도 가능 수량 부족 (" + JsNumber.toString(shares) + ")");
             return false;
         }
         OrderBookInfo book = timeout.run("getOrderBook", () -> orderBookSource.getOrderBook(tokenId));
@@ -154,27 +206,27 @@ public final class StopLossSeller {
             req.negRisk = book.negRisk;
             signed = client.createMarketOrder(req);
         } catch (Exception e) {
-            logger.log("손절 매도 서명 실패 " + slug + ": " + slice(msg(e), 120));
+            logger.log(prefix + " 서명 실패 " + slug + ": " + slice(msg(e), 120));
             return false;
         }
         Object resp;
         try {
             resp = client.postOrder(signed, "FOK");
         } catch (Exception e) {
-            StopLossLedger.recordAttempt(store, tokenId);
-            logger.log("손절 매도 결과 불명 " + slug + ": " + slice(msg(e), 120)
-                    + " — 다음 사이클에 재확인");
+            recordAttempt(tokenId, manual);
+            logger.log(prefix + " 결과 불명 " + slug + ": " + slice(msg(e), 120)
+                    + (manual ? " — 체결 여부는 보유 목록에서 확인하세요" : " — 다음 사이클에 재확인"));
             return false;
         }
         JudgeFill.Verdict verdict = JudgeFill.judgeFill(resp);
         if (!verdict.filled) {
             if ("unknown".equals(verdict.kind)) {
-                StopLossLedger.recordAttempt(store, tokenId);
+                recordAttempt(tokenId, manual);
             }
             String msgText = verdict.error != null
                     ? verdict.error
                     : "미체결 (status: " + (verdict.status.isEmpty() ? "없음" : verdict.status) + ")";
-            logger.log("손절 매도 실패 " + slug + ": " + slice(msgText, 120)
+            logger.log(prefix + " 실패 " + slug + ": " + slice(msgText, 120)
                     + " · 응답 원문: " + slice(ModelJson.stringify(resp), 200));
             return false;
         }
@@ -184,7 +236,7 @@ public final class StopLossSeller {
                 .ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
                 .withZone(java.time.ZoneOffset.UTC)
                 .format(Instant.ofEpochMilli(clock.nowMs()));
-        StopLossLedger.recordStopLoss(store, StopLossLedger.record(
+        Map<String, Object> rec = StopLossLedger.record(
                 slug,
                 Js.field(row, "condition_id") == Js.UNDEFINED ? null : Js.field(row, "condition_id"),
                 tokenId,
@@ -194,19 +246,34 @@ public final class StopLossSeller {
                 fill.soldShares,
                 fill.proceeds,
                 fill.realized,
-                tsIso));
-        logger.log("손절 매도 " + slug + " · 진입 " + JsNumber.toString(entry)
+                tsIso);
+        if (manual) {
+            rec.put("kind", "manual");
+            manualRecorder.record(rec);
+        } else {
+            StopLossLedger.recordStopLoss(store, rec);
+        }
+        logger.log(prefix + " " + slug + " · 진입 " + JsNumber.toString(entry)
                 + " → 매도 " + JsNumber.toString(StopLoss.round4(fill.exitPrice))
                 + " · 회수 $" + JsNumber.toString(fill.proceeds)
                 + " · 손익 " + (fill.realized < 0 ? "-" : "+") + "$"
                 + JsNumber.toString(Math.abs(fill.realized)));
         if (notifier != null) {
-            notifier.notifyMoney("손절 실행",
+            notifier.notifyMoney(manual ? "수동 매도 실행" : "손절 실행",
                     "진입 " + JsNumber.toString(entry)
                             + " · 청산 " + JsNumber.toString(StopLoss.round4(fill.exitPrice))
                             + " · 실현 " + StopLoss.signedUsd(fill.realized));
         }
         return true;
+    }
+
+    /** 결과 불명 시도 기록 — 손절은 손절 원장, 수동 매도는 별도 장부로 나간다. */
+    private void recordAttempt(String tokenId, boolean manual) {
+        if (manual) {
+            manualRecorder.recordAttempt(tokenId);
+        } else {
+            StopLossLedger.recordAttempt(store, tokenId);
+        }
     }
 
     private static String msg(Exception e) {

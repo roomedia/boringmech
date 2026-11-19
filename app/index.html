@@ -39,6 +39,16 @@
   .err{font-size:13.5px;color:var(--danger);line-height:1.5;margin-top:10px;white-space:pre-wrap}
   .log{background:#101012;color:#d6f2e2;border-radius:14px;padding:14px 16px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.7;min-height:110px;white-space:pre-wrap;word-break:break-all}
   .hidden{display:none}
+  .pos{padding:13px 0;border-bottom:1px solid var(--line)}
+  .pos:last-child{border-bottom:none;padding-bottom:2px}
+  .pos .t{font-size:15px;font-weight:700;line-height:1.35}
+  .pos .meta{display:flex;justify-content:space-between;align-items:baseline;margin-top:5px;font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums}
+  .pos .meta .v{font-weight:700;color:var(--ink)}
+  .pos .sell{margin-top:10px;width:100%;font:inherit;font-size:14px;font-weight:700;padding:11px;border:1px solid var(--danger);border-radius:12px;background:#fff;color:var(--danger);cursor:pointer}
+  .overlay{position:fixed;inset:0;background:rgba(20,20,25,.45);display:flex;align-items:center;justify-content:center;padding:18px;z-index:50}
+  .overlay.hidden{display:none}
+  .overlay .sheet{background:var(--card);border-radius:var(--radius);padding:22px;width:100%;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+  .overlay .sheet h2{font-size:16px;font-weight:800;margin-bottom:12px}
   footer{color:var(--sub);font-size:12.5px;text-align:center;margin-top:6px;line-height:1.6}
   a{color:var(--accent);text-decoration:none;font-weight:600}
 </style>
@@ -81,6 +91,11 @@
       <div class="row"><span class="k">보유금</span><span class="v" id="cash">—</span></div>
       <div class="row"><span class="k">보유 중</span><span class="v" id="openCount">—</span></div>
       <div class="row"><span class="k">정산 완료</span><span class="v" id="settledCount">—</span></div>
+    </div>
+
+    <div class="card hidden" id="posCard">
+      <h2>보유 종목</h2>
+      <div id="posList"></div>
     </div>
 
     <div class="card">
@@ -130,6 +145,19 @@
         <button class="btn ghost" id="btnCopyLog">로그 복사</button>
         <button class="btn ghost" id="btnReport">구리에게 제보</button>
       </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="sellOverlay">
+    <div class="sheet">
+      <h2>매도 확인</h2>
+      <div id="sellDetail"></div>
+      <p class="note" style="margin:12px 0">확인하면 다음 사이클에 전량 즉시 매도합니다. 예상 금액은 현재가 기준이라 실제 체결과 다를 수 있습니다.</p>
+      <div class="stack">
+        <button class="btn danger" id="btnSellConfirm">매도하기</button>
+        <button class="btn ghost" id="btnSellCancel">취소</button>
+      </div>
+      <div class="note" id="sellMsg" style="margin-top:10px"></div>
     </div>
   </div>
 
@@ -283,6 +311,7 @@
         $('available').textContent = fmt(snap.available);
         $('slots').textContent = snap.slots + '건';
       }
+      if (snap) renderPositions(snap);
       $('btnRun').classList.toggle('hidden', intentOn);
       $('btnStop').classList.toggle('hidden', !intentOn);
       var chip = $('statusChip');
@@ -329,6 +358,110 @@
     function renderLogs(){
       var logs = readLogs();
       $('logBox').textContent = logs.length ? logs.slice(-5).join('\n') : '—';
+    }
+
+    // ── 보유 종목 + 수동 매도 ─────────────────────────────────────
+    // 종목 목록은 엔진 스냅샷 캐시의 positions를 그대로 그린다.
+    // 매도 요청은 확인 팝업의 "매도하기" 핸들러에서만 쓴다 — 그 외
+    // 어떤 경로로도 bm_manual_sell_req를 쓰지 않는 것이 "확인 없이는
+    // 제출 불가"의 구조적 보장이다. 엔진이 다음 사이클에 요청을
+    // 소비해 손절과 같은 경로(FOK)로 제출한다.
+    var pendingSell = null;
+
+    function fmtPrice(p){
+      return (p == null || !isFinite(p)) ? '—' : Number(p).toFixed(3);
+    }
+
+    function renderPositions(snap){
+      var card = $('posCard');
+      var list = $('posList');
+      var rows = snap && Array.isArray(snap.positions) ? snap.positions : null;
+      if (!rows || !rows.length){
+        card.classList.add('hidden');
+        list.textContent = '';
+        return;
+      }
+      card.classList.remove('hidden');
+      list.textContent = '';
+      rows.forEach(function(p){
+        var box = document.createElement('div');
+        box.className = 'pos';
+        var t = document.createElement('div');
+        t.className = 't';
+        t.textContent = (p.title || p.slug || '—') + (p.outcome ? ' · ' + p.outcome : '');
+        box.appendChild(t);
+        var cost = (p.current_size != null && p.avg_price != null)
+          ? Number(p.current_size) * Number(p.avg_price) : null;
+        var pnl = (p.current_value != null && cost != null)
+          ? Number(p.current_value) - cost : null;
+        var lines = [
+          ['진입 → 현재', fmtPrice(p.avg_price) + ' → ' + fmtPrice(p.current_price)],
+          ['수량', p.current_size != null ? Number(p.current_size).toLocaleString('en-US') + '주' : '—'],
+          ['평가액', p.current_value != null ? fmt(p.current_value) : '—'],
+          ['손익', pnl == null ? '—' : (pnl < 0 ? '-' : '+') + fmt(Math.abs(pnl))]
+        ];
+        lines.forEach(function(kv){
+          var meta = document.createElement('div');
+          meta.className = 'meta';
+          var k = document.createElement('span');
+          k.textContent = kv[0];
+          var v = document.createElement('span');
+          v.className = 'v';
+          v.textContent = kv[1];
+          if (kv[0] === '손익' && pnl != null) {
+            v.style.color = pnl < 0 ? 'var(--danger)' : 'var(--accent)';
+          }
+          meta.appendChild(k);
+          meta.appendChild(v);
+          box.appendChild(meta);
+        });
+        var btn = document.createElement('button');
+        btn.className = 'sell';
+        btn.textContent = '매도';
+        btn.addEventListener('click', function(){ openSellPopup(p); });
+        box.appendChild(btn);
+        list.appendChild(box);
+      });
+    }
+
+    function detailRow(k, v){
+      var row = document.createElement('div');
+      row.className = 'row';
+      var ks = document.createElement('span');
+      ks.className = 'k';
+      ks.textContent = k;
+      var vs = document.createElement('span');
+      vs.className = 'v';
+      vs.textContent = v;
+      row.appendChild(ks);
+      row.appendChild(vs);
+      return row;
+    }
+
+    function openSellPopup(p){
+      pendingSell = p;
+      $('sellMsg').textContent = '';
+      var shares = Number(p.current_size);
+      var price = Number(p.current_price);
+      var gross = shares * price;
+      // 예상 수수료 = shares × 요율 × p × (1−p). 요율을 모르면
+      // 보수적 상한(0.07)으로 계산하고 "약"을 붙인다.
+      var known = p.fee_rate != null && isFinite(p.fee_rate);
+      var rate = known ? Number(p.fee_rate) : 0.07;
+      var fee = shares * rate * price * (1 - price);
+      var box = $('sellDetail');
+      box.textContent = '';
+      box.appendChild(detailRow('종목', (p.title || p.slug || '—') + (p.outcome ? ' · ' + p.outcome : '')));
+      box.appendChild(detailRow('수량 (전량)', isFinite(shares) ? shares.toLocaleString('en-US') + '주' : '—'));
+      box.appendChild(detailRow('현재가', fmtPrice(p.current_price)));
+      box.appendChild(detailRow('예상 수령액', isFinite(gross) ? fmt(gross - fee) : '—'));
+      box.appendChild(detailRow('예상 수수료', isFinite(fee) ? (known ? '' : '약 ') + fmt(fee) : '—'));
+      $('sellOverlay').classList.remove('hidden');
+    }
+
+    function closeSellPopup(){
+      pendingSell = null;
+      $('sellOverlay').classList.add('hidden');
     }
 
     function renderUpdate(){
@@ -579,6 +712,33 @@
     $('btnRelayerClear').addEventListener('click', function(){
       try { BM.clearRelayerKey(); } catch (e) {}
       renderRelayer();
+    });
+    // 수동 매도 제출은 이 핸들러가 유일한 경로다.
+    $('btnSellConfirm').addEventListener('click', function(){
+      if (!pendingSell || !pendingSell.token_id) return;
+      var req = {
+        token_id: pendingSell.token_id,
+        slug: pendingSell.slug || '',
+        ts: Date.now()
+      };
+      var ok = false;
+      try {
+        if (window.AndroidBridge && AndroidBridge.putDurable) {
+          AndroidBridge.putDurable('bm_manual_sell_req', JSON.stringify(req));
+          ok = true;
+        }
+      } catch (e) {}
+      if (ok) {
+        $('sellMsg').textContent = '매도 요청을 보냈습니다 — 결과는 최근 로그에서 확인하세요.';
+        pendingSell = null;
+        setTimeout(closeSellPopup, 1600);
+      } else {
+        $('sellMsg').textContent = '요청 전송 실패 — 앱을 다시 열고 시도하세요.';
+      }
+    });
+    $('btnSellCancel').addEventListener('click', closeSellPopup);
+    $('sellOverlay').addEventListener('click', function(e){
+      if (e.target === $('sellOverlay')) closeSellPopup();
     });
 
     refresh();

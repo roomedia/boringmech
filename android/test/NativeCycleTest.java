@@ -7,10 +7,12 @@ import com.roomedia.boringmech.engine.NativeCycle;
 import com.roomedia.boringmech.engine.PositionBook;
 import com.roomedia.boringmech.write.ClobWriteClient;
 import com.roomedia.boringmech.write.JsonCodec;
+import com.roomedia.boringmech.write.ManualSell;
 import com.roomedia.boringmech.write.ModelJson;
 import com.roomedia.boringmech.write.RawHttp;
 import com.roomedia.boringmech.write.RedeemSubmitter;
 import com.roomedia.boringmech.write.StopLossLedger;
+import com.roomedia.boringmech.write.StopLossSeller;
 import com.roomedia.boringmech.write.SubmitGuard;
 
 import java.math.BigInteger;
@@ -420,6 +422,171 @@ public class NativeCycleTest {
         check("update: 안내 로그 1회", count == 1);
     }
 
+    private static Map<String, Object> manualRow() {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("slug", "test-ms-market");
+        row.put("token_id", "123456789");
+        row.put("title", "Test market question?");
+        row.put("outcome", "Yes");
+        row.put("avg_price", 0.75);
+        row.put("current_price", 0.55);
+        row.put("current_size", 10.0);
+        row.put("current_value", 5.5);
+        row.put("status", "OPEN");
+        row.put("condition_id", "0x" + "cd".repeat(32));
+        return row;
+    }
+
+    /** 수동 매도 공용 무대 — Gamma 0.55는 손절 미발화(holding) 구간이다. */
+    private static void manualStage(FakeNet net) {
+        net.positions = new ArrayList<>(List.of(manualRow()));
+        Map<String, Object> gamma = new LinkedHashMap<>();
+        gamma.put("outcomes", "[\"Yes\",\"No\"]");
+        gamma.put("outcomePrices", "[\"0.55\",\"0.45\"]");
+        net.gammaPages.put("test-ms-market", new ArrayList<>(List.of(gamma)));
+        net.books.put("123456789", jmap("{\"tick_size\":\"0.01\",\"neg_risk\":false,"
+                + "\"asks\":[{\"price\":\"0.56\",\"size\":\"100\"}],"
+                + "\"bids\":[{\"price\":\"0.55\",\"size\":\"100\"}]}"));
+        net.condBalance = BigInteger.valueOf(10_000_000);
+    }
+
+    private static void manualSellPath() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        manualStage(net);
+        OrderTransport t = new OrderTransport();
+        t.responseBody = "{\"success\":true,\"status\":\"matched\","
+                + "\"makingAmount\":\"10\",\"takingAmount\":\"5.5\","
+                + "\"transactionHashes\":[\"0x123\"]}";
+        FakeLedgerStore store = new FakeLedgerStore();
+        NativeCycle c = newCycle(env, net, t, store, () -> null);
+        env.durable.put("bm_manual_sell_req",
+                "{\"token_id\":\"123456789\",\"slug\":\"test-ms-market\",\"ts\":" + NOW + "}");
+        NativeCycle.Result r = c.runIteration(1);
+        check("manual: 결과 OK", r == NativeCycle.Result.OK);
+        check("manual: 주문 1회 제출", t.posts == 1);
+        check("manual: 매도 로그", env.logged("수동 매도 test-ms-market · 진입 0.75 → 매도 0.55"));
+        check("manual: 알림", env.notifications.stream().anyMatch(n -> n.startsWith("수동 매도 실행|")));
+        String ledger = env.durable.getOrDefault("bm_manual_sell", "");
+        check("manual: 별도 장부 기록", ledger.contains("\"kind\":\"manual\"")
+                && ledger.contains("test-ms-market"));
+        check("manual: 손절 원장 무오염", store.map.isEmpty());
+        check("manual: 요청 소비됨", "".equals(env.durable.get("bm_manual_sell_req")));
+        check("manual: 스냅샷 종목 목록", env.snapCache != null
+                && env.snapCache.contains("\"positions\"")
+                && env.snapCache.contains("\"title\":\"Test market question?\""));
+        // 같은 요청이 남아 있지 않으므로 다음 사이클에 재제출되지 않는다 (이중 제출 방지)
+        c.runIteration(1);
+        check("manual: 이중 제출 없음", t.posts == 1);
+    }
+
+    private static void manualSellStale() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        manualStage(net);
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        env.durable.put("bm_manual_sell_req",
+                "{\"token_id\":\"123456789\",\"slug\":\"test-ms-market\",\"ts\":"
+                        + (NOW - ManualSell.MAX_REQUEST_AGE_MS - 1) + "}");
+        c.runIteration(1);
+        check("manual-stale: 제출 없음", t.posts == 0);
+        check("manual-stale: 만료 로그", env.logged("수동 매도 요청 만료"));
+        check("manual-stale: 요청 소비됨", "".equals(env.durable.get("bm_manual_sell_req")));
+    }
+
+    private static void manualSellZeroShares() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        manualStage(net);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> row = (Map<String, Object>) net.positions.get(0);
+        row.put("current_size", 0.0);
+        net.condBalance = BigInteger.ZERO;
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        env.durable.put("bm_manual_sell_req",
+                "{\"token_id\":\"123456789\",\"slug\":\"test-ms-market\",\"ts\":" + NOW + "}");
+        c.runIteration(1);
+        check("manual-zero: 제출 없음", t.posts == 0);
+        check("manual-zero: 수량 부족 로그", env.logged("수동 매도 건너뜀"));
+    }
+
+    private static void manualSellUnknownToken() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        env.durable.put("bm_manual_sell_req",
+                "{\"token_id\":\"999\",\"slug\":\"not-held\",\"ts\":" + NOW + "}");
+        c.runIteration(1);
+        check("manual-unknown: 제출 없음", t.posts == 0);
+        check("manual-unknown: 미보유 로그", env.logged("보유 중인 종목이 아닙니다"));
+    }
+
+    static final class FakeManualRecorder implements StopLossSeller.ManualSellRecorder {
+        final List<Map<String, Object>> records = new ArrayList<>();
+        final List<String> attempts = new ArrayList<>();
+
+        @Override public void record(Map<String, Object> rec) { records.add(rec); }
+        @Override public void recordAttempt(String tokenId) { attempts.add(tokenId); }
+    }
+
+    private static void manualSellLockShared() {
+        List<String> logs = new ArrayList<>();
+        OrderTransport t = new OrderTransport();
+        t.responseBody = "{\"success\":true,\"status\":\"matched\","
+                + "\"makingAmount\":\"10\",\"takingAmount\":\"5.5\","
+                + "\"transactionHashes\":[\"0x123\"]}";
+        SubmitGuard guard = new SubmitGuard();
+        FakeManualRecorder recorder = new FakeManualRecorder();
+        FakeLedgerStore store = new FakeLedgerStore();
+        StopLossSeller seller = new StopLossSeller(client(t),
+                tokenId -> BigInteger.valueOf(10_000_000),
+                new StopLossSeller.OrderBookSource() {
+                    @Override
+                    public StopLossSeller.OrderBookInfo getOrderBook(String tokenId) {
+                        return new StopLossSeller.OrderBookInfo("0.01", false);
+                    }
+
+                    @Override
+                    public String getTickSize(String tokenId) {
+                        return "0.01";
+                    }
+                },
+                guard, store, logs::add, null, ClobWriteClient.DIRECT_TIMEOUT, () -> NOW,
+                recorder);
+        Map<String, Object> row = manualRow();
+        // 손절이 같은 slug 잠금을 쥐고 있으면 수동 매도는 제출하지 않는다 (락 공유)
+        check("lock: 선행 잠금 획득", guard.tryAcquireSubmitLock("test-ms-market"));
+        boolean blocked = seller.executeManualSell(row, 0.55);
+        check("lock: 잠금 중 수동 매도 차단", !blocked && t.posts == 0);
+        check("lock: 잠금 로그", logs.stream().anyMatch(l -> l.contains("수동 매도 제출 잠금 중")));
+        guard.releaseSubmitLock("test-ms-market");
+        boolean ok = seller.executeManualSell(row, 0.55);
+        check("lock: 해제 후 매도 성공", ok && t.posts == 1);
+        check("lock: 별도 장부 기록", recorder.records.size() == 1
+                && "manual".equals(recorder.records.get(0).get("kind")));
+        check("lock: 손절 원장 무오염", store.map.isEmpty());
+    }
+
+    private static void feeRateCache() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        manualStage(net);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> gamma =
+                (Map<String, Object>) ((List<Object>) net.gammaPages.get("test-ms-market")).get(0);
+        gamma.put("feeType", "politics_fees");
+        NativeCycle c = newCycle(env, net, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        c.runIteration(1);
+        check("fee-cache: 첫 스냅샷은 미상", env.snapCache != null
+                && env.snapCache.contains("\"fee_rate\":null"));
+        c.runIteration(1);
+        check("fee-cache: 손절 조회 후 요율 반영", env.snapCache != null
+                && env.snapCache.contains("\"fee_rate\":0.04"));
+    }
+
     private static void pureLogic() {
         check("reload: 9회는 부족", !NativeCycle.shouldSelfReload(9, 0, NOW));
         check("reload: 10회+쿨다운 경과", NativeCycle.shouldSelfReload(10, 0, NOW));
@@ -433,6 +600,28 @@ public class NativeCycleTest {
         String s = NativeCycle.summarizeCycle(3, 2, rejects, 1, 1, 0, scan);
         check("summary: JS 형식", s.equals(
                 "사이클 요약 · 후보 3 · 검증 2 · 조회 10 (밴드밖 3·스포츠 1) · 탈락 매도호가없음 2 · 제출 1 · 미체결 1"));
+        // 수동 매도 수수료 매핑 — 명세 요율표 (크립토 0.07·스포츠/기타 0.05·정치/금융/테크 0.04·지정학 0)
+        check("fee: crypto", ManualSell.feeRateForFeeType("crypto_fees") == 0.07);
+        check("fee: sports", ManualSell.feeRateForFeeType("sports_fees_v2") == 0.05);
+        check("fee: politics", ManualSell.feeRateForFeeType("politics_fees") == 0.04);
+        check("fee: finance", ManualSell.feeRateForFeeType("finance_fees") == 0.04);
+        check("fee: tech", ManualSell.feeRateForFeeType("tech_fees") == 0.04);
+        check("fee: geopolitics", ManualSell.feeRateForFeeType("geopolitics_fees") == 0.0);
+        check("fee: 기타", ManualSell.feeRateForFeeType("economy_fees") == 0.05);
+        check("fee: 판정 불가", ManualSell.feeRateForFeeType(null) == null
+                && ManualSell.feeRateForFeeType("") == null);
+        // 추정식 대조 — 실계정 실측: 15.625주 @0.64 크립토 매수 수수료 $0.252와 공식이 일치한다
+        check("fee: 추정식 실측 대조", Math.abs(ManualSell.estimateFee(15.625, 0.64, 0.07) - 0.252) < 0.001);
+        check("fee: 추정식 0.915", Math.abs(ManualSell.estimateFee(15.625, 0.915, 0.07) - 0.0851) < 0.001);
+        ManualSell.Request rq = ManualSell.parseRequest(
+                jmap("{\"token_id\":\"123\",\"slug\":\"s\",\"ts\":1000}"));
+        check("req: 파싱", rq != null && "123".equals(rq.tokenId) && rq.tsMs == 1000);
+        check("req: 토큰 없음 거부", ManualSell.parseRequest(
+                jmap("{\"slug\":\"s\",\"ts\":1000}")) == null);
+        check("req: ts 없음 거부", ManualSell.parseRequest(
+                jmap("{\"token_id\":\"123\"}")) == null);
+        check("req: 신선도 경계", !ManualSell.isStale(rq, 1000 + ManualSell.MAX_REQUEST_AGE_MS)
+                && ManualSell.isStale(rq, 1000 + ManualSell.MAX_REQUEST_AGE_MS + 1));
     }
 
     public static void main(String[] args) {
@@ -445,6 +634,12 @@ public class NativeCycleTest {
         redeemNoKey();
         stopDuringCycle();
         updateCheck();
+        manualSellPath();
+        manualSellStale();
+        manualSellZeroShares();
+        manualSellUnknownToken();
+        manualSellLockShared();
+        feeRateCache();
         pureLogic();
         System.out.println("NativeCycleTest: " + passed + " passed, " + failed + " failed");
         if (failed > 0) {

@@ -6,6 +6,7 @@ import com.roomedia.boringmech.crypto.JsNumber;
 import com.roomedia.boringmech.crypto.Redeem;
 import com.roomedia.boringmech.write.ClobWriteClient;
 import com.roomedia.boringmech.write.JudgeFill;
+import com.roomedia.boringmech.write.ManualSell;
 import com.roomedia.boringmech.write.ModelJson;
 import com.roomedia.boringmech.write.RedeemSubmitter;
 import com.roomedia.boringmech.write.SignedOrder;
@@ -17,6 +18,7 @@ import java.math.BigInteger;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -149,6 +151,8 @@ public final class NativeCycle {
         public double available;
         public double bet;
         public int slots;
+        /** 뷰어 종목 목록용 보유 행 요약 (스냅샷 캐시에만 실린다). */
+        public List<Object> positions = new ArrayList<>();
     }
 
     public enum Result {OK, FAILED, ABORTED, RESTART}
@@ -171,6 +175,8 @@ public final class NativeCycle {
     private int cycleErrors = 0;
     private int sessionFills = 0;
     private boolean posGapWarned = false;
+    /** slug → Gamma feeType 캐시 — 손절 판정의 Gamma 조회에서 채워지고 스냅샷의 수수료율 표시에 쓰인다. */
+    private final Map<String, String> feeTypeBySlug = new HashMap<>();
 
     private List<Object> lastOpenRows = new ArrayList<>();
     private List<Object> lastWinRows;
@@ -213,7 +219,22 @@ public final class NativeCycle {
                         return JsNumber.toString(net.tickSize(tokenId));
                     }
                 },
-                guard, ledgerStore, env::log, env::notifyMoney, timeoutRunner, env::nowMs);
+                guard, ledgerStore, env::log, env::notifyMoney, timeoutRunner, env::nowMs,
+                new StopLossSeller.ManualSellRecorder() {
+                    @Override
+                    public void record(Map<String, Object> rec) {
+                        List<Object> list = loadDurableJsonList(ManualSell.LEDGER_KEY);
+                        env.durableWrite(ManualSell.LEDGER_KEY,
+                                ModelJson.stringify(ManualSell.appendRecord(list, rec)));
+                    }
+
+                    @Override
+                    public void recordAttempt(String tokenId) {
+                        List<Object> list = loadDurableJsonList(ManualSell.ATTEMPTED_KEY);
+                        env.durableWrite(ManualSell.ATTEMPTED_KEY,
+                                ModelJson.stringify(ManualSell.appendAttempted(list, tokenId)));
+                    }
+                });
         this.gammaSource = net::gammaPageBySlug;
         this.bookSource = new CandidateVerifier.BookSource() {
             @Override
@@ -316,8 +337,38 @@ public final class NativeCycle {
         lastOpenRows = open;
         lastWinRows = winRows;
         lastLostRows = lostRows;
+        snap.positions = positionSummaries(open);
         env.putSnapCache(snapCacheJson(snap));
         return snap;
+    }
+
+    /** 뷰어 종목 목록용 보유 행 요약 — 표시와 예상 수수료 계산에 필요한 필드만 추린다. */
+    private List<Object> positionSummaries(List<Object> open) {
+        List<Object> out = new ArrayList<>();
+        for (Object p : open) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            Object slug = Js.field(p, "slug");
+            String slugStr = Js.truthy(slug) ? Js.str(slug) : null;
+            m.put("slug", slugStr);
+            Object token = Js.field(p, "token_id");
+            m.put("token_id", Js.truthy(token) ? Js.str(token) : null);
+            Object title = Js.field(p, "title");
+            m.put("title", Js.truthy(title) ? Js.str(title) : slugStr);
+            Object outcome = Js.field(p, "outcome");
+            m.put("outcome", Js.truthy(outcome) ? Js.str(outcome) : null);
+            m.put("avg_price", numOrNullFinite(Js.fieldNum(p, "avg_price")));
+            m.put("current_price", numOrNullFinite(Js.fieldNum(p, "current_price")));
+            m.put("current_size", numOrNullFinite(Js.fieldNum(p, "current_size")));
+            m.put("current_value", numOrNullFinite(Js.fieldNum(p, "current_value")));
+            m.put("fee_rate", slugStr == null ? null
+                    : ManualSell.feeRateForFeeType(feeTypeBySlug.get(slugStr)));
+            out.add(m);
+        }
+        return out;
+    }
+
+    private static Object numOrNullFinite(double v) {
+        return Double.isFinite(v) ? v : null;
     }
 
     private Set<Object> attemptedObjects() {
@@ -350,6 +401,7 @@ public final class NativeCycle {
         m.put("available", snap.available);
         m.put("bet", snap.bet);
         m.put("slots", (double) snap.slots);
+        m.put("positions", snap.positions);
         return ModelJson.stringify(m);
     }
 
@@ -423,6 +475,13 @@ public final class NativeCycle {
         Object slugRaw = Js.field(row, "slug");
         String slug = slugRaw instanceof String ? (String) slugRaw : null;
         Object page1 = slug == null ? null : fetchGammaPageQuiet(slug);
+        if (slug != null) {
+            // 수수료 카테고리 캐시 — 뷰어 수동 매도의 예상 수수료 표시에 쓰인다.
+            String feeType = ManualSell.feeTypeOfPage(page1);
+            if (feeType != null) {
+                feeTypeBySlug.put(slug, feeType);
+            }
+        }
         // JS는 1차 판정이 triggered일 때만 2차 조회를 한다 — 조회 횟수·시점을 맞춘다.
         boolean firstTriggered = false;
         StopLoss.GammaPrices p1 = StopLoss.parseGammaPrices(page1);
@@ -453,6 +512,56 @@ public final class NativeCycle {
             default:
                 return false;
         }
+    }
+
+    /**
+     * 뷰어 수동 매도 요청 처리 — 요청은 읽는 즉시 소비(키를 비움)하므로
+     * 같은 요청이 다음 사이클에 다시 제출될 수 없다. 대상 행은 방금
+     * 스냅샷의 보유 목록에서 토큰으로 찾고, 없거나 현재가를 모르면
+     * 제출하지 않는다. 반환값은 매도 성공 건수(0 또는 1).
+     */
+    public int processManualSell(int gen) {
+        String raw = env.durableRead(ManualSell.REQUEST_KEY);
+        if (raw == null || raw.isEmpty()) {
+            return 0;
+        }
+        env.durableWrite(ManualSell.REQUEST_KEY, "");
+        Object model;
+        try {
+            model = JsonText.parse(raw);
+        } catch (Exception e) {
+            log("수동 매도 요청 형식 오류 — 버립니다");
+            return 0;
+        }
+        ManualSell.Request req = ManualSell.parseRequest(model);
+        if (req == null) {
+            log("수동 매도 요청 형식 오류 — 버립니다");
+            return 0;
+        }
+        String label = req.slug.isEmpty() ? req.tokenId : req.slug;
+        if (ManualSell.isStale(req, env.nowMs())) {
+            log("수동 매도 요청 만료 — 오래된 요청이라 버립니다 (" + label + ")");
+            return 0;
+        }
+        Map<String, Object> row = null;
+        for (Object o : lastOpenRows) {
+            if (o instanceof Map && req.tokenId.equals(Js.field(o, "token_id"))) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> m = (Map<String, Object>) o;
+                row = m;
+                break;
+            }
+        }
+        if (row == null) {
+            log("수동 매도 건너뜀 — 보유 중인 종목이 아닙니다 (" + label + ")");
+            return 0;
+        }
+        double current = Js.fieldNum(row, "current_price");
+        if (!Double.isFinite(current) || current <= 0) {
+            log("수동 매도 건너뜀 — 현재가를 확인할 수 없습니다 (" + label + ")");
+            return 0;
+        }
+        return seller.executeManualSell(row, current, gen) ? 1 : 0;
     }
 
     /** runStopLoss 이식 — 보유 행마다 예외를 격리한다. 반환값은 매도 성공 건수. */
@@ -961,6 +1070,10 @@ public final class NativeCycle {
         }
         log("사이클 " + cycle + " · 잔고 $" + n(snap.cash) + " · 평가 $" + n(snap.equity)
                 + " · 건당 $" + n(snap.bet) + " · 슬롯 " + snap.slots + " · 보유 " + snap.openCount);
+        int manualSold = processManualSell(gen);
+        if (manualSold > 0) {
+            snap = snapshot();
+        }
         if (!settledBaselineLoaded) {
             settledBaseline = SettledBaseline.parse(env.durableRead("bm_settled_base"));
             settledBaselineLoaded = true;
