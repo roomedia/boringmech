@@ -53,9 +53,22 @@ R8 enum unboxing이 Bouncy Castle `DefaultServiceProperties`의
   원시 타입 참조 0건 ② JavascriptInterface 존재 ③ 쓰기 경로 앱 클래스
   (매수·손절·수동 매도·리딤 제출) 전부 존재 ④ 매핑 기준 서명 경로 BC
   클래스(DefaultServiceProperties·CryptoServicePurpose·Keccak·SHA256·
-  ECDSASigner) 전부 존재.
+  ECDSASigner) 전부 존재 ⑤ 수명주기 앱 클래스(EngineService·
+  MainActivity·외부 감시 리시버·스케줄러·판정) 전부 존재 — 매니페스트가
+  가리키는 리시버가 축소로 사라지면 외부 감시가 조용히 무력화된다.
 - 축소 코드 실행 스모크: `android/test/run_shrunk_smoke.sh`가 출하와
   같은 keep.pro로 R8 축소(classfile)를 돌려 그 바이트코드로 골든 38건
   (주문 서명 포함)을 실행한다. 릴리스 전 실행해 통과를 확인한다.
 - keep.pro에 규칙을 추가할 때는 어떤 결함을 막는 규칙인지 주석으로
   남긴다. 근거 없는 keep 누적 금지.
+
+## 서명 경로 실기기 검증 게이트 (2026-11-19 추가)
+
+서명 경로 실기기 검증: 릴리스 후 실기기에서 실제 서명 제출 1회(수동
+매도 등)가 성공 로그로 확인되기 전까지, 그 버전은 서명 경로 미검증
+상태로 표기한다. 미검증 표기는 릴리스 노트와 보고에 명시한다. 실기기
+검증이 실패하면 즉시 수리 버전을 낸다.
+
+출하 dex 게이트·축소 스모크는 빌드 시점 검증이고, 실기기 검증은 그
+다음 단계로 별개 항목이다. 둘을 혼동해 빌드 검증만으로 서명 경로가
+검증됐다고 표기하지 않는다.

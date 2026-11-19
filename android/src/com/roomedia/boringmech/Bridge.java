@@ -4,10 +4,14 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
@@ -73,6 +77,39 @@ public class Bridge {
     @JavascriptInterface
     public boolean getRunIntent() {
         return EngineService.getRunIntent(ctx);
+    }
+
+    // 배터리 최적화 예외 상태 — 예외가 아니면 시스템이 백그라운드에서
+    // 프로세스를 죽일 수 있어 엔진 무응답의 원인이 된다. 예외는 강제하지
+    // 않는다: 상태 표시와 시스템 설정으로 가는 요청만 제공한다.
+    @JavascriptInterface
+    public boolean isBatteryExempt() {
+        try {
+            PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+            return pm != null && pm.isIgnoringBatteryOptimizations(ctx.getPackageName());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    @JavascriptInterface
+    public void requestBatteryExemption() {
+        main.post(() -> {
+            try {
+                Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                intent.setData(Uri.parse("package:" + ctx.getPackageName()));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(intent);
+            } catch (Exception e) {
+                // 직접 요청 화면이 없는 기기에서는 최적화 설정 목록으로 보낸다.
+                try {
+                    Intent fallback = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                    fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    ctx.startActivity(fallback);
+                } catch (Exception ignored) {
+                }
+            }
+        });
     }
 
     // 워치독 하트비트 — 엔진이 사이클마다 남긴다.

@@ -59,6 +59,9 @@ const {
   durableRead,
   stopLossRecords,
   recordStopLoss,
+  manualSellRecords,
+  manualSellAttemptedTokens,
+  stopLossAttemptedSlugs,
   STOPLOSS_RECENT_CAP,
   isOpenRow,
 } = await import("../src/engine.js");
@@ -1184,6 +1187,41 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
   eq(src.includes("manualSellRecords()"), true, "manual-book: snapshot wires records");
   eq(src.includes("manualSellAttemptedTokens()"), true, "manual-book: snapshot wires attempted");
+}
+
+// 42. 캡 회전 아카이브 읽기 가드 — 수동 매도 원장·시도가 아카이브로
+// 회전돼도 집계 입력에서 사라지지 않고, 손절 시도 slug·리딤 done
+// 아카이브도 같은 입력으로 읽힌다 (v0.3.35 감사 축 2·3)
+{
+  const ls = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (ls.has(k) ? ls.get(k) : null),
+    setItem: (k, v) => ls.set(k, String(v)),
+    removeItem: (k) => ls.delete(k),
+  };
+  if (globalThis.window) delete globalThis.window.AndroidBridge;
+  durableWrite("bm_manual_sell_archive", JSON.stringify([
+    { token_id: "atok", slug: "a-mkt", realized_pnl: -3 },
+    { token_id: "bad", realized_pnl: "x" },
+  ]));
+  durableWrite("bm_manual_sell", JSON.stringify([
+    { token_id: "rtok", slug: "r-mkt", realized_pnl: 1.5 },
+  ]));
+  const recs = manualSellRecords();
+  eq(recs.length, 2, "manual-archive: archive+recent merged, bad row filtered");
+  eq(recs[0].token_id, "atok", "manual-archive: archive comes first");
+  durableWrite("bm_manual_sell_attempted_archive", JSON.stringify(["atok"]));
+  durableWrite("bm_manual_sell_attempted", JSON.stringify(["rtok"]));
+  const attempted = manualSellAttemptedTokens();
+  eq(attempted.has("atok") && attempted.has("rtok") && attempted.size === 2, true,
+    "manual-archive: attempted merged");
+  durableWrite("bm_stoploss_attempted_slugs", JSON.stringify(["s-mkt"]));
+  eq(stopLossAttemptedSlugs().has("s-mkt"), true, "attempt-slugs: read back");
+
+  const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+  eq(src.includes("stopLossAttemptedSlugs()) boughtAll.add(s)"), true,
+    "attempt-slugs: buy exclusion wires attempted slugs");
+  eq(src.includes("LS.redeemDoneArchive"), true, "done-archive: wired");
 }
 
 console.log(`book tests: ${passed} passed, ${failed} failed`);

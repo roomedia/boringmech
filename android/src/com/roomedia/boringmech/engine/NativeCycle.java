@@ -226,16 +226,24 @@ public final class NativeCycle {
                 new StopLossSeller.ManualSellRecorder() {
                     @Override
                     public void record(Map<String, Object> rec) {
-                        List<Object> list = loadDurableJsonList(ManualSell.LEDGER_KEY);
+                        ManualSell.CappedLists r = ManualSell.appendRecordWithArchive(
+                                loadDurableJsonList(ManualSell.ARCHIVE_KEY),
+                                loadDurableJsonList(ManualSell.LEDGER_KEY), rec);
                         env.durableWrite(ManualSell.LEDGER_KEY,
-                                ModelJson.stringify(ManualSell.appendRecord(list, rec)));
+                                ModelJson.stringify(r.recent));
+                        env.durableWrite(ManualSell.ARCHIVE_KEY,
+                                ModelJson.stringify(r.archive));
                     }
 
                     @Override
                     public void recordAttempt(String tokenId) {
-                        List<Object> list = loadDurableJsonList(ManualSell.ATTEMPTED_KEY);
+                        ManualSell.CappedLists r = ManualSell.appendAttemptedWithArchive(
+                                loadDurableJsonList(ManualSell.ATTEMPTED_ARCHIVE_KEY),
+                                loadDurableJsonList(ManualSell.ATTEMPTED_KEY), tokenId);
                         env.durableWrite(ManualSell.ATTEMPTED_KEY,
-                                ModelJson.stringify(ManualSell.appendAttempted(list, tokenId)));
+                                ModelJson.stringify(r.recent));
+                        env.durableWrite(ManualSell.ATTEMPTED_ARCHIVE_KEY,
+                                ModelJson.stringify(r.archive));
                     }
                 });
         this.seller.setErrorNotifier(this::errorNotify);
@@ -332,7 +340,8 @@ public final class NativeCycle {
         }
         PositionBook.Book book = PositionBook.summarizeBook(positions, winRows, lostRows, closedRows,
                 StopLossLedger.records(ledgerStore),
-                loadDurableJsonList(ManualSell.LEDGER_KEY), attemptedObjects());
+                ManualSell.combineRecords(loadDurableJsonList(ManualSell.ARCHIVE_KEY),
+                        loadDurableJsonList(ManualSell.LEDGER_KEY)), attemptedObjects());
         lastClosedRows = closedRows;
         PositionBook.Sizing sizing = PositionBook.sizing(cash, equity, book.openCount);
         Snap snap = new Snap();
@@ -397,11 +406,12 @@ public final class NativeCycle {
     private Set<Object> attemptedObjects() {
         Set<Object> out = new HashSet<>(StopLossLedger.attemptedTokens(ledgerStore));
         // 결과 불명 수동 매도 시도 토큰도 같은 보호를 받는다 — CLOSED 행이
-        // 최종가로 뒤집혀 집계되지 않게 한다 (v0.3.33 감사).
-        for (Object t : loadDurableJsonList(ManualSell.ATTEMPTED_KEY)) {
-            if (t instanceof String && !((String) t).isEmpty()) {
-                out.add(t);
-            }
+        // 최종가로 뒤집혀 집계되지 않게 한다 (v0.3.33 감사). 아카이브로
+        // 회전된 토큰도 보호가 풀리지 않게 함께 읽는다 (v0.3.35 감사 축 3).
+        for (Object t : ManualSell.combineAttempted(
+                loadDurableJsonList(ManualSell.ATTEMPTED_ARCHIVE_KEY),
+                loadDurableJsonList(ManualSell.ATTEMPTED_KEY))) {
+            out.add(t);
         }
         return out;
     }
@@ -660,8 +670,38 @@ public final class NativeCycle {
     private void recordRedeemHistory(Map<String, Object> rec) {
         List<Object> list = loadDurableJsonList("bm_redeem_history");
         list.add(rec);
-        List<Object> tail = list.size() > 100 ? new ArrayList<>(list.subList(list.size() - 100, list.size())) : list;
-        env.durableWrite("bm_redeem_history", ModelJson.stringify(tail));
+        if (list.size() > 100) {
+            // 캡에서 밀려난 기록의 condition_id는 done 아카이브로 옮겨
+            // 보존한다 — 근거가 사라지면 회수 완료 건이 pending으로
+            // 재수집돼 불필요한 재처리가 반복된다 (v0.3.35 감사 축 3).
+            List<Object> overflowIds = new ArrayList<>();
+            for (Object old : list.subList(0, list.size() - 100)) {
+                Object cid = Js.field(old, "condition_id");
+                if (cid != null) {
+                    overflowIds.add(cid);
+                }
+            }
+            archiveRedeemDoneIds(overflowIds);
+            list = new ArrayList<>(list.subList(list.size() - 100, list.size()));
+        }
+        env.durableWrite("bm_redeem_history", ModelJson.stringify(list));
+    }
+
+    /** done 근거 아카이브 — history·closed 캡에서 밀려난 condition_id 보존. */
+    private void archiveRedeemDoneIds(List<Object> ids) {
+        if (ids.isEmpty()) {
+            return;
+        }
+        List<Object> archive = loadDurableJsonList("bm_redeem_done_archive");
+        for (Object id : ids) {
+            if (!archive.contains(id)) {
+                archive.add(id);
+            }
+        }
+        if (archive.size() > 10_000) {
+            archive = new ArrayList<>(archive.subList(archive.size() - 10_000, archive.size()));
+        }
+        env.durableWrite("bm_redeem_done_archive", ModelJson.stringify(archive));
     }
 
     private void removeRedeemPending(String cid) {
@@ -686,8 +726,12 @@ public final class NativeCycle {
             log("리딤 종결 (전액 손실) " + slice(Js.str(cid), 10) + "…");
         }
         List<Object> arr = new ArrayList<>(set);
-        List<Object> tail = arr.size() > 500 ? new ArrayList<>(arr.subList(arr.size() - 500, arr.size())) : arr;
-        env.durableWrite("bm_redeem_closed", ModelJson.stringify(tail));
+        if (arr.size() > 500) {
+            // 캡에서 밀려난 종결 id도 done 아카이브로 보존한다 (위와 같은 이유).
+            archiveRedeemDoneIds(new ArrayList<>(arr.subList(0, arr.size() - 500)));
+            arr = new ArrayList<>(arr.subList(arr.size() - 500, arr.size()));
+        }
+        env.durableWrite("bm_redeem_closed", ModelJson.stringify(arr));
         List<Object> pendingNow = loadDurableJsonList("bm_redeem_pending");
         List<Object> kept = new ArrayList<>();
         for (Object e : pendingNow) {
@@ -793,6 +837,8 @@ public final class NativeCycle {
             done.add(Js.field(h, "condition_id"));
         }
         done.addAll(closedList);
+        // 캡에서 밀려나 아카이브된 done 근거도 같은 무게로 본다.
+        done.addAll(loadDurableJsonList("bm_redeem_done_archive"));
         RedeemPlan.Ingest ingest = RedeemPlan.ingest(pending, done, lastWinRows, lastLostRows, lastClosedRows);
         if (ingest.changed) {
             saveRedeemPending(ingest.pending);
@@ -1200,6 +1246,10 @@ public final class NativeCycle {
         Map<String, Integer> scanStats = new LinkedHashMap<>();
         Set<String> boughtAll = boughtSlugStrings();
         boughtAll.addAll(snap.stopLossSlugs);
+        // 결과 불명으로 끝난 손절 시도의 slug도 차단한다 — 실제로는
+        // 체결됐는데 bm_bought에 없는 포지션이면 체결 기록도 보유도
+        // 사라져 차단이 뚫리는 경로가 있었다 (v0.3.35 감사 축 2).
+        boughtAll.addAll(StopLossLedger.attemptedSlugs(ledgerStore));
         List<ScanFilter.Candidate> candidates = ScanFilter.scanCandidates(
                 markets, snap.heldSlugs, boughtAll, scanStats, env.nowMs());
         int slotsLeft = snap.slots;

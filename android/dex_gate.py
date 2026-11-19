@@ -16,6 +16,9 @@ v0.3.33 서명 VerifyError). 이 게이트는 출하 APK의 classes.dex를
 3. 쓰기 경로 앱 클래스가 dex에 전부 존재하는가.
 4. 매핑 파일 기준으로 서명 경로 Bouncy Castle 클래스가 dex에 존재하는가.
    — CryptoServicePurpose가 없으면 enum이 unboxing된 것이다.
+5. 수명주기 앱 클래스(외부 감시 리시버 등)가 dex에 전부 존재하는가.
+   — 매니페스트가 가리키는 리시버가 축소로 사라지면 외부 감시가
+   조용히 무력화된다 (v0.3.35에서 추가).
 
 사용법: dex_gate.py <apk> <mapping.txt>
 """
@@ -68,6 +71,16 @@ WRITE_PATH_CLASSES = [
     "Lcom/roomedia/boringmech/write/RedeemSubmitter;",
     "Lcom/roomedia/boringmech/write/SubmitGuard;",
     "Lcom/roomedia/boringmech/engine/NativeCycle;",
+]
+
+# 수명주기 앱 클래스 — 매니페스트 컴포넌트와 외부 감시 체인. 앱 패키지는
+# keep으로 이름이 보존되므로 기술자로 직접 본다.
+LIFECYCLE_CLASSES = [
+    "Lcom/roomedia/boringmech/EngineService;",
+    "Lcom/roomedia/boringmech/MainActivity;",
+    "Lcom/roomedia/boringmech/ExternalWatchdogReceiver;",
+    "Lcom/roomedia/boringmech/ExternalWatchdogScheduler;",
+    "Lcom/roomedia/boringmech/ExternalWatchdog;",
 ]
 
 # 서명 경로 Bouncy Castle 클래스 — 난독화되므로 매핑으로 기술자를 얻는다.
@@ -245,6 +258,12 @@ def main():
         failures.append("쓰기 경로 클래스 누락: " + ", ".join(missing))
     else:
         print("gate OK: 쓰기 경로 앱 클래스 전부 존재")
+
+    missing_lc = [c for c in LIFECYCLE_CLASSES if c not in classes]
+    if missing_lc:
+        failures.append("수명주기 클래스 누락: " + ", ".join(missing_lc))
+    else:
+        print("gate OK: 수명주기 앱 클래스 전부 존재")
 
     mapping = load_mapping(mapping_path)
     missing_bc = []

@@ -241,7 +241,7 @@ public final class StopLossSeller {
         try {
             resp = client.postOrder(signed, "FOK");
         } catch (Exception e) {
-            recordAttempt(tokenId, manual);
+            recordAttempt(tokenId, slug, manual);
             logger.log(prefix + " 결과 불명 " + slug + ": " + slice(msg(e), 120)
                     + (manual ? " — 체결 여부는 보유 목록에서 확인하세요" : " — 다음 사이클에 재확인"));
             errorNotify(NotifyPolicy.KEY_ORDER_UNKNOWN, prefix + " 결과 불명",
@@ -251,7 +251,7 @@ public final class StopLossSeller {
         JudgeFill.Verdict verdict = JudgeFill.judgeFill(resp);
         if (!verdict.filled) {
             if ("unknown".equals(verdict.kind)) {
-                recordAttempt(tokenId, manual);
+                recordAttempt(tokenId, slug, manual);
                 errorNotify(NotifyPolicy.KEY_ORDER_UNKNOWN, prefix + " 결과 불명",
                         slug + " · 체결 여부를 확정하지 못했습니다 — 보유 목록에서 확인하세요");
             } else if ("error".equals(verdict.kind) || "rejected".equals(verdict.kind)) {
@@ -308,12 +308,19 @@ public final class StopLossSeller {
         return true;
     }
 
-    /** 결과 불명 시도 기록 — 손절은 손절 원장, 수동 매도는 별도 장부로 나간다. */
-    private void recordAttempt(String tokenId, boolean manual) {
+    /**
+     * 결과 불명 시도 기록 — 손절은 손절 원장, 수동 매도는 별도 장부로 나간다.
+     * 손절은 토큰과 함께 slug도 남긴다: 실제로는 체결됐을 수 있는데
+     * bm_bought에 없는 포지션이면 체결 기록(stopLossSlugs)도, 보유
+     * (heldSlugs)도 사라져 재매수 차단이 뚫리기 때문이다 (v0.3.35 감사 축 2).
+     * 수동 매도는 사용자가 다시 팔 수 있어야 하므로 slug 차단을 걸지 않는다.
+     */
+    private void recordAttempt(String tokenId, String slug, boolean manual) {
         if (manual) {
             manualRecorder.recordAttempt(tokenId);
         } else {
             StopLossLedger.recordAttempt(store, tokenId);
+            StopLossLedger.recordAttemptSlug(store, slug);
         }
     }
 

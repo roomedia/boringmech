@@ -32,6 +32,7 @@ public final class NotifyPolicy {
     public static final String KEY_CYCLE_ERRORS = "cycle_errors";
     public static final String KEY_STAGE_DEADLINE = "stage_deadline";
     public static final String KEY_MANUAL_EXPIRED = "manual_expired";
+    public static final String KEY_EXT_WATCHDOG_BLOCKED = "ext_watchdog_blocked";
 
     /** 지금 이 사유로 오류 알림을 보내도 되는가. */
     public static boolean shouldSendError(Map<String, Long> lastSentByKey, String key, long nowMs) {

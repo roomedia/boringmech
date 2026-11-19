@@ -382,12 +382,20 @@ public final class ClobWriteClient {
 
     // ── postOrder ──
 
-    /** 반환은 응답 JSON 모델 (resolveTransactionsHashes까지 마친 값). */
+    /**
+     * 반환은 응답 JSON 모델 (resolveTransactionsHashes까지 마친 값).
+     *
+     * 제출(POST)만 타임아웃으로 감싼다. 해시 해소 폴링은 자체 30초
+     * 데드라인으로 bounded라 제출 타임아웃(20초) 밖에 둔다 — 안에 넣으면
+     * 폴링 구간이 잘려, 체결됐는데 해시 해소가 20~30초에 끝나는 건이
+     * 예외로 떨어져 "결과 불명"으로 오분류된다 (v0.3.35 감사 축 1).
+     */
     public Object postOrder(SignedOrder order, String orderType) throws Exception {
-        return timeout.run("postOrder", () -> postOrderInner(order, orderType));
+        Object res = timeout.run("postOrder", () -> postOrderSubmit(order, orderType));
+        return resolveTransactionsHashes(res);
     }
 
-    private Object postOrderInner(SignedOrder order, String orderType) throws Exception {
+    private Object postOrderSubmit(SignedOrder order, String orderType) throws Exception {
         if (creds == null) {
             throw new Exception("L2_AUTH_NOT_AVAILABLE");
         }
@@ -398,7 +406,7 @@ public final class ClobWriteClient {
         if (isOrderVersionMismatch(res)) {
             versionResolver.resolveVersion(true);
         }
-        return resolveTransactionsHashes(res);
+        return res;
     }
 
     public static boolean isOrderVersionMismatch(Object resp) {

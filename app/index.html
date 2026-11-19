@@ -117,6 +117,10 @@
       <div class="row" style="margin-top:8px"><span class="k">서명 지갑 (EOA)</span><span class="v addr" id="eoaAddr">—</span></div>
       <div class="row"><span class="k">deposit wallet</span><span class="v addr" id="funderAddr">—</span></div>
       <div class="row"><span class="k">네이티브 섀도우 대조</span><span class="v" id="shadowState">—</span></div>
+      <div class="row"><span class="k">배터리 최적화</span><span class="v" id="battState">—</span></div>
+      <div class="stack hidden" id="battBtnWrap" style="margin-top:10px">
+        <button class="btn ghost" id="btnBattery">배터리 최적화 제외 요청</button>
+      </div>
       <div class="note" style="margin-top:8px">거래·오류 알림은 폰 설정 &gt; 앱 &gt; boringmech &gt; 알림에서 켤 수 있습니다.</div>
       <div class="stack" style="margin-top:12px">
         <button class="btn ghost" id="btnUnlink">연동 해제</button>
@@ -507,6 +511,28 @@
       el.textContent = text;
     }
 
+    // 배터리 최적화 상태 — 최적화 대상이면 시스템이 백그라운드에서
+    // 프로세스를 죽여 엔진이 무응답이 될 수 있다. 예외면 버튼을 숨기고,
+    // 아니면 시스템 설정을 여는 요청 버튼을 보인다 (강제 아님, 안내만).
+    function renderBattery(){
+      var el = $('battState');
+      if (!el) return;
+      var wrap = $('battBtnWrap');
+      var exempt = null;
+      try {
+        if (window.AndroidBridge && AndroidBridge.isBatteryExempt) {
+          exempt = !!AndroidBridge.isBatteryExempt();
+        }
+      } catch (e) {}
+      if (exempt === null) {
+        el.textContent = '확인 불가';
+        if (wrap) wrap.classList.add('hidden');
+        return;
+      }
+      el.textContent = exempt ? '제외됨' : '최적화 대상 — 백그라운드에서 종료될 수 있음';
+      if (wrap) wrap.classList.toggle('hidden', exempt);
+    }
+
     // 뷰어에서 연동할 때 도는 업데이트 확인 결과도 엔진과 같은 저장소에 남긴다
     BM.onUpdate = function(info){
       try { localStorage.setItem('bm_update', JSON.stringify(info)); } catch (e) {}
@@ -576,6 +602,7 @@
       renderUpdate();
       renderRelayer();
       renderShadow();
+      renderBattery();
     }
 
     $('btnUpdate').addEventListener('click', function(){
@@ -623,6 +650,12 @@
       render(null);
     });
     $('btnRefresh').addEventListener('click', function(){ refresh(); });
+    $('btnBattery').addEventListener('click', function(){
+      try { AndroidBridge.requestBatteryExemption(); } catch (e) {}
+      // 설정에서 돌아온 뒤 상태가 바뀌어 있으면 다음 refresh가 잡지만,
+      // 복귀 직후 한 번 더 그려 버튼이 바로 사라지게 한다.
+      setTimeout(renderBattery, 1500);
+    });
     $('btnCopyLog').addEventListener('click', async function(){
       var btn = $('btnCopyLog');
       var text = readLogs().join('\n');

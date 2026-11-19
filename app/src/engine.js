@@ -77,10 +77,14 @@ const LS = {
   redeemPending: "bm_redeem_pending",
   redeemHistory: "bm_redeem_history",
   redeemClosed: "bm_redeem_closed",
+  redeemDoneArchive: "bm_redeem_done_archive",
   stage: "bm_stage",
   stopLossAttempted: "bm_stoploss_attempted",
+  stopLossAttemptedSlugs: "bm_stoploss_attempted_slugs",
   manualSell: "bm_manual_sell",
+  manualSellArchive: "bm_manual_sell_archive",
   manualSellAttempted: "bm_manual_sell_attempted",
+  manualSellAttemptedArchive: "bm_manual_sell_attempted_archive",
 };
 
 // 손절 (2026-11-14 사용자 결정 — 페이퍼 boringmech와 동일 규칙):
@@ -1409,25 +1413,55 @@ export function stopLossAttemptedTokens() {
 
 // 수동 매도 원장·시도 토큰 — 네이티브가 쓴 기록을 장부 집계에 반영한다.
 // 기록 형식이 손절과 같아 같은 파싱 필터를 쓴다 (v0.3.33 감사).
+// 아카이브로 회전된 기록·토큰도 같은 입력에 포함한다 (v0.3.35 감사 축 3).
 export function manualSellRecords() {
-  return parseStopLossList(durableRead(LS.manualSell));
+  return [
+    ...parseStopLossList(durableRead(LS.manualSellArchive)),
+    ...parseStopLossList(durableRead(LS.manualSell)),
+  ];
 }
 
 export function manualSellAttemptedTokens() {
+  const out = new Set();
+  for (const key of [LS.manualSellAttemptedArchive, LS.manualSellAttempted]) {
+    try {
+      const parsed = JSON.parse(durableRead(key) || "[]");
+      if (Array.isArray(parsed)) {
+        for (const t of parsed) {
+          if (typeof t === "string") out.add(t);
+        }
+      }
+    } catch {}
+  }
+  return out;
+}
+
+export function stopLossAttemptedSlugs() {
   try {
-    const parsed = JSON.parse(durableRead(LS.manualSellAttempted) || "[]");
-    return new Set(Array.isArray(parsed) ? parsed.filter((t) => typeof t === "string") : []);
+    const parsed = JSON.parse(durableRead(LS.stopLossAttemptedSlugs) || "[]");
+    return new Set(Array.isArray(parsed) ? parsed.filter((s) => typeof s === "string") : []);
   } catch {
     return new Set();
   }
 }
 
-function recordStopLossAttempt(tokenId) {
-  if (!tokenId) return;
-  const set = stopLossAttemptedTokens();
-  if (set.has(tokenId)) return;
-  set.add(tokenId);
-  durableWrite(LS.stopLossAttempted, JSON.stringify([...set].slice(-200)));
+function recordStopLossAttempt(tokenId, slug) {
+  if (tokenId) {
+    const set = stopLossAttemptedTokens();
+    if (!set.has(tokenId)) {
+      set.add(tokenId);
+      durableWrite(LS.stopLossAttempted, JSON.stringify([...set].slice(-200)));
+    }
+  }
+  // slug도 함께 남긴다 — 실제로는 체결됐는데 bm_bought에 없는 포지션이면
+  // 체결 기록도 보유도 사라져 재매수 차단이 뚫린다 (v0.3.35 감사 축 2).
+  if (slug) {
+    const slugs = stopLossAttemptedSlugs();
+    if (!slugs.has(slug)) {
+      slugs.add(slug);
+      durableWrite(LS.stopLossAttemptedSlugs, JSON.stringify([...slugs].slice(-10000)));
+    }
+  }
 }
 
 async function executeStopLossSell(row, current) {
@@ -1494,14 +1528,14 @@ async function executeStopLossSellLocked(row, current) {
     // 제출됐으나 결과를 모른다 — 체결됐을 수 있어도 다음 사이클이 포지션
     // 실재로 다시 판정한다 (남아 있으면 재시도, 없으면 종료). 실제로
     // 체결된 경우에 대비해 시도 토큰을 남겨 정산 판정 오염을 막는다.
-    recordStopLossAttempt(row.token_id);
+    recordStopLossAttempt(row.token_id, row.slug);
     log(`손절 매도 결과 불명 ${slug}: ${String(e.message ?? e).slice(0, 120)} — 다음 사이클에 재확인`);
     return false;
   }
   const verdict = judgeFill(resp);
   if (!verdict.filled) {
     // 전송 실패 형태면 실제로는 체결됐을 수 있다 — 시도 토큰을 남긴다
-    if (verdict.kind === "unknown") recordStopLossAttempt(row.token_id);
+    if (verdict.kind === "unknown") recordStopLossAttempt(row.token_id, row.slug);
     const msg = verdict.error || `미체결 (status: ${verdict.status || "없음"})`;
     log(`손절 매도 실패 ${slug}: ${String(msg).slice(0, 120)} · 응답 원문: ${JSON.stringify(resp).slice(0, 200)}`);
     return false;
@@ -1706,9 +1740,11 @@ async function runCycle(gen) {
   const markets = await fetchMarkets();
   const scanStats = {};
   // 재매수 차단은 bought ∪ 손절 원장 — 손절한 종목은 bought 기록이
-  // 없어도(앱 밖 매수분 등) 다시 사지 않는다.
+  // 없어도(앱 밖 매수분 등) 다시 사지 않는다. 결과 불명 손절 시도의
+  // slug도 같은 이유로 차단한다 (v0.3.35 감사 축 2).
   const boughtAll = boughtSlugs();
   for (const s of snap.stopLossSlugs || []) boughtAll.add(s);
+  for (const s of stopLossAttemptedSlugs()) boughtAll.add(s);
   const candidates = scanCandidates(markets, snap.heldSlugs, boughtAll, scanStats);
   state.lastScan = { stats: scanStats, fetched: markets.length, ts: Date.now() };
   let slotsLeft = snap.slots;
@@ -2242,6 +2278,8 @@ function ingestRedeemPending() {
   const done = new Set([
     ...loadDurableJsonList(LS.redeemHistory).map((h) => h.condition_id),
     ...loadDurableJsonList(LS.redeemClosed),
+    // 캡에서 밀려나 아카이브된 done 근거도 같은 무게로 본다 (v0.3.35 감사 축 3).
+    ...loadDurableJsonList(LS.redeemDoneArchive),
   ]);
   const pending = loadRedeemPending();
   const byKey = new Map(pending.map((e) => [`${e.condition_id}|${e.token_id}`, e]));
@@ -2296,6 +2334,16 @@ function removeRedeemPending(conditionId) {
   saveRedeemPending(loadRedeemPending().filter((e) => e.condition_id !== conditionId));
 }
 
+function archiveRedeemDoneIds(ids) {
+  const fresh = ids.filter((id) => id != null);
+  if (!fresh.length) return;
+  const archive = loadDurableJsonList(LS.redeemDoneArchive);
+  for (const id of fresh) {
+    if (!archive.includes(id)) archive.push(id);
+  }
+  durableWrite(LS.redeemDoneArchive, JSON.stringify(archive.slice(-10000)));
+}
+
 function closeWorthless(entries) {
   const closed = loadDurableJsonList(LS.redeemClosed);
   const set = new Set(closed);
@@ -2303,7 +2351,10 @@ function closeWorthless(entries) {
     set.add(e.condition_id);
     log(`리딤 종결 (전액 손실) ${String(e.condition_id).slice(0, 10)}…`);
   }
-  durableWrite(LS.redeemClosed, JSON.stringify([...set].slice(-500)));
+  const all = [...set];
+  // 캡에서 밀려난 종결 id는 done 아카이브로 보존한다 (v0.3.35 감사 축 3).
+  if (all.length > 500) archiveRedeemDoneIds(all.slice(0, all.length - 500));
+  durableWrite(LS.redeemClosed, JSON.stringify(all.slice(-500)));
   const ids = new Set(entries.map((e) => e.condition_id));
   saveRedeemPending(loadRedeemPending().filter((e) => !ids.has(e.condition_id)));
 }
@@ -2311,6 +2362,10 @@ function closeWorthless(entries) {
 function recordRedeemHistory(rec) {
   const list = loadDurableJsonList(LS.redeemHistory);
   list.push(rec);
+  // 캡에서 밀려난 기록의 condition_id는 done 아카이브로 보존한다.
+  if (list.length > 100) {
+    archiveRedeemDoneIds(list.slice(0, list.length - 100).map((h) => h.condition_id));
+  }
   durableWrite(LS.redeemHistory, JSON.stringify(list.slice(-100)));
 }
 

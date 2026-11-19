@@ -1079,6 +1079,165 @@ public class NativeCycleTest {
                 && ManualSell.isStale(rq, 1000 + ManualSell.MAX_REQUEST_AGE_MS + 1));
     }
 
+    /** 감사 축1 F1 — 해시 해소 폴링(30초 예산)이 제출 타임아웃(20초) 안에
+     *  있으면 폴링 구간이 잘려 체결 건이 결과 불명으로 떨어진다. 폴링은
+     *  제출 타임아웃 밖에서 자체 데드라인으로 끝나야 한다. */
+    private static void postOrderResolveOutsideTimeout() {
+        OrderTransport t = new OrderTransport();
+        t.responseBody = "{\"success\":true,\"status\":\"matched\",\"makingAmount\":\"6\","
+                + "\"takingAmount\":\"7.79\",\"tradeIDs\":[\"trade-1\"]}";
+        ClobWriteClient c = new ClobWriteClient.Builder()
+                .privateKey(PK)
+                .funder(FUNDER)
+                .creds(new ClobWriteClient.Creds(EOA, "key", "c2VjcmV0", "pass"))
+                .transport(t)
+                .codec(CODEC)
+                .timeout(ClobWriteClient.executorTimeout(150))
+                .versionResolver(force -> 2)
+                .marketInfo(new ClobWriteClient.MarketInfoSource() {
+                    @Override public void ensureMarketInfoCached(String tokenId) {}
+                    @Override public String getTickSize(String tokenId) { return "0.01"; }
+                    @Override public boolean getNegRisk(String tokenId) { return false; }
+                })
+                .tradesSource(id -> {
+                    Thread.sleep(600);
+                    Map<String, Object> trade = new LinkedHashMap<>();
+                    trade.put("id", "trade-1");
+                    trade.put("status", "CONFIRMED");
+                    trade.put("transaction_hash", "0xhash1");
+                    return new ArrayList<>(List.of(trade));
+                })
+                .build();
+        try {
+            ClobWriteClient.MarketOrderRequest req =
+                    new ClobWriteClient.MarketOrderRequest("111", true, 6, 0.77);
+            req.tickSize = "0.01";
+            req.negRisk = false;
+            Object resp = c.postOrder(c.createMarketOrder(req), "FOK");
+            check("resolve-outside-timeout: 해시 해소 완료",
+                    ModelJson.stringify(resp).contains("0xhash1"));
+        } catch (Exception e) {
+            check("resolve-outside-timeout: 해시 해소 완료 (" + e + ")", false);
+        }
+    }
+
+    /** 감사 축2 F1 — 결과 불명 손절 시도의 slug가 기록되고, 그 slug는
+     *  bm_bought에 없어도 재매수 차단 집합에 들어간다. */
+    private static void stopLossUnknownRecordsSlug() {
+        // 1부: 손절 제출이 전송 단계에서 끊기면 시도 slug가 남는다
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("slug", "test-sl-market");
+        row.put("token_id", "123456789");
+        row.put("outcome", "Yes");
+        row.put("avg_price", 0.75);
+        row.put("current_size", 10.0);
+        row.put("status", "OPEN");
+        row.put("condition_id", "0x" + "cd".repeat(32));
+        net.positions = new ArrayList<>(List.of(row));
+        Map<String, Object> gamma = new LinkedHashMap<>();
+        gamma.put("outcomes", "[\"Yes\",\"No\"]");
+        gamma.put("outcomePrices", "[\"0.4\",\"0.6\"]");
+        net.gammaPages.put("test-sl-market", new ArrayList<>(List.of(gamma)));
+        net.books.put("123456789", jmap("{\"tick_size\":\"0.01\",\"neg_risk\":false,"
+                + "\"asks\":[{\"price\":\"0.41\",\"size\":\"100\"}],"
+                + "\"bids\":[{\"price\":\"0.4\",\"size\":\"100\"}]}"));
+        net.condBalance = BigInteger.valueOf(10_000_000);
+        OrderTransport t = new OrderTransport();
+        t.throwOnPost = true;
+        FakeLedgerStore store = new FakeLedgerStore();
+        NativeCycle c = newCycle(env, net, t, store, () -> null);
+        c.runIteration(1);
+        check("attempt-slug: 시도 slug 기록",
+                StopLossLedger.attemptedSlugs(store).contains("test-sl-market"));
+        check("attempt-slug: 시도 토큰 기록",
+                StopLossLedger.attemptedTokens(store).contains("123456789"));
+
+        // 2부: 시도 slug만으로 매수 후보가 차단된다 (bm_bought에 없는 slug)
+        FakeEnv env2 = new FakeEnv();
+        FakeNet net2 = new FakeNet();
+        buyStage(net2);
+        FakeLedgerStore store2 = new FakeLedgerStore();
+        StopLossLedger.recordAttemptSlug(store2, "test-buy-market");
+        OrderTransport t2 = new OrderTransport();
+        NativeCycle c2 = newCycle(env2, net2, t2, store2, () -> null);
+        c2.runIteration(1);
+        check("attempt-slug: 재매수 차단", t2.posts == 0);
+    }
+
+    /** 감사 축3 F1 — 수동 매도 원장·시도가 캡을 넘어도 아카이브로 보존돼
+     *  장부 집계 입력에서 사라지지 않는다. */
+    private static void manualLedgerArchiveSurvives() {
+        List<Object> recent = new ArrayList<>();
+        List<Object> archive = new ArrayList<>();
+        for (int i = 0; i < 201; i++) {
+            Map<String, Object> rec = new LinkedHashMap<>();
+            rec.put("token_id", "mtok" + i);
+            rec.put("slug", "m-slug-" + i);
+            rec.put("realized_pnl", -1.0);
+            ManualSell.CappedLists r = ManualSell.appendRecordWithArchive(archive, recent, rec);
+            recent = r.recent;
+            archive = r.archive;
+        }
+        check("manual-archive: 최근 캡 200", recent.size() == ManualSell.LEDGER_CAP);
+        check("manual-archive: 아카이브 1건", archive.size() == 1);
+        List<Object> combined = ManualSell.combineRecords(archive, recent);
+        check("manual-archive: 집계 입력 201건 유지", combined.size() == 201);
+        check("manual-archive: 회전된 기록의 slug 보존",
+                "m-slug-0".equals(com.roomedia.boringmech.engine.Js.field(combined.get(0), "slug")));
+
+        List<Object> aRecent = new ArrayList<>();
+        List<Object> aArchive = new ArrayList<>();
+        for (int i = 0; i < 201; i++) {
+            ManualSell.CappedLists r = ManualSell.appendAttemptedWithArchive(
+                    aArchive, aRecent, "atok" + i);
+            aRecent = r.recent;
+            aArchive = r.archive;
+        }
+        List<Object> allAttempted = ManualSell.combineAttempted(aArchive, aRecent);
+        check("manual-archive: 시도 토큰 201개 유지", allAttempted.size() == 201
+                && allAttempted.contains("atok0") && allAttempted.contains("atok200"));
+    }
+
+    /** 감사 축3 F2 — worthless 종결이 closed 캡(500)을 넘겨도 밀려난 id가
+     *  done 아카이브에 남아, CLOSED 승 행으로 재수집되지 않는다. */
+    private static void redeemDoneArchiveSurvives() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < 501; i++) {
+            if (i > 0) sb.append(",");
+            sb.append("{\"condition_id\":\"").append(String.format("0x%064x", i + 1))
+                    .append("\",\"status\":\"REDEEMABLE\",\"current_value\":0,\"zero_streak\":2}");
+        }
+        sb.append("]");
+        env.durable.put("bm_redeem_pending", sb.toString());
+        NativeCycle c = newCycle(env, net, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        c.runIteration(1);
+        String closed = env.durable.getOrDefault("bm_redeem_closed", "");
+        String archive = env.durable.getOrDefault("bm_redeem_done_archive", "");
+        String firstCid = String.format("0x%064x", 1);
+        check("done-archive: closed 캡 500 유지", !closed.contains(firstCid));
+        check("done-archive: 밀려난 id 아카이브 보존", archive.contains(firstCid));
+
+        // 아카이브된 id의 CLOSED 승 행이 와도 pending으로 재수집되지 않는다
+        FakeEnv env2 = new FakeEnv();
+        FakeNet net2 = new FakeNet();
+        env2.durable.put("bm_redeem_done_archive", "[\"" + firstCid + "\"]");
+        Map<String, Object> winRow = new LinkedHashMap<>();
+        winRow.put("condition_id", firstCid);
+        winRow.put("token_id", "t1");
+        winRow.put("current_price", 1.0);
+        winRow.put("entry_cost_usdc", 5.0);
+        winRow.put("realized_pnl", 5.0);
+        net2.closedRows = new ArrayList<>(List.of(winRow));
+        NativeCycle c2 = newCycle(env2, net2, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        c2.runIteration(1);
+        check("done-archive: 재수집 차단",
+                !env2.durable.getOrDefault("bm_redeem_pending", "").contains(firstCid));
+    }
+
     public static void main(String[] args) {
         happyPath();
         buyPath();
@@ -1114,6 +1273,10 @@ public class NativeCycleTest {
         notifyPolicyDedupe();
         notifyThrowDoesNotFlipFill();
         notifyBuyHttp5xxIsUnknown();
+        postOrderResolveOutsideTimeout();
+        stopLossUnknownRecordsSlug();
+        manualLedgerArchiveSurvives();
+        redeemDoneArchiveSurvives();
         pureLogic();
         System.out.println("NativeCycleTest: " + passed + " passed, " + failed + " failed");
         if (failed > 0) {

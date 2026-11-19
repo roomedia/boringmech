@@ -35,6 +35,9 @@ public final class StopLossLedger {
     public static final String KEY_RECENT = "bm_stoploss";
     public static final String KEY_ARCHIVE = "bm_stoploss_archive";
     public static final String KEY_ATTEMPTED = "bm_stoploss_attempted";
+    public static final String KEY_ATTEMPTED_SLUGS = "bm_stoploss_attempted_slugs";
+    /** 시도 slug는 재매수 차단의 근거라 토큰 시도(200)보다 훨씬 길게 보존한다. */
+    public static final int ATTEMPTED_SLUGS_CAP = 10_000;
 
     /** 원장 저장 추상화 — 값은 JSON 모델(리스트) 단위로 오간다. */
     public interface Store {
@@ -143,6 +146,44 @@ public final class StopLossLedger {
                 list = new ArrayList<>(list.subList(list.size() - ATTEMPTED_CAP, list.size()));
             }
             store.write(KEY_ATTEMPTED, list);
+        }
+    }
+
+    /** stopLossAttemptedSlugs — 문자열만 Set으로. */
+    public static Set<String> attemptedSlugs(Store store) {
+        Set<String> out = new LinkedHashSet<>();
+        Object model = store.read(KEY_ATTEMPTED_SLUGS);
+        if (model instanceof List) {
+            for (Object s : (List<?>) model) {
+                if (s instanceof String) {
+                    out.add((String) s);
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 결과 불명 손절 시도의 slug 기록 — 실제로는 체결됐을 수 있어, 체결
+     * 기록(stopLossSlugs)에 준해 재매수 차단 집합에 넣기 위한 근거.
+     * 체결 기록이 생기면 그쪽이 우선하므로 여기서는 slug만 남긴다.
+     * 캡을 넘기면 오래된 것부터 버린다 (아카이브와 같은 상한).
+     */
+    public static void recordAttemptSlug(Store store, String slug) {
+        if (slug == null || slug.isEmpty()) {
+            return;
+        }
+        synchronized (store) {
+            Set<String> set = attemptedSlugs(store);
+            if (set.contains(slug)) {
+                return;
+            }
+            set.add(slug);
+            List<Object> list = new ArrayList<>(set);
+            if (list.size() > ATTEMPTED_SLUGS_CAP) {
+                list = new ArrayList<>(list.subList(list.size() - ATTEMPTED_SLUGS_CAP, list.size()));
+            }
+            store.write(KEY_ATTEMPTED_SLUGS, list);
         }
     }
 

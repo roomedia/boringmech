@@ -107,6 +107,19 @@ public class MainActivity extends Activity {
                     new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 7);
         }
 
+        // 실행 의도가 켜져 있는데 서비스가 죽어 있으면 다시 세운다 —
+        // 외부 감시의 재기동이 시스템 제한으로 거부된 경우에도 앱을
+        // 여는 것이 실제 재개 경로가 되게 한다 (v0.3.35 감사 축 4).
+        // 서비스가 이미 살아 있으면 onStartCommand가 멱등하게 처리한다.
+        if (EngineService.getRunIntent(this)) {
+            Intent service = new Intent(this, EngineService.class);
+            if (Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(service);
+            } else {
+                startService(service);
+            }
+        }
+
         web.loadUrl("file:///android_asset/index.html");
 
         // 이전 실행에서 끝나지 않은 업데이트 다운로드가 있으면 이어서 처리

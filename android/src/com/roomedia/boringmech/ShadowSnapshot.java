@@ -193,12 +193,16 @@ final class ShadowSnapshot {
     }
 
     // 수동 매도 원장·시도 토큰 — NativeCycle 집계와 같은 입력으로 대조한다.
+    // 아카이브로 회전된 기록·토큰도 같은 입력에 포함한다 (v0.3.35 감사 축 3).
     private static List<Object> manualSellRecords(Context ctx) {
-        return parseStopLossList(durable(ctx, "bm_manual_sell"));
+        List<Object> out = parseStopLossList(durable(ctx, "bm_manual_sell_archive"));
+        out.addAll(parseStopLossList(durable(ctx, "bm_manual_sell")));
+        return out;
     }
 
     private static Set<Object> mergedAttemptedTokens(Context ctx) {
         Set<Object> out = stopLossAttemptedTokens(ctx);
+        out.addAll(parseTokenList(durable(ctx, "bm_manual_sell_attempted_archive")));
         out.addAll(parseTokenList(durable(ctx, "bm_manual_sell_attempted")));
         return out;
     }

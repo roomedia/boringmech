@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:label="boringmech"
@@ -25,5 +27,17 @@
             android:name=".EngineService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- 외부 감시 — AlarmManager 알람과 BOOT_COMPLETED가 깨운다.
+             intent-filter에는 보호 브로드캐스트(BOOT_COMPLETED)만 있어
+             다른 앱이 위조할 수 없고, 알람은 명시적 인텐트라 필터를
+             타지 않는다. BOOT_COMPLETED 수신은 플랫폼 가이드대로
+             exported=true로 둔다. -->
+        <receiver
+            android:name=".ExternalWatchdogReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

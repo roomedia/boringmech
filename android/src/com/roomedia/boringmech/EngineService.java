@@ -45,6 +45,11 @@ import android.os.PowerManager;
 //    프로세스 단위 정지는 앱 내부로 감지할 수 없다는 한계가 있다.
 //  - 엔진 스레드 소멸 시 재생성.
 // 재로드 횟수는 네이티브 엔진이 복원 직후 읽어 로그로 남긴다.
+//
+// 최외곽에는 프로세스 밖 감시가 한 층 더 있다 (ExternalWatchdog):
+// AlarmManager 알람이 ExternalWatchdogReceiver를 깨워, 실행 의도가
+// 켜져 있는데 활동 신호가 6분 넘게 멈춰 있으면 이 서비스를 재기동한다.
+// 내부 워치독이 프로세스 사망과 함께 죽는 구조적 한계를 메우는 층이다.
 public class EngineService extends Service {
     public static final String ACTION_STOP = "com.roomedia.boringmech.ACTION_STOP";
     public static final String ACTION_RELOAD_ENGINE =
@@ -65,6 +70,8 @@ public class EngineService extends Service {
     private static final String KEY_SUBMIT_SINCE_MS = "submit_since_ms";
     private static final String KEY_STAGE_RESTARTS = "stage_restarts";
     private static final String KEY_LAST_STAGE_RESTART_MS = "last_stage_restart_ms";
+    private static final String KEY_EXT_RESTARTS = "ext_restarts";
+    private static final String KEY_LAST_EXT_RESTART_MS = "last_ext_restart_ms";
     // 네이티브 섀도우용 미러 — JS boot/link가 남긴다 (Bridge.setFunderMirror 등)
     private static final String KEY_FUNDER = "funder";
     private static final String KEY_EOA = "eoa";
@@ -179,6 +186,31 @@ public class EngineService extends Service {
         return prefs(ctx).getLong(KEY_HEARTBEAT_MS, 0);
     }
 
+    static long getCycleChangedMs(Context ctx) {
+        return prefs(ctx).getLong(KEY_HEARTBEAT_CYCLE_CHANGED_MS, 0);
+    }
+
+    static long getProgressMs(Context ctx) {
+        return prefs(ctx).getLong(KEY_PROGRESS_MS, 0);
+    }
+
+    // ── 외부 감시 (AlarmManager → ExternalWatchdogReceiver) ──────
+    // 내부 워치독은 같은 프로세스라 프로세스 사망과 함께 죽는다.
+    // 외부 감시는 시스템 알람이 리시버를 깨우는 구조라 프로세스가
+    // 죽어도 살아남는다. 재기동 기록은 여기 남긴다 — 제보에서
+    // "외부 감시가 실제로 발동했는가"를 가르는 재료다.
+    static long getLastExternalRestartMs(Context ctx) {
+        return prefs(ctx).getLong(KEY_LAST_EXT_RESTART_MS, 0);
+    }
+
+    static void recordExternalRestart(Context ctx) {
+        SharedPreferences p = prefs(ctx);
+        p.edit()
+                .putInt(KEY_EXT_RESTARTS, p.getInt(KEY_EXT_RESTARTS, 0) + 1)
+                .putLong(KEY_LAST_EXT_RESTART_MS, System.currentTimeMillis())
+                .apply();
+    }
+
     static int getHeartbeatCycle(Context ctx) {
         return prefs(ctx).getInt(KEY_HEARTBEAT_CYCLE, 0);
     }
@@ -216,6 +248,7 @@ public class EngineService extends Service {
             o.put("boot_failures", p.getInt(KEY_BOOT_FAILURES, 0));
             o.put("directive_unacked", p.getInt(KEY_DIRECTIVE_UNACKED, 0));
             o.put("stage_restarts", p.getInt(KEY_STAGE_RESTARTS, 0));
+            o.put("ext_restarts", p.getInt(KEY_EXT_RESTARTS, 0));
             o.put("tick_alive", lastTickMs);
             return o.toString();
         } catch (Exception e) {
@@ -415,6 +448,14 @@ public class EngineService extends Service {
         super.onCreate();
         serviceStartMs = System.currentTimeMillis();
 
+        // 외부 감시 체인 장전은 여기서도 한다 — onStartCommand의 앞단
+        // (포그라운드 전환 등)이 예외로 죽어도, 실행 의도가 켜져 있는 한
+        // 체인이 장전돼 있어야 리시버가 서비스를 되살릴 수 있다
+        // (v0.3.35 감사 축 4). 장전 자체는 예외를 삼키는 멱등 연산이다.
+        if (getRunIntent(this)) {
+            ExternalWatchdogScheduler.schedule(this);
+        }
+
         // 워치독 무장은 여기서 즉시 한다 — 어떤 엔진 시작 경로보다 먼저
         // 걸려 있어야 시작이 멈춰도 틱이 돈다.
         watchdogRunning = true;
@@ -505,6 +546,10 @@ public class EngineService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
+        // 외부 감시 체인 장전을 포그라운드 전환보다 먼저 한다 — 전환이
+        // 예외로 죽어도 체인이 남아 리시버가 재시도를 이어간다. 이미
+        // 걸려 있으면 교체될 뿐이라 매 시작마다 불러도 안전하다.
+        ExternalWatchdogScheduler.schedule(this);
         startForegroundWithNotification();
         acquireWakeLock();
         ensureNativeEngine();
@@ -736,6 +781,12 @@ public class EngineService extends Service {
 
     @Override
     public void onDestroy() {
+        // 외부 감시 체인은 실행 의도가 꺼진 종료에서만 해제한다 —
+        // 시스템이 서비스를 죽인 경우(onDestroy가 불릴 수도, 안 불릴
+        // 수도 있다)에는 체인이 남아 있어야 리시버가 되살릴 수 있다.
+        if (!getRunIntent(this)) {
+            ExternalWatchdogScheduler.cancel(this);
+        }
         shadowRunning = false;
         if (shadowThread != null) {
             shadowThread.interrupt();
