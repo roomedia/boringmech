@@ -388,6 +388,8 @@ public final class NativeCycle {
             m.put("title", Js.truthy(title) ? Js.str(title) : slugStr);
             Object outcome = Js.field(p, "outcome");
             m.put("outcome", Js.truthy(outcome) ? Js.str(outcome) : null);
+            Object endDate = Js.field(p, "end_date");
+            m.put("end_date", Js.truthy(endDate) ? Js.str(endDate) : null);
             m.put("avg_price", numOrNullFinite(Js.fieldNum(p, "avg_price")));
             m.put("current_price", numOrNullFinite(Js.fieldNum(p, "current_price")));
             m.put("current_size", numOrNullFinite(Js.fieldNum(p, "current_size")));

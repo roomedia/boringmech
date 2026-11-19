@@ -903,6 +903,7 @@ function snapshotPositionsOf(rows) {
       token_id: tokenId,
       title: title || slug,
       outcome: strOrNull(p.outcome),
+      end_date: strOrNull(p.end_date),
       avg_price: numOrNull(p.avg_price),
       current_price: numOrNull(p.current_price),
       current_size: numOrNull(p.current_size),

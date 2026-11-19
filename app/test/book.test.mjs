@@ -1078,6 +1078,7 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
     current_size: 6.94,
     current_value: 5.62,
     fee_rate: 0.04,
+    end_date: "2026-11-30",
   };
   // ① 네이티브가 쓴 캐시 원문(JSON)을 파서가 그대로 통과시킨다
   const fromNative = snapshotFromCache(
@@ -1093,6 +1094,7 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   eq(fromNative.positions[0].current_size, 6.94, "positions: current_size kept");
   eq(fromNative.positions[0].current_value, 5.62, "positions: current_value kept");
   eq(fromNative.positions[0].fee_rate, 0.04, "positions: fee_rate kept");
+  eq(fromNative.positions[0].end_date, "2026-11-30", "positions: end_date kept");
 
   // 라운드트립 — 기록(snapshotCacheOf)도 읽기도 positions를 유지한다
   const roundTrip = snapshotFromCache(

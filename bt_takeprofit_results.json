@@ -1,0 +1,4076 @@
+{
+ "assumptions": [
+  "체결 시점: CLOB prices-history 포인트 가격(주로 fidelity=1 분봉, 일부 fidelity=60)이 임계 X 이상이 된 첫 포인트에서 도달로 판정하고 그 포인트 가격으로 체결됐다고 가정한다. 실시간 bid가 아닌 거래가 계열이라 실체결가와 차이가 있을 수 있다.",
+  "매도가: 도달 포인트 가격 - 스프레드 0.01. 수수료는 정식 커브 fee = shares x rate x p_sell x (1 - p_sell) 로 매도 시 1회 적용. rate는 건별 실측 fee_rate_bps/10000 (페이퍼) 또는 Gamma feeSchedule.rate (앱). 손절 감사가 쓴 회수액 x bps 단순 비례식과 다르며, 실측 매도 fee와 대조해 정식 커브가 맞음을 확인했다.",
+  "가격 히스토리는 지시문의 'Gamma'가 아니라 CLOB prices-history다 (기존 백테스트·감사 전례와 동일. Gamma는 마켓 메타 전용).",
+  "베이스라인은 손절 없는 순수 만기 보유 결과다. 실제 운용은 손절 병행이라 손절이 먼저 발동했을 건에서는 익절 효과가 과대평가될 수 있다. 실제로 sell로 청산된 건은 표본에서 제외했다.",
+  "생존 편향: 정산 완료 건만 표본이다. 아직 미정산인 보유 건(특히 만기가 먼 선거 마켓)이 빠져 있어 큰 R 조건의 표본이 구조적으로 얇고, 도달 후 패배율도 정산된 건 안에서만 잰 값이다.",
+  "페이퍼 건의 보유 PnL은 건별 shares x (1 or 0) - (amount+fee)로 재계산했고 승패는 가격 경로 마지막 가격의 정산 수렴값(>=0.99 승, <=0.01 패)으로 확정했다. Gamma markets 조회는 표본 마켓 전부가 빈 결과라(아카이브) 쓸 수 없었고, positions 실현손익 역산은 재진입이 섞인 키에서 건별로 성립하지 않아 보조 대조로만 썼다 (불일치 건은 details의 reverse_disagree 플래그로 남겼다).",
+  "앱 건의 cost는 activity 매수 usdc 합 + Data API entry_fees_usdc(positions의 total_cost_usdc는 CLOSED에서 비정상값이라 제외), hold_pnl은 Data API realized_pnl을 그대로 썼다. 앱 표본은 6건 이하로 작아 페이퍼와 합산하되 source로 구분했다."
+ ],
+ "sample": {
+  "total_measured": 52,
+  "paper": 48,
+  "app": 4,
+  "excluded": [
+   {
+    "source": "paper",
+    "slug": "2026-senate-map-r-none",
+    "outcome": "no",
+    "trade_id": 12,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-dan-sullivan-win-the-alaska-senate-race-in-2026",
+    "outcome": "no",
+    "trade_id": 20,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-mary-peltola-win-the-alaska-senate-race-in-2026",
+    "outcome": "yes",
+    "trade_id": 21,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-there-be-no-change-in-fed-interest-rates-after-the-december-2026-meeting-20260729232808635",
+    "outcome": "no",
+    "trade_id": 23,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-genptg-win-worlds-2026",
+    "outcome": "no",
+    "trade_id": 24,
+    "reason": "liquidated_by_sell"
+   },
+   {
+    "source": "paper",
+    "slug": "will-the-fed-increase-interest-rates-by-25-bps-after-the-december-2026-meeting-20260729232808636",
+    "outcome": "yes",
+    "trade_id": 27,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bilibili-gaming-win-worlds-2026",
+    "outcome": "no",
+    "trade_id": 43,
+    "reason": "liquidated_by_sell"
+   },
+   {
+    "source": "paper",
+    "slug": "will-puma-shen-win-the-next-taipei-mayor-election-20260813125857102",
+    "outcome": "no",
+    "trade_id": 44,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-chiang-wan-an-win-the-next-taipei-mayor-election-20260813125857101",
+    "outcome": "yes",
+    "trade_id": 45,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-pedro-sanchez-be-the-next-prime-minister-of-spain-20260625005710096",
+    "outcome": "no",
+    "trade_id": 46,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "us-announces-end-of-iranian-blockade-by-november-30-2026",
+    "outcome": "no",
+    "trade_id": 47,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-psoe-win-the-most-seats-in-the-2026-spanish-general-election",
+    "outcome": "no",
+    "trade_id": 48,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "another-fed-rate-hike-in-2026",
+    "outcome": "yes",
+    "trade_id": 49,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "israel-x-iran-ceasefire-continues-through-december-15",
+    "outcome": "yes",
+    "trade_id": 51,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-reach-77pt5k-in-november-2026-from-november-5",
+    "outcome": "yes",
+    "trade_id": 52,
+    "reason": "liquidated_by_sell"
+   },
+   {
+    "source": "paper",
+    "slug": "israel-x-iran-ceasefire-continues-through-november-30",
+    "outcome": "yes",
+    "trade_id": 53,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-dip-to-62pt5k-in-november-2026",
+    "outcome": "no",
+    "trade_id": 54,
+    "reason": "liquidated_by_sell"
+   },
+   {
+    "source": "paper",
+    "slug": "will-pp-win-the-most-seats-in-the-2026-spanish-general-election",
+    "outcome": "yes",
+    "trade_id": 55,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "us-x-iran-effective-ceasefire-by-november-30-20261108",
+    "outcome": "yes",
+    "trade_id": 57,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-reach-82pt5k-in-november-2026",
+    "outcome": "no",
+    "trade_id": 58,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-lee-shu-chuan-win-the-next-new-taipei-mayor-election-20260813125857201",
+    "outcome": "no",
+    "trade_id": 59,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "israel-x-iran-ceasefire-continues-through-november-22",
+    "outcome": "yes",
+    "trade_id": 60,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-dip-to-65k-in-november-2026",
+    "outcome": "no",
+    "trade_id": 61,
+    "reason": "liquidated_by_sell"
+   },
+   {
+    "source": "paper",
+    "slug": "will-su-chiao-hui-win-the-next-new-taipei-mayor-election-20260813125857202",
+    "outcome": "yes",
+    "trade_id": 62,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-the-fed-hikepausehike-in-the-next-three-decisions-sepoctdec",
+    "outcome": "yes",
+    "trade_id": 63,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "israeli-airspace-closed-by-november-30-2026",
+    "outcome": "no",
+    "trade_id": 64,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "us-iran-hormuz-agreement-by-november-30",
+    "outcome": "no",
+    "trade_id": 65,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-ko-chih-en-win-the-next-kaohsiung-mayor-election-20260813125857601",
+    "outcome": "no",
+    "trade_id": 66,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "pete-hegseth-out-as-secretary-of-defense-by-october-31-20261001003401433",
+    "outcome": "no",
+    "trade_id": 67,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-reach-85k-in-november-2026",
+    "outcome": "no",
+    "trade_id": 69,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-the-fed-hikepausepause-in-the-next-three-decisions-sepoctdec",
+    "outcome": "no",
+    "trade_id": 70,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-reach-87pt5k-in-november-2026",
+    "outcome": "no",
+    "trade_id": 72,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-chuang-ching-cheng-win-the-next-hsinchu-city-mayor-election-20260813135716402",
+    "outcome": "no",
+    "trade_id": 73,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-vitality-win-the-pgl-major-singapore-2026-1793811600000",
+    "outcome": "no",
+    "trade_id": 74,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-kuomintang-kmt-win-the-most-head-of-local-government-elections-in-the-2026-taiwan-local-elections",
+    "outcome": "yes",
+    "trade_id": 75,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-the-democratic-progressive-party-dpp-win-the-most-head-of-local-government-elections-in-the-2026-taiwan-local-elections",
+    "outcome": "no",
+    "trade_id": 76,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "iran-oman-hormuz-agreement-by-november-30",
+    "outcome": "no",
+    "trade_id": 77,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "next-us-iran-senior-diplomatic-meeting-by-november-30-2026",
+    "outcome": "no",
+    "trade_id": 78,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-nvidia-be-the-largest-company-in-the-world-by-market-cap-on-november-30-2026",
+    "outcome": "no",
+    "trade_id": 79,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-reach-80k-in-november-2026-from-november-5",
+    "outcome": "no",
+    "trade_id": 80,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-the-fed-increase-interest-rates-by-50-bps-after-the-december-2026-meeting-20260729232808637",
+    "outcome": "no",
+    "trade_id": 81,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-ho-hsin-chun-win-the-next-taichung-mayor-election-20260813125857402",
+    "outcome": "no",
+    "trade_id": 83,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "us-x-iran-effective-ceasefire-by-november-22-20261108",
+    "outcome": "yes",
+    "trade_id": 84,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-ethereum-dip-to-1800-in-november-2026",
+    "outcome": "no",
+    "trade_id": 85,
+    "reason": "liquidated_by_sell"
+   },
+   {
+    "source": "paper",
+    "slug": "will-ethereum-reach-2300-in-november-2026-from-november-5",
+    "outcome": "no",
+    "trade_id": 86,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "russia-x-ukraine-energy-ceasefire-agreement-by-november-30-2026",
+    "outcome": "no",
+    "trade_id": 87,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-alberto-nunez-feijoo-be-the-next-prime-minister-of-spain-20260625005710103",
+    "outcome": "yes",
+    "trade_id": 88,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-spirit-win-the-pgl-major-singapore-2026-1793811600000",
+    "outcome": "no",
+    "trade_id": 90,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "jd-vance-2028-presidential-odds-leader-on-november-30",
+    "outcome": "no",
+    "trade_id": 92,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-zoran-jankovic-win-the-2026-ljubljana-mayoral-election",
+    "outcome": "yes",
+    "trade_id": 93,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-reach-75k-in-november-2026-from-november-10",
+    "outcome": "yes",
+    "trade_id": 94,
+    "reason": "liquidated_by_sell"
+   },
+   {
+    "source": "paper",
+    "slug": "us-x-iran-effective-ceasefire-by-november-15-20261108",
+    "outcome": "no",
+    "trade_id": 95,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-dip-to-60k-in-november-2026",
+    "outcome": "no",
+    "trade_id": 96,
+    "reason": "liquidated_by_sell"
+   },
+   {
+    "source": "paper",
+    "slug": "will-luka-mesec-win-the-2026-ljubljana-mayoral-election",
+    "outcome": "no",
+    "trade_id": 97,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-dip-to-57pt5k-in-november-2026",
+    "outcome": "no",
+    "trade_id": 98,
+    "reason": "liquidated_by_sell"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-reach-72pt5k-in-november-2026",
+    "outcome": "no",
+    "trade_id": 99,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-dip-to-60k-in-november-2026",
+    "outcome": "no",
+    "trade_id": 107,
+    "reason": "liquidated_by_sell"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-dip-to-55k-in-november-2026",
+    "outcome": "no",
+    "trade_id": 108,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-genptg-win-worlds-2026",
+    "outcome": "yes",
+    "trade_id": 111,
+    "reason": "liquidated_by_sell"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bilibili-gaming-win-worlds-2026",
+    "outcome": "no",
+    "trade_id": 112,
+    "reason": "liquidated_by_sell"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-dip-to-52pt5k-in-november-2026",
+    "outcome": "no",
+    "trade_id": 115,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-dip-to-57pt5k-in-november-2026",
+    "outcome": "no",
+    "trade_id": 119,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-dip-to-60k-in-november-2026",
+    "outcome": "yes",
+    "trade_id": 122,
+    "reason": "liquidated_by_sell"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-reach-75k-in-november-2026-from-november-10",
+    "outcome": "no",
+    "trade_id": 123,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-reach-67pt5k-in-november-2026",
+    "outcome": "yes",
+    "trade_id": 125,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-dip-to-60k-in-november-2026",
+    "outcome": "no",
+    "trade_id": 126,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-bitcoin-reach-70k-in-november-2026",
+    "outcome": "no",
+    "trade_id": 127,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-huang-shih-chieh-win-the-next-taoyuan-mayor-election-20260813125857302",
+    "outcome": "no",
+    "trade_id": 129,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-furia-win-the-pgl-major-singapore-2026-1793811600000",
+    "outcome": "no",
+    "trade_id": 130,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "russia-x-ukraine-energy-ceasefire-agreement-by-december-31-2026",
+    "outcome": "no",
+    "trade_id": 131,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "israel-x-iran-ceasefire-continues-through-december-31-415",
+    "outcome": "yes",
+    "trade_id": 132,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-mouz-win-the-pgl-major-singapore-2026-1793811600000",
+    "outcome": "no",
+    "trade_id": 133,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "us-x-iran-diplomatic-meeting-by-december-31-2026-20260922",
+    "outcome": "no",
+    "trade_id": 134,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "us-x-iran-effective-ceasefire-by-december-31-20261108",
+    "outcome": "yes",
+    "trade_id": 135,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-ethereum-reach-2000-in-november-2026",
+    "outcome": "no",
+    "trade_id": 136,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-ethereum-dip-to-1500-in-november-2026",
+    "outcome": "no",
+    "trade_id": 137,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-jensen-huang-be-the-1-searched-person-on-google-this-year-20260717214426300",
+    "outcome": "no",
+    "trade_id": 138,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-google-have-the-best-ai-model-at-the-end-of-november-2026",
+    "outcome": "yes",
+    "trade_id": 139,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-ethereum-dip-to-1600-in-november-2026",
+    "outcome": "no",
+    "trade_id": 140,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-ethereum-dip-to-1400-in-november-2026",
+    "outcome": "no",
+    "trade_id": 141,
+    "reason": "not_settled"
+   },
+   {
+    "source": "paper",
+    "slug": "will-johnny-chiang-win-the-next-taichung-mayor-election-20260813125857401",
+    "outcome": "yes",
+    "trade_id": 142,
+    "reason": "not_settled"
+   },
+   {
+    "source": "app",
+    "slug": "will-bitcoin-dip-to-60k-in-november-2026",
+    "outcome": "No",
+    "reason": "has_sell_activity"
+   },
+   {
+    "source": "app",
+    "slug": "will-bitcoin-dip-to-62pt5k-in-november-2026",
+    "outcome": "No",
+    "reason": "has_sell_activity"
+   }
+  ],
+  "no_path": [],
+  "hardstop_hit": false
+ },
+ "reach_stats": {
+  "0.9": {
+   "reached": 43,
+   "lost_after_reach": 1,
+   "loss_rate_after_reach": 0.0233
+  },
+  "0.92": {
+   "reached": 43,
+   "lost_after_reach": 1,
+   "loss_rate_after_reach": 0.0233
+  },
+  "0.94": {
+   "reached": 42,
+   "lost_after_reach": 1,
+   "loss_rate_after_reach": 0.0238
+  },
+  "0.95": {
+   "reached": 42,
+   "lost_after_reach": 1,
+   "loss_rate_after_reach": 0.0238
+  },
+  "0.96": {
+   "reached": 42,
+   "lost_after_reach": 1,
+   "loss_rate_after_reach": 0.0238
+  },
+  "0.97": {
+   "reached": 42,
+   "lost_after_reach": 1,
+   "loss_rate_after_reach": 0.0238
+  },
+  "0.98": {
+   "reached": 41,
+   "lost_after_reach": 1,
+   "loss_rate_after_reach": 0.0244
+  },
+  "0.99": {
+   "reached": 34,
+   "lost_after_reach": 0,
+   "loss_rate_after_reach": 0.0
+  }
+ },
+ "grid": {
+  "X=0.9|R=none": {
+   "n_fired": 43,
+   "avg_delta_per_fired": -10.2791,
+   "avg_delta_per_sample": -8.5,
+   "total_delta": -442.0003,
+   "avoided_losses": 1,
+   "early_release_days_avg": 4.65,
+   "early_release_days_median": 0.2
+  },
+  "X=0.9|R=7d": {
+   "n_fired": 10,
+   "avg_delta_per_fired": -11.5978,
+   "avg_delta_per_sample": -2.2303,
+   "total_delta": -115.978,
+   "avoided_losses": 0,
+   "early_release_days_avg": 17.39,
+   "early_release_days_median": 16.73
+  },
+  "X=0.9|R=30d": {
+   "n_fired": 0
+  },
+  "X=0.9|R=90d": {
+   "n_fired": 0
+  },
+  "X=0.92|R=none": {
+   "n_fired": 43,
+   "avg_delta_per_fired": -7.925,
+   "avg_delta_per_sample": -6.5534,
+   "total_delta": -340.7763,
+   "avoided_losses": 1,
+   "early_release_days_avg": 4.6,
+   "early_release_days_median": 0.18
+  },
+  "X=0.92|R=7d": {
+   "n_fired": 10,
+   "avg_delta_per_fired": -9.5383,
+   "avg_delta_per_sample": -1.8343,
+   "total_delta": -95.3828,
+   "avoided_losses": 0,
+   "early_release_days_avg": 17.38,
+   "early_release_days_median": 16.73
+  },
+  "X=0.92|R=30d": {
+   "n_fired": 0
+  },
+  "X=0.92|R=90d": {
+   "n_fired": 0
+  },
+  "X=0.94|R=none": {
+   "n_fired": 42,
+   "avg_delta_per_fired": -5.7091,
+   "avg_delta_per_sample": -4.6112,
+   "total_delta": -239.7831,
+   "avoided_losses": 1,
+   "early_release_days_avg": 4.63,
+   "early_release_days_median": 0.17
+  },
+  "X=0.94|R=7d": {
+   "n_fired": 10,
+   "avg_delta_per_fired": -7.2126,
+   "avg_delta_per_sample": -1.387,
+   "total_delta": -72.1257,
+   "avoided_losses": 0,
+   "early_release_days_avg": 17.37,
+   "early_release_days_median": 16.73
+  },
+  "X=0.94|R=30d": {
+   "n_fired": 0
+  },
+  "X=0.94|R=90d": {
+   "n_fired": 0
+  },
+  "X=0.95|R=none": {
+   "n_fired": 42,
+   "avg_delta_per_fired": -4.0593,
+   "avg_delta_per_sample": -3.2786,
+   "total_delta": -170.4892,
+   "avoided_losses": 1,
+   "early_release_days_avg": 4.54,
+   "early_release_days_median": 0.17
+  },
+  "X=0.95|R=7d": {
+   "n_fired": 10,
+   "avg_delta_per_fired": -4.4702,
+   "avg_delta_per_sample": -0.8597,
+   "total_delta": -44.7022,
+   "avoided_losses": 0,
+   "early_release_days_avg": 17.0,
+   "early_release_days_median": 16.73
+  },
+  "X=0.95|R=30d": {
+   "n_fired": 0
+  },
+  "X=0.95|R=90d": {
+   "n_fired": 0
+  },
+  "X=0.96|R=none": {
+   "n_fired": 42,
+   "avg_delta_per_fired": -2.8315,
+   "avg_delta_per_sample": -2.287,
+   "total_delta": -118.9233,
+   "avoided_losses": 1,
+   "early_release_days_avg": 4.49,
+   "early_release_days_median": 0.16
+  },
+  "X=0.96|R=7d": {
+   "n_fired": 10,
+   "avg_delta_per_fired": -3.0716,
+   "avg_delta_per_sample": -0.5907,
+   "total_delta": -30.7165,
+   "avoided_losses": 0,
+   "early_release_days_avg": 17.0,
+   "early_release_days_median": 16.73
+  },
+  "X=0.96|R=30d": {
+   "n_fired": 0
+  },
+  "X=0.96|R=90d": {
+   "n_fired": 0
+  },
+  "X=0.97|R=none": {
+   "n_fired": 42,
+   "avg_delta_per_fired": -1.6141,
+   "avg_delta_per_sample": -1.3037,
+   "total_delta": -67.7912,
+   "avoided_losses": 1,
+   "early_release_days_avg": 4.47,
+   "early_release_days_median": 0.15
+  },
+  "X=0.97|R=7d": {
+   "n_fired": 10,
+   "avg_delta_per_fired": -2.3274,
+   "avg_delta_per_sample": -0.4476,
+   "total_delta": -23.2741,
+   "avoided_losses": 0,
+   "early_release_days_avg": 16.99,
+   "early_release_days_median": 16.71
+  },
+  "X=0.97|R=30d": {
+   "n_fired": 0
+  },
+  "X=0.97|R=90d": {
+   "n_fired": 0
+  },
+  "X=0.98|R=none": {
+   "n_fired": 41,
+   "avg_delta_per_fired": -0.3511,
+   "avg_delta_per_sample": -0.2768,
+   "total_delta": -14.3932,
+   "avoided_losses": 1,
+   "early_release_days_avg": 4.53,
+   "early_release_days_median": 0.14
+  },
+  "X=0.98|R=7d": {
+   "n_fired": 10,
+   "avg_delta_per_fired": -1.7777,
+   "avg_delta_per_sample": -0.3419,
+   "total_delta": -17.7773,
+   "avoided_losses": 0,
+   "early_release_days_avg": 16.98,
+   "early_release_days_median": 16.7
+  },
+  "X=0.98|R=30d": {
+   "n_fired": 0
+  },
+  "X=0.98|R=90d": {
+   "n_fired": 0
+  },
+  "X=0.99|R=none": {
+   "n_fired": 34,
+   "avg_delta_per_fired": -2.3017,
+   "avg_delta_per_sample": -1.5049,
+   "total_delta": -78.2563,
+   "avoided_losses": 0,
+   "early_release_days_avg": 5.39,
+   "early_release_days_median": 0.15
+  },
+  "X=0.99|R=7d": {
+   "n_fired": 10,
+   "avg_delta_per_fired": -1.5656,
+   "avg_delta_per_sample": -0.3011,
+   "total_delta": -15.6561,
+   "avoided_losses": 0,
+   "early_release_days_avg": 16.98,
+   "early_release_days_median": 16.7
+  },
+  "X=0.99|R=30d": {
+   "n_fired": 0
+  },
+  "X=0.99|R=90d": {
+   "n_fired": 0
+  }
+ },
+ "sensitivity_spread": {
+  "spread=0.0|X=0.9|R=none": {
+   "n_fired": 43,
+   "total_delta": -384.2864
+  },
+  "spread=0.0|X=0.9|R=7": {
+   "n_fired": 10,
+   "total_delta": -104.0512
+  },
+  "spread=0.0|X=0.92|R=none": {
+   "n_fired": 43,
+   "total_delta": -283.0197
+  },
+  "spread=0.0|X=0.92|R=7": {
+   "n_fired": 10,
+   "total_delta": -83.4316
+  },
+  "spread=0.0|X=0.94|R=none": {
+   "n_fired": 42,
+   "total_delta": -183.1549
+  },
+  "spread=0.0|X=0.94|R=7": {
+   "n_fired": 10,
+   "total_delta": -60.1481
+  },
+  "spread=0.0|X=0.95|R=none": {
+   "n_fired": 42,
+   "total_delta": -113.817
+  },
+  "spread=0.0|X=0.95|R=7": {
+   "n_fired": 10,
+   "total_delta": -32.6909
+  },
+  "spread=0.0|X=0.96|R=none": {
+   "n_fired": 42,
+   "total_delta": -62.2254
+  },
+  "spread=0.0|X=0.96|R=7": {
+   "n_fired": 10,
+   "total_delta": -18.6869
+  },
+  "spread=0.0|X=0.97|R=none": {
+   "n_fired": 42,
+   "total_delta": -11.0723
+  },
+  "spread=0.0|X=0.97|R=7": {
+   "n_fired": 10,
+   "total_delta": -11.2369
+  },
+  "spread=0.0|X=0.98|R=none": {
+   "n_fired": 41,
+   "total_delta": 40.9731
+  },
+  "spread=0.0|X=0.98|R=7": {
+   "n_fired": 10,
+   "total_delta": -5.7337
+  },
+  "spread=0.0|X=0.99|R=none": {
+   "n_fired": 34,
+   "total_delta": -32.0684
+  },
+  "spread=0.0|X=0.99|R=7": {
+   "n_fired": 10,
+   "total_delta": -3.6105
+  },
+  "spread=0.02|X=0.9|R=none": {
+   "n_fired": 43,
+   "total_delta": -499.6888
+  },
+  "spread=0.02|X=0.9|R=7": {
+   "n_fired": 10,
+   "total_delta": -127.8909
+  },
+  "spread=0.02|X=0.92|R=none": {
+   "n_fired": 43,
+   "total_delta": -398.5076
+  },
+  "spread=0.02|X=0.92|R=7": {
+   "n_fired": 10,
+   "total_delta": -107.3201
+  },
+  "spread=0.02|X=0.94|R=none": {
+   "n_fired": 42,
+   "total_delta": -296.3858
+  },
+  "spread=0.02|X=0.94|R=7": {
+   "n_fired": 10,
+   "total_delta": -84.0892
+  },
+  "spread=0.02|X=0.95|R=none": {
+   "n_fired": 42,
+   "total_delta": -227.1363
+  },
+  "spread=0.02|X=0.95|R=7": {
+   "n_fired": 10,
+   "total_delta": -56.6993
+  },
+  "spread=0.02|X=0.96|R=none": {
+   "n_fired": 42,
+   "total_delta": -175.596
+  },
+  "spread=0.02|X=0.96|R=7": {
+   "n_fired": 10,
+   "total_delta": -42.7319
+  },
+  "spread=0.02|X=0.97|R=none": {
+   "n_fired": 42,
+   "total_delta": -124.4843
+  },
+  "spread=0.02|X=0.97|R=7": {
+   "n_fired": 10,
+   "total_delta": -35.2971
+  },
+  "spread=0.02|X=0.98|R=none": {
+   "n_fired": 41,
+   "total_delta": -69.7361
+  },
+  "spread=0.02|X=0.98|R=7": {
+   "n_fired": 10,
+   "total_delta": -29.8067
+  },
+  "spread=0.02|X=0.99|R=none": {
+   "n_fired": 34,
+   "total_delta": -124.4239
+  },
+  "spread=0.02|X=0.99|R=7": {
+   "n_fired": 10,
+   "total_delta": -27.6876
+  }
+ },
+ "sign_flips_vs_base": [
+  {
+   "combo": "X=0.98|R=None",
+   "spread_alt": 0.0,
+   "total_delta_alt": 40.9731,
+   "total_delta_base": -14.3932
+  }
+ ],
+ "details": [
+  {
+   "source": "paper",
+   "slug": "will-the-republicans-win-the-texas-senate-race-in-2026",
+   "outcome": "no",
+   "entry_price": 0.72,
+   "shares": 138.88888888888889,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 38.8889,
+   "token": "9846414914422486942750462555692240718767368950832862364324602361738794436048",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793392573,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793754198,
+     "price": 0.905,
+     "remain_days": 0.16,
+     "tp_pnl": 24.3056
+    },
+    "0.92": {
+     "t": 1793754324,
+     "price": 0.92,
+     "remain_days": 0.16,
+     "tp_pnl": 26.3889
+    },
+    "0.94": {
+     "t": 1793754410,
+     "price": 0.945,
+     "remain_days": 0.16,
+     "tp_pnl": 29.8611
+    },
+    "0.95": {
+     "t": 1793754858,
+     "price": 0.955,
+     "remain_days": 0.16,
+     "tp_pnl": 31.25
+    },
+    "0.96": {
+     "t": 1793755478,
+     "price": 0.96,
+     "remain_days": 0.15,
+     "tp_pnl": 31.9444
+    },
+    "0.97": {
+     "t": 1793755758,
+     "price": 0.9735,
+     "remain_days": 0.15,
+     "tp_pnl": 33.8194
+    },
+    "0.98": {
+     "t": 1793757378,
+     "price": 0.9895,
+     "remain_days": 0.13,
+     "tp_pnl": 36.0417
+    },
+    "0.99": {
+     "t": 1793757498,
+     "price": 0.9905,
+     "remain_days": 0.13,
+     "tp_pnl": 36.1806
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "2026-balance-of-power-d-senate-d-house-949",
+   "outcome": "yes",
+   "entry_price": 0.7099999999999999,
+   "shares": 140.84507042253523,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 40.8451,
+   "token": "34722410608062854697106861099776685947172185964394483545370684749662285977831",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793392576,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793752994,
+     "price": 0.905,
+     "remain_days": 0.18,
+     "tp_pnl": 26.0563
+    },
+    "0.92": {
+     "t": 1793753958,
+     "price": 0.925,
+     "remain_days": 0.17,
+     "tp_pnl": 28.8732
+    },
+    "0.94": {
+     "t": 1793754413,
+     "price": 0.945,
+     "remain_days": 0.16,
+     "tp_pnl": 31.6901
+    },
+    "0.95": {
+     "t": 1793754556,
+     "price": 0.955,
+     "remain_days": 0.16,
+     "tp_pnl": 33.0986
+    },
+    "0.96": {
+     "t": 1793754686,
+     "price": 0.965,
+     "remain_days": 0.16,
+     "tp_pnl": 34.507
+    },
+    "0.97": {
+     "t": 1793755100,
+     "price": 0.971,
+     "remain_days": 0.15,
+     "tp_pnl": 35.3521
+    },
+    "0.98": {
+     "t": 1793755280,
+     "price": 0.981,
+     "remain_days": 0.15,
+     "tp_pnl": 36.7606
+    },
+    "0.99": {
+     "t": 1793757859,
+     "price": 0.9905,
+     "remain_days": 0.12,
+     "tp_pnl": 38.0986
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-democratic-party-control-the-senate-after-the-2026-midterm-elections",
+   "outcome": "yes",
+   "entry_price": 0.7099999999999999,
+   "shares": 140.84507042253523,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 40.8451,
+   "token": "113287701564209339913693347405685749986285999146352375265161592243948562084773",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793392580,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793750433,
+     "price": 0.905,
+     "remain_days": 0.21,
+     "tp_pnl": 26.0563
+    },
+    "0.92": {
+     "t": 1793754051,
+     "price": 0.92,
+     "remain_days": 0.17,
+     "tp_pnl": 28.169
+    },
+    "0.94": {
+     "t": 1793754413,
+     "price": 0.94,
+     "remain_days": 0.16,
+     "tp_pnl": 30.9859
+    },
+    "0.95": {
+     "t": 1793754472,
+     "price": 0.955,
+     "remain_days": 0.16,
+     "tp_pnl": 33.0986
+    },
+    "0.96": {
+     "t": 1793754581,
+     "price": 0.96,
+     "remain_days": 0.16,
+     "tp_pnl": 33.8028
+    },
+    "0.97": {
+     "t": 1793755201,
+     "price": 0.9755,
+     "remain_days": 0.15,
+     "tp_pnl": 35.9859
+    },
+    "0.98": {
+     "t": 1793755236,
+     "price": 0.984,
+     "remain_days": 0.15,
+     "tp_pnl": 37.1831
+    },
+    "0.99": {
+     "t": 1793757920,
+     "price": 0.9905,
+     "remain_days": 0.12,
+     "tp_pnl": 38.0986
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-republican-party-control-the-senate-after-the-2026-midterm-elections",
+   "outcome": "no",
+   "entry_price": 0.7099999999999999,
+   "shares": 140.84507042253523,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 40.8451,
+   "token": "108587038225191871355030577171066853142535232042155117887981453750193713427381",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793392583,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793750179,
+     "price": 0.9,
+     "remain_days": 0.21,
+     "tp_pnl": 25.3521
+    },
+    "0.92": {
+     "t": 1793754325,
+     "price": 0.925,
+     "remain_days": 0.16,
+     "tp_pnl": 28.8732
+    },
+    "0.94": {
+     "t": 1793754472,
+     "price": 0.945,
+     "remain_days": 0.16,
+     "tp_pnl": 31.6901
+    },
+    "0.95": {
+     "t": 1793754556,
+     "price": 0.955,
+     "remain_days": 0.16,
+     "tp_pnl": 33.0986
+    },
+    "0.96": {
+     "t": 1793754580,
+     "price": 0.96,
+     "remain_days": 0.16,
+     "tp_pnl": 33.8028
+    },
+    "0.97": {
+     "t": 1793755201,
+     "price": 0.9765,
+     "remain_days": 0.15,
+     "tp_pnl": 36.1268
+    },
+    "0.98": {
+     "t": 1793755515,
+     "price": 0.981,
+     "remain_days": 0.15,
+     "tp_pnl": 36.7606
+    },
+    "0.99": {
+     "t": 1793758039,
+     "price": 0.9905,
+     "remain_days": 0.12,
+     "tp_pnl": 38.0986
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-democrats-win-the-texas-senate-race-in-2026",
+   "outcome": "yes",
+   "entry_price": 0.72,
+   "shares": 138.88888888888889,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 38.8889,
+   "token": "15290572385458522370285732869432740297199321382471116558439914335588167718663",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793392587,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793754259,
+     "price": 0.91,
+     "remain_days": 0.16,
+     "tp_pnl": 25.0
+    },
+    "0.92": {
+     "t": 1793754325,
+     "price": 0.92,
+     "remain_days": 0.16,
+     "tp_pnl": 26.3889
+    },
+    "0.94": {
+     "t": 1793754414,
+     "price": 0.945,
+     "remain_days": 0.16,
+     "tp_pnl": 29.8611
+    },
+    "0.95": {
+     "t": 1793754686,
+     "price": 0.955,
+     "remain_days": 0.16,
+     "tp_pnl": 31.25
+    },
+    "0.96": {
+     "t": 1793755455,
+     "price": 0.965,
+     "remain_days": 0.15,
+     "tp_pnl": 32.6389
+    },
+    "0.97": {
+     "t": 1793755634,
+     "price": 0.971,
+     "remain_days": 0.15,
+     "tp_pnl": 33.4722
+    },
+    "0.98": {
+     "t": 1793757434,
+     "price": 0.985,
+     "remain_days": 0.13,
+     "tp_pnl": 35.4167
+    },
+    "0.99": {
+     "t": 1793757680,
+     "price": 0.9905,
+     "remain_days": 0.12,
+     "tp_pnl": 36.1806
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-republicans-win-the-maine-senate-race-in-2026",
+   "outcome": "no",
+   "entry_price": 0.7,
+   "shares": 142.85714285714286,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 42.8571,
+   "token": "43295283577056639281694071578249936735369407445693289764095672178175084599787",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793392591,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793755201,
+     "price": 0.905,
+     "remain_days": 0.15,
+     "tp_pnl": 27.8571
+    },
+    "0.92": {
+     "t": 1793756780,
+     "price": 0.92,
+     "remain_days": 0.13,
+     "tp_pnl": 30.0
+    },
+    "0.94": {
+     "t": 1793762911,
+     "price": 0.945,
+     "remain_days": 0.06,
+     "tp_pnl": 33.5714
+    },
+    "0.95": {
+     "t": 1793763320,
+     "price": 0.955,
+     "remain_days": 0.06,
+     "tp_pnl": 35.0
+    },
+    "0.96": {
+     "t": 1793763386,
+     "price": 0.97,
+     "remain_days": 0.06,
+     "tp_pnl": 37.1429
+    },
+    "0.97": {
+     "t": 1793763386,
+     "price": 0.97,
+     "remain_days": 0.06,
+     "tp_pnl": 37.1429
+    },
+    "0.98": {
+     "t": 1793767334,
+     "price": 0.9815,
+     "remain_days": 0.01,
+     "tp_pnl": 38.7857
+    },
+    "0.99": {
+     "t": 1793767514,
+     "price": 0.992,
+     "remain_days": 0.01,
+     "tp_pnl": 40.2857
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-democrats-win-the-maine-senate-race-in-2026",
+   "outcome": "yes",
+   "entry_price": 0.7,
+   "shares": 142.85714285714286,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 42.8571,
+   "token": "7589880081658059374445882095611024032084645048848237404312287942463647821549",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793392595,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793755201,
+     "price": 0.9,
+     "remain_days": 0.15,
+     "tp_pnl": 27.1429
+    },
+    "0.92": {
+     "t": 1793756780,
+     "price": 0.92,
+     "remain_days": 0.13,
+     "tp_pnl": 30.0
+    },
+    "0.94": {
+     "t": 1793762911,
+     "price": 0.945,
+     "remain_days": 0.06,
+     "tp_pnl": 33.5714
+    },
+    "0.95": {
+     "t": 1793763320,
+     "price": 0.955,
+     "remain_days": 0.06,
+     "tp_pnl": 35.0
+    },
+    "0.96": {
+     "t": 1793763386,
+     "price": 0.965,
+     "remain_days": 0.06,
+     "tp_pnl": 36.4286
+    },
+    "0.97": {
+     "t": 1793763920,
+     "price": 0.9705,
+     "remain_days": 0.05,
+     "tp_pnl": 37.2143
+    },
+    "0.98": {
+     "t": 1793767514,
+     "price": 0.983,
+     "remain_days": 0.01,
+     "tp_pnl": 39.0
+    },
+    "0.99": {
+     "t": 1793768179,
+     "price": 0.991,
+     "remain_days": 0.0,
+     "tp_pnl": 40.1429
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-republicans-win-the-ohio-senate-race-in-2026",
+   "outcome": "no",
+   "entry_price": 0.72,
+   "shares": 138.88888888888889,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 38.8889,
+   "token": "23913381536137166406579511315285934624565002001604591688105636176511254870797",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793392598,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793752996,
+     "price": 0.905,
+     "remain_days": 0.18,
+     "tp_pnl": 24.3056
+    },
+    "0.92": {
+     "t": 1793753182,
+     "price": 0.92,
+     "remain_days": 0.18,
+     "tp_pnl": 26.3889
+    },
+    "0.94": {
+     "t": 1793755282,
+     "price": 0.94,
+     "remain_days": 0.15,
+     "tp_pnl": 29.1667
+    },
+    "0.95": {
+     "t": 1793755457,
+     "price": 0.95,
+     "remain_days": 0.15,
+     "tp_pnl": 30.5556
+    },
+    "0.96": {
+     "t": 1793755482,
+     "price": 0.97,
+     "remain_days": 0.15,
+     "tp_pnl": 33.3333
+    },
+    "0.97": {
+     "t": 1793755482,
+     "price": 0.97,
+     "remain_days": 0.15,
+     "tp_pnl": 33.3333
+    },
+    "0.98": {
+     "t": 1793756552,
+     "price": 0.9805,
+     "remain_days": 0.14,
+     "tp_pnl": 34.7917
+    },
+    "0.99": {
+     "t": 1793763577,
+     "price": 0.99,
+     "remain_days": 0.06,
+     "tp_pnl": 36.1111
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-democrats-win-the-texas-governor-race-in-2026",
+   "outcome": "no",
+   "entry_price": 0.62,
+   "shares": 161.29032258064515,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": false,
+   "won_source": "path_last_price",
+   "hold_pnl": -100.0,
+   "token": "72484470323457781490418074887818414956328925259630173408815876344351328006429",
+   "last_price": 0.0005,
+   "reverse_disagree": false,
+   "entry_ts": 1793392602,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": null,
+    "0.92": null,
+    "0.94": null,
+    "0.95": null,
+    "0.96": null,
+    "0.97": null,
+    "0.98": null,
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-democrats-win-the-ohio-senate-race-in-2026",
+   "outcome": "yes",
+   "entry_price": 0.7099999999999999,
+   "shares": 140.84507042253523,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 40.8451,
+   "token": "83018072688154066292491996133599479395547801317505487833443670253228061205312",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793392606,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793753128,
+     "price": 0.905,
+     "remain_days": 0.18,
+     "tp_pnl": 26.0563
+    },
+    "0.92": {
+     "t": 1793753298,
+     "price": 0.92,
+     "remain_days": 0.17,
+     "tp_pnl": 28.169
+    },
+    "0.94": {
+     "t": 1793755454,
+     "price": 0.96,
+     "remain_days": 0.15,
+     "tp_pnl": 33.8028
+    },
+    "0.95": {
+     "t": 1793755454,
+     "price": 0.96,
+     "remain_days": 0.15,
+     "tp_pnl": 33.8028
+    },
+    "0.96": {
+     "t": 1793755454,
+     "price": 0.96,
+     "remain_days": 0.15,
+     "tp_pnl": 33.8028
+    },
+    "0.97": {
+     "t": 1793755993,
+     "price": 0.97,
+     "remain_days": 0.14,
+     "tp_pnl": 35.2113
+    },
+    "0.98": {
+     "t": 1793757432,
+     "price": 0.9845,
+     "remain_days": 0.13,
+     "tp_pnl": 37.2535
+    },
+    "0.99": {
+     "t": 1793763678,
+     "price": 0.9925,
+     "remain_days": 0.05,
+     "tp_pnl": 38.3803
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-republicans-win-the-texas-governor-race-in-2026",
+   "outcome": "yes",
+   "entry_price": 0.621,
+   "shares": 161.0305958132045,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": false,
+   "won_source": "path_last_price",
+   "hold_pnl": -100.0,
+   "token": "54743173400191373818547682740700297683169841200363505623023527116388816282328",
+   "last_price": 0.0005,
+   "reverse_disagree": false,
+   "entry_ts": 1793392610,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": null,
+    "0.92": null,
+    "0.94": null,
+    "0.95": null,
+    "0.96": null,
+    "0.97": null,
+    "0.98": null,
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "2026-balance-of-power-r-senate-d-house-444",
+   "outcome": "no",
+   "entry_price": 0.77,
+   "shares": 129.87012987012986,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 29.8701,
+   "token": "558600218792430158020964384658762756367786275998757133304987611939841005404",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793394172,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793752766,
+     "price": 0.925,
+     "remain_days": 0.18,
+     "tp_pnl": 18.8312
+    },
+    "0.92": {
+     "t": 1793752766,
+     "price": 0.925,
+     "remain_days": 0.18,
+     "tp_pnl": 18.8312
+    },
+    "0.94": {
+     "t": 1793754419,
+     "price": 0.945,
+     "remain_days": 0.16,
+     "tp_pnl": 21.4286
+    },
+    "0.95": {
+     "t": 1793754474,
+     "price": 0.955,
+     "remain_days": 0.16,
+     "tp_pnl": 22.7273
+    },
+    "0.96": {
+     "t": 1793754558,
+     "price": 0.965,
+     "remain_days": 0.16,
+     "tp_pnl": 24.026
+    },
+    "0.97": {
+     "t": 1793754801,
+     "price": 0.973,
+     "remain_days": 0.16,
+     "tp_pnl": 25.0649
+    },
+    "0.98": {
+     "t": 1793755239,
+     "price": 0.988,
+     "remain_days": 0.15,
+     "tp_pnl": 27.013
+    },
+    "0.99": {
+     "t": 1793755352,
+     "price": 0.9905,
+     "remain_days": 0.15,
+     "tp_pnl": 27.3377
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-republicans-win-the-michigan-senate-race-in-2026",
+   "outcome": "no",
+   "entry_price": 0.78,
+   "shares": 128.2051282051282,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 28.2051,
+   "token": "71610581811588451243087930916572592402913705975252472987256607890992191263885",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793394175,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793753594,
+     "price": 0.9,
+     "remain_days": 0.17,
+     "tp_pnl": 14.1026
+    },
+    "0.92": {
+     "t": 1793754686,
+     "price": 0.93,
+     "remain_days": 0.16,
+     "tp_pnl": 17.9487
+    },
+    "0.94": {
+     "t": 1793755201,
+     "price": 0.945,
+     "remain_days": 0.15,
+     "tp_pnl": 19.8718
+    },
+    "0.95": {
+     "t": 1793755279,
+     "price": 0.95,
+     "remain_days": 0.15,
+     "tp_pnl": 20.5128
+    },
+    "0.96": {
+     "t": 1793755350,
+     "price": 0.96,
+     "remain_days": 0.15,
+     "tp_pnl": 21.7949
+    },
+    "0.97": {
+     "t": 1793756599,
+     "price": 0.9725,
+     "remain_days": 0.14,
+     "tp_pnl": 23.3974
+    },
+    "0.98": {
+     "t": 1793760020,
+     "price": 0.981,
+     "remain_days": 0.1,
+     "tp_pnl": 24.4872
+    },
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-democrats-win-the-michigan-senate-race-in-2026",
+   "outcome": "yes",
+   "entry_price": 0.78,
+   "shares": 128.2051282051282,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 28.2051,
+   "token": "71772627544132140586824126381855151743830987860593343955509593715269534710061",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793394178,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793753419,
+     "price": 0.9,
+     "remain_days": 0.17,
+     "tp_pnl": 14.1026
+    },
+    "0.92": {
+     "t": 1793754685,
+     "price": 0.93,
+     "remain_days": 0.16,
+     "tp_pnl": 17.9487
+    },
+    "0.94": {
+     "t": 1793755055,
+     "price": 0.94,
+     "remain_days": 0.15,
+     "tp_pnl": 19.2308
+    },
+    "0.95": {
+     "t": 1793755279,
+     "price": 0.955,
+     "remain_days": 0.15,
+     "tp_pnl": 21.1538
+    },
+    "0.96": {
+     "t": 1793755350,
+     "price": 0.965,
+     "remain_days": 0.15,
+     "tp_pnl": 22.4359
+    },
+    "0.97": {
+     "t": 1793756479,
+     "price": 0.971,
+     "remain_days": 0.14,
+     "tp_pnl": 23.2051
+    },
+    "0.98": {
+     "t": 1793760259,
+     "price": 0.981,
+     "remain_days": 0.09,
+     "tp_pnl": 24.4872
+    },
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-democrats-win-the-south-carolina-senate-race-in-2026",
+   "outcome": "no",
+   "entry_price": 0.73,
+   "shares": 136.986301369863,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": false,
+   "won_source": "path_last_price",
+   "hold_pnl": -100.0,
+   "token": "33485925353171072312284533208639606685310281710515007938376691890027292332545",
+   "last_price": 0.0005,
+   "reverse_disagree": false,
+   "entry_ts": 1793394181,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": null,
+    "0.92": null,
+    "0.94": null,
+    "0.95": null,
+    "0.96": null,
+    "0.97": null,
+    "0.98": null,
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-republicans-win-the-south-carolina-senate-race-in-2026",
+   "outcome": "yes",
+   "entry_price": 0.73,
+   "shares": 136.986301369863,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": false,
+   "won_source": "path_last_price",
+   "hold_pnl": -100.0,
+   "token": "84368524152268016512433556151474175385160499638069024812438264090070245734708",
+   "last_price": 0.0005,
+   "reverse_disagree": false,
+   "entry_ts": 1793394183,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": null,
+    "0.92": null,
+    "0.94": null,
+    "0.95": null,
+    "0.96": null,
+    "0.97": null,
+    "0.98": null,
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-democrats-win-the-iowa-senate-race-in-2026",
+   "outcome": "no",
+   "entry_price": 0.56,
+   "shares": 178.57142857142856,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": false,
+   "won_source": "path_last_price",
+   "hold_pnl": -100.0,
+   "token": "105412116375859456386463067772529895223931027977055063584054608854983174999392",
+   "last_price": 0.0005,
+   "reverse_disagree": false,
+   "entry_ts": 1793394186,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": null,
+    "0.92": null,
+    "0.94": null,
+    "0.95": null,
+    "0.96": null,
+    "0.97": null,
+    "0.98": null,
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-republicans-win-the-iowa-senate-race-in-2026",
+   "outcome": "yes",
+   "entry_price": 0.56,
+   "shares": 178.57142857142856,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": false,
+   "won_source": "path_last_price",
+   "hold_pnl": -100.0,
+   "token": "107844449523890311740907586041395758413047559802389895859202256336422357556837",
+   "last_price": 0.0005,
+   "reverse_disagree": false,
+   "entry_ts": 1793394189,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": null,
+    "0.92": null,
+    "0.94": null,
+    "0.95": null,
+    "0.96": null,
+    "0.97": null,
+    "0.98": null,
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-democrats-win-the-kansas-senate-race-in-2026",
+   "outcome": "yes",
+   "entry_price": 0.54,
+   "shares": 185.18518518518516,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 85.1852,
+   "token": "75079868093228966915894372964099062660587490227046756021175661325867722540666",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793394197,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793755352,
+     "price": 0.9,
+     "remain_days": 0.15,
+     "tp_pnl": 64.8148
+    },
+    "0.92": {
+     "t": 1793755997,
+     "price": 0.925,
+     "remain_days": 0.14,
+     "tp_pnl": 69.4444
+    },
+    "0.94": {
+     "t": 1793756236,
+     "price": 0.945,
+     "remain_days": 0.14,
+     "tp_pnl": 73.1481
+    },
+    "0.95": {
+     "t": 1793756723,
+     "price": 0.95,
+     "remain_days": 0.13,
+     "tp_pnl": 74.0741
+    },
+    "0.96": {
+     "t": 1793757922,
+     "price": 0.965,
+     "remain_days": 0.12,
+     "tp_pnl": 76.8519
+    },
+    "0.97": {
+     "t": 1793759573,
+     "price": 0.973,
+     "remain_days": 0.1,
+     "tp_pnl": 78.3333
+    },
+    "0.98": {
+     "t": 1793759961,
+     "price": 0.9845,
+     "remain_days": 0.1,
+     "tp_pnl": 80.463
+    },
+    "0.99": {
+     "t": 1793762914,
+     "price": 0.992,
+     "remain_days": 0.06,
+     "tp_pnl": 81.8519
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-republicans-win-the-ohio-governor-race-in-2026",
+   "outcome": "no",
+   "entry_price": 0.82,
+   "shares": 121.95121951219512,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 21.9512,
+   "token": "104526794566859391085042814952967251260974275524059793655101271789052995794634",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793395220,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793753130,
+     "price": 0.9,
+     "remain_days": 0.18,
+     "tp_pnl": 8.5366
+    },
+    "0.92": {
+     "t": 1793753360,
+     "price": 0.925,
+     "remain_days": 0.17,
+     "tp_pnl": 11.5854
+    },
+    "0.94": {
+     "t": 1793753660,
+     "price": 0.94,
+     "remain_days": 0.17,
+     "tp_pnl": 13.4146
+    },
+    "0.95": {
+     "t": 1793753834,
+     "price": 0.95,
+     "remain_days": 0.17,
+     "tp_pnl": 14.6341
+    },
+    "0.96": {
+     "t": 1793754415,
+     "price": 0.96,
+     "remain_days": 0.16,
+     "tp_pnl": 15.8537
+    },
+    "0.97": {
+     "t": 1793754473,
+     "price": 0.975,
+     "remain_days": 0.16,
+     "tp_pnl": 17.6829
+    },
+    "0.98": {
+     "t": 1793757500,
+     "price": 0.9845,
+     "remain_days": 0.13,
+     "tp_pnl": 18.8415
+    },
+    "0.99": {
+     "t": 1793761700,
+     "price": 0.9915,
+     "remain_days": 0.08,
+     "tp_pnl": 19.6951
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-republicans-win-the-kansas-senate-race-in-2026",
+   "outcome": "no",
+   "entry_price": 0.54,
+   "shares": 185.18518518518516,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 85.1852,
+   "token": "99954012845363784422380244269243499000117818896422626871954380344984773420508",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793395223,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793755457,
+     "price": 0.905,
+     "remain_days": 0.15,
+     "tp_pnl": 65.7407
+    },
+    "0.92": {
+     "t": 1793755918,
+     "price": 0.925,
+     "remain_days": 0.14,
+     "tp_pnl": 69.4444
+    },
+    "0.94": {
+     "t": 1793755997,
+     "price": 0.94,
+     "remain_days": 0.14,
+     "tp_pnl": 72.2222
+    },
+    "0.95": {
+     "t": 1793756551,
+     "price": 0.95,
+     "remain_days": 0.14,
+     "tp_pnl": 74.0741
+    },
+    "0.96": {
+     "t": 1793757136,
+     "price": 0.96,
+     "remain_days": 0.13,
+     "tp_pnl": 75.9259
+    },
+    "0.97": {
+     "t": 1793759062,
+     "price": 0.972,
+     "remain_days": 0.11,
+     "tp_pnl": 78.1481
+    },
+    "0.98": {
+     "t": 1793759961,
+     "price": 0.984,
+     "remain_days": 0.1,
+     "tp_pnl": 80.3704
+    },
+    "0.99": {
+     "t": 1793762001,
+     "price": 0.991,
+     "remain_days": 0.07,
+     "tp_pnl": 81.6667
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "2026-senate-map-r-ia-ks",
+   "outcome": "no",
+   "entry_price": 0.84,
+   "shares": 119.04761904761905,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 19.0476,
+   "token": "111381299800799485509083912497813429956512687399857260440199290536659860679263",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793401778,
+   "end_ts": 1793750340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793586494,
+     "price": 0.905,
+     "remain_days": 1.9,
+     "tp_pnl": 6.5476
+    },
+    "0.92": {
+     "t": 1793590693,
+     "price": 0.925,
+     "remain_days": 1.85,
+     "tp_pnl": 8.9286
+    },
+    "0.94": {
+     "t": 1793661680,
+     "price": 0.945,
+     "remain_days": 1.03,
+     "tp_pnl": 11.3095
+    },
+    "0.95": {
+     "t": 1793663900,
+     "price": 0.955,
+     "remain_days": 1.0,
+     "tp_pnl": 12.5
+    },
+    "0.96": {
+     "t": 1793748081,
+     "price": 0.965,
+     "remain_days": 0.03,
+     "tp_pnl": 13.6905
+    },
+    "0.97": {
+     "t": 1793748381,
+     "price": 0.97,
+     "remain_days": 0.02,
+     "tp_pnl": 14.2857
+    },
+    "0.98": {
+     "t": 1793749521,
+     "price": 0.98,
+     "remain_days": 0.01,
+     "tp_pnl": 15.4762
+    },
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "2026-senate-map-r-ia",
+   "outcome": "no",
+   "entry_price": 0.859,
+   "shares": 116.41443538998836,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 16.4144,
+   "token": "38883886691124225989332035378913105158890603529288875957747834557386418386450",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793403383,
+   "end_ts": 1793750340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793462547,
+     "price": 0.9,
+     "remain_days": 3.33,
+     "tp_pnl": 3.6088
+    },
+    "0.92": {
+     "t": 1793591531,
+     "price": 0.9205,
+     "remain_days": 1.84,
+     "tp_pnl": 5.9953
+    },
+    "0.94": null,
+    "0.95": null,
+    "0.96": null,
+    "0.97": null,
+    "0.98": null,
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-t1-win-worlds-2026",
+   "outcome": "no",
+   "entry_price": 0.84,
+   "shares": 119.04761904761905,
+   "cost": 100.8,
+   "rate": 0.05,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 18.2476,
+   "token": "101996110023306359267215939819928021406998500989415641847320025626005179879667",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793415016,
+   "end_ts": 1795928340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1794177631,
+     "price": 0.905,
+     "remain_days": 20.26,
+     "tp_pnl": 5.1882
+    },
+    "0.92": {
+     "t": 1794179596,
+     "price": 0.93,
+     "remain_days": 20.24,
+     "tp_pnl": 8.2857
+    },
+    "0.94": {
+     "t": 1794186433,
+     "price": 0.94,
+     "remain_days": 20.16,
+     "tp_pnl": 9.5268
+    },
+    "0.95": {
+     "t": 1794186501,
+     "price": 0.96,
+     "remain_days": 20.16,
+     "tp_pnl": 12.0125
+    },
+    "0.96": {
+     "t": 1794186501,
+     "price": 0.96,
+     "remain_days": 20.16,
+     "tp_pnl": 12.0125
+    },
+    "0.97": {
+     "t": 1794186556,
+     "price": 0.97,
+     "remain_days": 20.16,
+     "tp_pnl": 13.2571
+    },
+    "0.98": {
+     "t": 1794187098,
+     "price": 0.9825,
+     "remain_days": 20.15,
+     "tp_pnl": 14.8146
+    },
+    "0.99": {
+     "t": 1794188056,
+     "price": 0.9995,
+     "remain_days": 20.14,
+     "tp_pnl": 16.9358
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-ndrey-gyurov-win-the-next-bulgarian-presidential-election",
+   "outcome": "no",
+   "entry_price": 0.67,
+   "shares": 149.25373134328356,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 49.2537,
+   "token": "15608643409971761503638981418366748681664167967140328613245148153377110556924",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793415019,
+   "end_ts": 1793595540,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793531071,
+     "price": 0.905,
+     "remain_days": 0.75,
+     "tp_pnl": 33.5821
+    },
+    "0.92": {
+     "t": 1793553680,
+     "price": 0.955,
+     "remain_days": 0.48,
+     "tp_pnl": 41.0448
+    },
+    "0.94": {
+     "t": 1793553680,
+     "price": 0.955,
+     "remain_days": 0.48,
+     "tp_pnl": 41.0448
+    },
+    "0.95": {
+     "t": 1793553680,
+     "price": 0.955,
+     "remain_days": 0.48,
+     "tp_pnl": 41.0448
+    },
+    "0.96": {
+     "t": 1793554222,
+     "price": 0.96,
+     "remain_days": 0.48,
+     "tp_pnl": 41.791
+    },
+    "0.97": {
+     "t": 1793554340,
+     "price": 0.97,
+     "remain_days": 0.48,
+     "tp_pnl": 43.2836
+    },
+    "0.98": {
+     "t": 1793555421,
+     "price": 0.9805,
+     "remain_days": 0.46,
+     "tp_pnl": 44.8507
+    },
+    "0.99": {
+     "t": 1793557159,
+     "price": 0.99,
+     "remain_days": 0.44,
+     "tp_pnl": 46.2687
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-iliana-iotova-win-the-next-bulgarian-presidential-election",
+   "outcome": "yes",
+   "entry_price": 0.67,
+   "shares": 149.25373134328356,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 49.2537,
+   "token": "50441114645457108268892324313719484550984676393068151334263975251311332365159",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793416791,
+   "end_ts": 1793595540,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793553677,
+     "price": 0.95,
+     "remain_days": 0.48,
+     "tp_pnl": 40.2985
+    },
+    "0.92": {
+     "t": 1793553677,
+     "price": 0.95,
+     "remain_days": 0.48,
+     "tp_pnl": 40.2985
+    },
+    "0.94": {
+     "t": 1793553677,
+     "price": 0.95,
+     "remain_days": 0.48,
+     "tp_pnl": 40.2985
+    },
+    "0.95": {
+     "t": 1793553677,
+     "price": 0.95,
+     "remain_days": 0.48,
+     "tp_pnl": 40.2985
+    },
+    "0.96": {
+     "t": 1793554276,
+     "price": 0.96,
+     "remain_days": 0.48,
+     "tp_pnl": 41.791
+    },
+    "0.97": {
+     "t": 1793555357,
+     "price": 0.9705,
+     "remain_days": 0.47,
+     "tp_pnl": 43.3582
+    },
+    "0.98": {
+     "t": 1793555417,
+     "price": 0.98,
+     "remain_days": 0.46,
+     "tp_pnl": 44.7761
+    },
+    "0.99": {
+     "t": 1793556862,
+     "price": 0.9915,
+     "remain_days": 0.45,
+     "tp_pnl": 46.4925
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-democrats-win-the-florida-governor-race-in-2026",
+   "outcome": "no",
+   "entry_price": 0.6799999999999999,
+   "shares": 147.05882352941177,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 47.0588,
+   "token": "83106526449876874573813297184176954494008138834292248374570211745966785088569",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793417686,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793750719,
+     "price": 0.94,
+     "remain_days": 0.2,
+     "tp_pnl": 36.7647
+    },
+    "0.92": {
+     "t": 1793750719,
+     "price": 0.94,
+     "remain_days": 0.2,
+     "tp_pnl": 36.7647
+    },
+    "0.94": {
+     "t": 1793750719,
+     "price": 0.94,
+     "remain_days": 0.2,
+     "tp_pnl": 36.7647
+    },
+    "0.95": {
+     "t": 1793752765,
+     "price": 0.965,
+     "remain_days": 0.18,
+     "tp_pnl": 40.4412
+    },
+    "0.96": {
+     "t": 1793752765,
+     "price": 0.965,
+     "remain_days": 0.18,
+     "tp_pnl": 40.4412
+    },
+    "0.97": {
+     "t": 1793753421,
+     "price": 0.977,
+     "remain_days": 0.17,
+     "tp_pnl": 42.2059
+    },
+    "0.98": {
+     "t": 1793755822,
+     "price": 0.9865,
+     "remain_days": 0.14,
+     "tp_pnl": 43.6029
+    },
+    "0.99": {
+     "t": 1793755961,
+     "price": 0.994,
+     "remain_days": 0.14,
+     "tp_pnl": 44.7059
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-republicans-win-the-nebraska-senate-race-in-2026",
+   "outcome": "yes",
+   "entry_price": 0.69,
+   "shares": 144.92753623188406,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 44.9275,
+   "token": "92576281548134350814800877416860562553699794074017301653635964206220838638047",
+   "last_price": 0.999,
+   "reverse_disagree": false,
+   "entry_ts": 1793418572,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793758459,
+     "price": 0.905,
+     "remain_days": 0.11,
+     "tp_pnl": 29.7101
+    },
+    "0.92": {
+     "t": 1793763259,
+     "price": 0.93,
+     "remain_days": 0.06,
+     "tp_pnl": 33.3333
+    },
+    "0.94": {
+     "t": 1793763574,
+     "price": 0.945,
+     "remain_days": 0.06,
+     "tp_pnl": 35.5072
+    },
+    "0.95": {
+     "t": 1793765000,
+     "price": 0.955,
+     "remain_days": 0.04,
+     "tp_pnl": 36.9565
+    },
+    "0.96": {
+     "t": 1793765730,
+     "price": 0.965,
+     "remain_days": 0.03,
+     "tp_pnl": 38.4058
+    },
+    "0.97": {
+     "t": 1793765899,
+     "price": 0.97,
+     "remain_days": 0.03,
+     "tp_pnl": 39.1304
+    },
+    "0.98": {
+     "t": 1793767641,
+     "price": 0.9805,
+     "remain_days": 0.01,
+     "tp_pnl": 40.6522
+    },
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-democrats-win-the-ohio-governor-race-in-2026",
+   "outcome": "yes",
+   "entry_price": 0.82,
+   "shares": 121.95121951219512,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 21.9512,
+   "token": "63255709540320761353971859526848930870803944190764324681913735372035438815215",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793422174,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793753130,
+     "price": 0.91,
+     "remain_days": 0.18,
+     "tp_pnl": 9.7561
+    },
+    "0.92": {
+     "t": 1793753180,
+     "price": 0.92,
+     "remain_days": 0.18,
+     "tp_pnl": 10.9756
+    },
+    "0.94": {
+     "t": 1793753719,
+     "price": 0.945,
+     "remain_days": 0.17,
+     "tp_pnl": 14.0244
+    },
+    "0.95": {
+     "t": 1793754052,
+     "price": 0.955,
+     "remain_days": 0.17,
+     "tp_pnl": 15.2439
+    },
+    "0.96": {
+     "t": 1793754414,
+     "price": 0.965,
+     "remain_days": 0.16,
+     "tp_pnl": 16.4634
+    },
+    "0.97": {
+     "t": 1793756185,
+     "price": 0.9705,
+     "remain_days": 0.14,
+     "tp_pnl": 17.1341
+    },
+    "0.98": {
+     "t": 1793757500,
+     "price": 0.984,
+     "remain_days": 0.13,
+     "tp_pnl": 18.7805
+    },
+    "0.99": {
+     "t": 1793763134,
+     "price": 0.993,
+     "remain_days": 0.06,
+     "tp_pnl": 19.878
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-republicans-win-the-nevada-governor-race-in-2026",
+   "outcome": "no",
+   "entry_price": 0.78,
+   "shares": 128.2051282051282,
+   "cost": 100.88,
+   "rate": 0.04,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 27.3251,
+   "token": "76313209944639250426806286965492886883353059598478633315707597639545615999446",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793619254,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793754556,
+     "price": 0.915,
+     "remain_days": 0.16,
+     "tp_pnl": 14.7047
+    },
+    "0.92": {
+     "t": 1793754581,
+     "price": 0.92,
+     "remain_days": 0.16,
+     "tp_pnl": 15.3667
+    },
+    "0.94": {
+     "t": 1793756185,
+     "price": 0.94,
+     "remain_days": 0.14,
+     "tp_pnl": 18.0169
+    },
+    "0.95": {
+     "t": 1793756720,
+     "price": 0.95,
+     "remain_days": 0.13,
+     "tp_pnl": 19.3436
+    },
+    "0.96": {
+     "t": 1793757643,
+     "price": 0.96,
+     "remain_days": 0.12,
+     "tp_pnl": 20.6713
+    },
+    "0.97": {
+     "t": 1793759547,
+     "price": 0.9725,
+     "remain_days": 0.1,
+     "tp_pnl": 22.3323
+    },
+    "0.98": {
+     "t": 1793764520,
+     "price": 0.9835,
+     "remain_days": 0.04,
+     "tp_pnl": 23.7954
+    },
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-an-independent-win-the-nebraska-senate-race-in-2026",
+   "outcome": "no",
+   "entry_price": 0.72,
+   "shares": 138.88888888888889,
+   "cost": 101.12,
+   "rate": 0.04,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 37.7689,
+   "token": "89524111316754281233016446935787527194216234343076592935555965327756401377156",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793636393,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793758513,
+     "price": 0.9,
+     "remain_days": 0.11,
+     "tp_pnl": 21.9472
+    },
+    "0.92": {
+     "t": 1793763258,
+     "price": 0.93,
+     "remain_days": 0.06,
+     "tp_pnl": 26.2489
+    },
+    "0.94": {
+     "t": 1793763319,
+     "price": 0.94,
+     "remain_days": 0.06,
+     "tp_pnl": 27.685
+    },
+    "0.95": {
+     "t": 1793765118,
+     "price": 0.95,
+     "remain_days": 0.04,
+     "tp_pnl": 29.1222
+    },
+    "0.96": {
+     "t": 1793765728,
+     "price": 0.97,
+     "remain_days": 0.03,
+     "tp_pnl": 32.0
+    },
+    "0.97": {
+     "t": 1793765728,
+     "price": 0.97,
+     "remain_days": 0.03,
+     "tp_pnl": 32.0
+    },
+    "0.98": {
+     "t": 1793767639,
+     "price": 0.98,
+     "remain_days": 0.01,
+     "tp_pnl": 33.4406
+    },
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-republicans-win-the-florida-governor-race-in-2026",
+   "outcome": "yes",
+   "entry_price": 0.63,
+   "shares": 158.73015873015873,
+   "cost": 101.48,
+   "rate": 0.04,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 57.2502,
+   "token": "107409796822153809778143872196236532785178617102787858261374110829112218839748",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793644568,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793750718,
+     "price": 0.945,
+     "remain_days": 0.2,
+     "tp_pnl": 46.5468
+    },
+    "0.92": {
+     "t": 1793750718,
+     "price": 0.945,
+     "remain_days": 0.2,
+     "tp_pnl": 46.5468
+    },
+    "0.94": {
+     "t": 1793750718,
+     "price": 0.945,
+     "remain_days": 0.2,
+     "tp_pnl": 46.5468
+    },
+    "0.95": {
+     "t": 1793751318,
+     "price": 0.955,
+     "remain_days": 0.2,
+     "tp_pnl": 48.19
+    },
+    "0.96": {
+     "t": 1793752933,
+     "price": 0.96,
+     "remain_days": 0.18,
+     "tp_pnl": 49.0121
+    },
+    "0.97": {
+     "t": 1793754049,
+     "price": 0.971,
+     "remain_days": 0.17,
+     "tp_pnl": 50.8217
+    },
+    "0.98": {
+     "t": 1793755819,
+     "price": 0.982,
+     "remain_days": 0.14,
+     "tp_pnl": 52.6329
+    },
+    "0.99": {
+     "t": 1793755960,
+     "price": 0.9915,
+     "remain_days": 0.14,
+     "tp_pnl": 54.1984
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-republicans-win-the-wisconsin-governor-race-in-2026",
+   "outcome": "no",
+   "entry_price": 0.87,
+   "shares": 114.94252873563218,
+   "cost": 100.52,
+   "rate": 0.04,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 14.4225,
+   "token": "94997938472772845981621371346408480728260037625129184428077443070579239724265",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793659889,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793754558,
+     "price": 0.92,
+     "remain_days": 0.16,
+     "tp_pnl": 3.7011
+    },
+    "0.92": {
+     "t": 1793754558,
+     "price": 0.92,
+     "remain_days": 0.16,
+     "tp_pnl": 3.7011
+    },
+    "0.94": {
+     "t": 1793754688,
+     "price": 0.95,
+     "remain_days": 0.16,
+     "tp_pnl": 7.2667
+    },
+    "0.95": {
+     "t": 1793754688,
+     "price": 0.95,
+     "remain_days": 0.16,
+     "tp_pnl": 7.2667
+    },
+    "0.96": {
+     "t": 1793754731,
+     "price": 0.96,
+     "remain_days": 0.16,
+     "tp_pnl": 8.457
+    },
+    "0.97": {
+     "t": 1793761164,
+     "price": 0.9795,
+     "remain_days": 0.08,
+     "tp_pnl": 10.7808
+    },
+    "0.98": {
+     "t": 1793762361,
+     "price": 0.987,
+     "remain_days": 0.07,
+     "tp_pnl": 11.6755
+    },
+    "0.99": {
+     "t": 1793762536,
+     "price": 0.99,
+     "remain_days": 0.07,
+     "tp_pnl": 12.0336
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-democrats-win-the-nevada-governor-race-in-2026",
+   "outcome": "yes",
+   "entry_price": 0.7600000000000001,
+   "shares": 131.57894736842104,
+   "cost": 100.96,
+   "rate": 0.04,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 30.6189,
+   "token": "1246864710804983890692377994891598401616546411512113588399830364959833951829",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793660747,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793754557,
+     "price": 0.905,
+     "remain_days": 0.16,
+     "tp_pnl": 16.3086
+    },
+    "0.92": {
+     "t": 1793754861,
+     "price": 0.925,
+     "remain_days": 0.16,
+     "tp_pnl": 19.0254
+    },
+    "0.94": {
+     "t": 1793756188,
+     "price": 0.94,
+     "remain_days": 0.14,
+     "tp_pnl": 21.0658
+    },
+    "0.95": {
+     "t": 1793757081,
+     "price": 0.95,
+     "remain_days": 0.13,
+     "tp_pnl": 22.4274
+    },
+    "0.96": {
+     "t": 1793757644,
+     "price": 0.965,
+     "remain_days": 0.12,
+     "tp_pnl": 24.4717
+    },
+    "0.97": {
+     "t": 1793759572,
+     "price": 0.9745,
+     "remain_days": 0.1,
+     "tp_pnl": 25.7677
+    },
+    "0.98": null,
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-democrats-win-the-wisconsin-governor-race-in-2026",
+   "outcome": "yes",
+   "entry_price": 0.86,
+   "shares": 116.27906976744187,
+   "cost": 100.56,
+   "rate": 0.04,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 15.7191,
+   "token": "47540146623620182724372695903724852067595146419459482790641441152489267651664",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1793682356,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793754558,
+     "price": 0.93,
+     "remain_days": 0.16,
+     "tp_pnl": 6.0744
+    },
+    "0.92": {
+     "t": 1793754558,
+     "price": 0.93,
+     "remain_days": 0.16,
+     "tp_pnl": 6.0744
+    },
+    "0.94": {
+     "t": 1793754688,
+     "price": 0.95,
+     "remain_days": 0.16,
+     "tp_pnl": 8.48
+    },
+    "0.95": {
+     "t": 1793754688,
+     "price": 0.95,
+     "remain_days": 0.16,
+     "tp_pnl": 8.48
+    },
+    "0.96": {
+     "t": 1793754764,
+     "price": 0.96,
+     "remain_days": 0.16,
+     "tp_pnl": 9.6842
+    },
+    "0.97": {
+     "t": 1793761035,
+     "price": 0.973,
+     "remain_days": 0.08,
+     "tp_pnl": 11.251
+    },
+    "0.98": {
+     "t": 1793762361,
+     "price": 0.9895,
+     "remain_days": 0.07,
+     "tp_pnl": 13.242
+    },
+    "0.99": {
+     "t": 1793762422,
+     "price": 0.9905,
+     "remain_days": 0.07,
+     "tp_pnl": 13.3627
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-the-democrats-win-the-mississippi-senate-race-in-2026",
+   "outcome": "no",
+   "entry_price": 0.86,
+   "shares": 116.27906976744187,
+   "cost": 100.56,
+   "rate": 0.04,
+   "won": false,
+   "won_source": "path_last_price",
+   "hold_pnl": -100.56,
+   "token": "109329484956764506378760583725617100193692863947320202695087573398990069238209",
+   "last_price": 0.0005,
+   "reverse_disagree": false,
+   "entry_ts": 1793683190,
+   "end_ts": 1793768340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1793758641,
+     "price": 0.9,
+     "remain_days": 0.11,
+     "tp_pnl": 2.473
+    },
+    "0.92": {
+     "t": 1793758760,
+     "price": 0.96,
+     "remain_days": 0.11,
+     "tp_pnl": 9.6842
+    },
+    "0.94": {
+     "t": 1793758760,
+     "price": 0.96,
+     "remain_days": 0.11,
+     "tp_pnl": 9.6842
+    },
+    "0.95": {
+     "t": 1793758760,
+     "price": 0.96,
+     "remain_days": 0.11,
+     "tp_pnl": 9.6842
+    },
+    "0.96": {
+     "t": 1793758760,
+     "price": 0.96,
+     "remain_days": 0.11,
+     "tp_pnl": 9.6842
+    },
+    "0.97": {
+     "t": 1793758822,
+     "price": 0.97,
+     "remain_days": 0.11,
+     "tp_pnl": 10.8893
+    },
+    "0.98": {
+     "t": 1793767336,
+     "price": 0.9805,
+     "remain_days": 0.01,
+     "tp_pnl": 12.1557
+    },
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-bitcoin-dip-to-72pt5k-in-november-2026",
+   "outcome": "yes",
+   "entry_price": 0.66,
+   "shares": 151.5151515151515,
+   "cost": 102.38,
+   "rate": 0.07,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 49.1352,
+   "token": "69357524485878491827088979650618658940820077589928089667486807593191609337515",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1794240861,
+   "end_ts": 1796101200,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1794325516,
+     "price": 0.905,
+     "remain_days": 20.55,
+     "tp_pnl": 32.2294
+    },
+    "0.92": {
+     "t": 1794328630,
+     "price": 0.925,
+     "remain_days": 20.52,
+     "tp_pnl": 35.4315
+    },
+    "0.94": {
+     "t": 1794329829,
+     "price": 0.945,
+     "remain_days": 20.5,
+     "tp_pnl": 38.6421
+    },
+    "0.95": {
+     "t": 1794489021,
+     "price": 0.995,
+     "remain_days": 18.66,
+     "tp_pnl": 46.7057
+    },
+    "0.96": {
+     "t": 1794489021,
+     "price": 0.995,
+     "remain_days": 18.66,
+     "tp_pnl": 46.7057
+    },
+    "0.97": {
+     "t": 1794489021,
+     "price": 0.995,
+     "remain_days": 18.66,
+     "tp_pnl": 46.7057
+    },
+    "0.98": {
+     "t": 1794489021,
+     "price": 0.995,
+     "remain_days": 18.66,
+     "tp_pnl": 46.7057
+    },
+    "0.99": {
+     "t": 1794489021,
+     "price": 0.995,
+     "remain_days": 18.66,
+     "tp_pnl": 46.7057
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-bitcoin-dip-to-67pt5k-in-november-2026",
+   "outcome": "no",
+   "entry_price": 0.72,
+   "shares": 138.88888888888889,
+   "cost": 101.96,
+   "rate": 0.07,
+   "won": false,
+   "won_source": "path_last_price",
+   "hold_pnl": -101.96,
+   "token": "55697300647812113498373190444051839385143230311383069419303450826304698131181",
+   "last_price": 0.0005,
+   "reverse_disagree": false,
+   "entry_ts": 1794240890,
+   "end_ts": 1796101200,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": null,
+    "0.92": null,
+    "0.94": null,
+    "0.95": null,
+    "0.96": null,
+    "0.97": null,
+    "0.98": null,
+    "0.99": null
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-ethereum-dip-to-2000-in-november-2026",
+   "outcome": "yes",
+   "entry_price": 0.66,
+   "shares": 151.5151515151515,
+   "cost": 102.38,
+   "rate": 0.07,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 49.1352,
+   "token": "25872491633726809141088256934758060289984510163798846608236143549094871503682",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1794246205,
+   "end_ts": 1796101200,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1794325338,
+     "price": 0.92,
+     "remain_days": 20.55,
+     "tp_pnl": 34.6302
+    },
+    "0.92": {
+     "t": 1794325338,
+     "price": 0.92,
+     "remain_days": 20.55,
+     "tp_pnl": 34.6302
+    },
+    "0.94": {
+     "t": 1794325456,
+     "price": 0.945,
+     "remain_days": 20.55,
+     "tp_pnl": 38.6421
+    },
+    "0.95": {
+     "t": 1794489024,
+     "price": 0.995,
+     "remain_days": 18.66,
+     "tp_pnl": 46.7057
+    },
+    "0.96": {
+     "t": 1794489024,
+     "price": 0.995,
+     "remain_days": 18.66,
+     "tp_pnl": 46.7057
+    },
+    "0.97": {
+     "t": 1794489024,
+     "price": 0.995,
+     "remain_days": 18.66,
+     "tp_pnl": 46.7057
+    },
+    "0.98": {
+     "t": 1794489024,
+     "price": 0.995,
+     "remain_days": 18.66,
+     "tp_pnl": 46.7057
+    },
+    "0.99": {
+     "t": 1794489024,
+     "price": 0.995,
+     "remain_days": 18.66,
+     "tp_pnl": 46.7057
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "us-announces-end-of-iranian-blockade-by-november-15-2026",
+   "outcome": "no",
+   "entry_price": 0.901,
+   "shares": 110.98779134295228,
+   "cost": 100.0,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 10.9878,
+   "token": "59822649710870591002443082281655284432277286805384619774600638740092677692228",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1794255171,
+   "end_ts": 1794805140,
+   "resolution": "fidelity=1 (tp cache)",
+   "hits": {
+    "0.9": {
+     "t": 1794255672,
+     "price": 0.9075,
+     "remain_days": 6.36,
+     "tp_pnl": -0.3885
+    },
+    "0.92": {
+     "t": 1794256586,
+     "price": 0.9205,
+     "remain_days": 6.35,
+     "tp_pnl": 1.0544
+    },
+    "0.94": {
+     "t": 1794259877,
+     "price": 0.9435,
+     "remain_days": 6.31,
+     "tp_pnl": 3.6071
+    },
+    "0.95": {
+     "t": 1794260203,
+     "price": 0.9505,
+     "remain_days": 6.31,
+     "tp_pnl": 4.384
+    },
+    "0.96": {
+     "t": 1794343757,
+     "price": 0.96,
+     "remain_days": 5.34,
+     "tp_pnl": 5.4384
+    },
+    "0.97": {
+     "t": 1794381492,
+     "price": 0.97,
+     "remain_days": 4.9,
+     "tp_pnl": 6.5483
+    },
+    "0.98": {
+     "t": 1794508156,
+     "price": 0.9815,
+     "remain_days": 3.44,
+     "tp_pnl": 7.8246
+    },
+    "0.99": {
+     "t": 1794638232,
+     "price": 0.9905,
+     "remain_days": 1.93,
+     "tp_pnl": 8.8235
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-bitcoin-dip-to-70k-in-november-2026",
+   "outcome": "yes",
+   "entry_price": 0.61,
+   "shares": 163.9344262295082,
+   "cost": 102.73,
+   "rate": 0.07,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 61.2044,
+   "token": "88754750144878308251249356874996495438551441586518525391048671911582966845780",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1794327029,
+   "end_ts": 1796101200,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1794536276,
+     "price": 0.905,
+     "remain_days": 18.11,
+     "tp_pnl": 42.9129
+    },
+    "0.92": {
+     "t": 1794536357,
+     "price": 0.925,
+     "remain_days": 18.11,
+     "tp_pnl": 46.3775
+    },
+    "0.94": {
+     "t": 1794537973,
+     "price": 0.945,
+     "remain_days": 18.09,
+     "tp_pnl": 49.8513
+    },
+    "0.95": {
+     "t": 1794538347,
+     "price": 0.955,
+     "remain_days": 18.09,
+     "tp_pnl": 51.5916
+    },
+    "0.96": {
+     "t": 1794538401,
+     "price": 0.995,
+     "remain_days": 18.09,
+     "tp_pnl": 58.5759
+    },
+    "0.97": {
+     "t": 1794538401,
+     "price": 0.995,
+     "remain_days": 18.09,
+     "tp_pnl": 58.5759
+    },
+    "0.98": {
+     "t": 1794538401,
+     "price": 0.995,
+     "remain_days": 18.09,
+     "tp_pnl": 58.5759
+    },
+    "0.99": {
+     "t": 1794538401,
+     "price": 0.995,
+     "remain_days": 18.09,
+     "tp_pnl": 58.5759
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "jensen-huang-announced-resignation-or-removal-by-november-12-2026",
+   "outcome": "yes",
+   "entry_price": 0.63,
+   "shares": 158.73015873015873,
+   "cost": 101.48,
+   "rate": 0.04,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 57.2502,
+   "token": "94592567375755535402382514854858851873438883868449100686326493803085500123190",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1794458278,
+   "end_ts": 1794545940,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1794491358,
+     "price": 0.965,
+     "remain_days": 0.63,
+     "tp_pnl": 49.8344
+    },
+    "0.92": {
+     "t": 1794491358,
+     "price": 0.965,
+     "remain_days": 0.63,
+     "tp_pnl": 49.8344
+    },
+    "0.94": {
+     "t": 1794491358,
+     "price": 0.965,
+     "remain_days": 0.63,
+     "tp_pnl": 49.8344
+    },
+    "0.95": {
+     "t": 1794491358,
+     "price": 0.965,
+     "remain_days": 0.63,
+     "tp_pnl": 49.8344
+    },
+    "0.96": {
+     "t": 1794491358,
+     "price": 0.965,
+     "remain_days": 0.63,
+     "tp_pnl": 49.8344
+    },
+    "0.97": {
+     "t": 1794491416,
+     "price": 0.995,
+     "remain_days": 0.63,
+     "tp_pnl": 54.7754
+    },
+    "0.98": {
+     "t": 1794491416,
+     "price": 0.995,
+     "remain_days": 0.63,
+     "tp_pnl": 54.7754
+    },
+    "0.99": {
+     "t": 1794491416,
+     "price": 0.995,
+     "remain_days": 0.63,
+     "tp_pnl": 54.7754
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "jensen-huang-announced-resignation-or-removal-by-november-13-2026",
+   "outcome": "yes",
+   "entry_price": 0.65,
+   "shares": 153.84615384615384,
+   "cost": 101.4,
+   "rate": 0.04,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 52.4462,
+   "token": "60524199552830937560823820614073807447576580099407491131126483622728255798404",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1794465589,
+   "end_ts": 1794632340,
+   "resolution": "fidelity=1 (stoploss-audit cache)",
+   "hits": {
+    "0.9": {
+     "t": 1794491359,
+     "price": 0.945,
+     "remain_days": 1.63,
+     "tp_pnl": 42.0722
+    },
+    "0.92": {
+     "t": 1794491359,
+     "price": 0.945,
+     "remain_days": 1.63,
+     "tp_pnl": 42.0722
+    },
+    "0.94": {
+     "t": 1794491359,
+     "price": 0.945,
+     "remain_days": 1.63,
+     "tp_pnl": 42.0722
+    },
+    "0.95": {
+     "t": 1794491418,
+     "price": 0.995,
+     "remain_days": 1.63,
+     "tp_pnl": 50.0475
+    },
+    "0.96": {
+     "t": 1794491418,
+     "price": 0.995,
+     "remain_days": 1.63,
+     "tp_pnl": 50.0475
+    },
+    "0.97": {
+     "t": 1794491418,
+     "price": 0.995,
+     "remain_days": 1.63,
+     "tp_pnl": 50.0475
+    },
+    "0.98": {
+     "t": 1794491418,
+     "price": 0.995,
+     "remain_days": 1.63,
+     "tp_pnl": 50.0475
+    },
+    "0.99": {
+     "t": 1794491418,
+     "price": 0.995,
+     "remain_days": 1.63,
+     "tp_pnl": 50.0475
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-bitcoin-dip-to-65k-in-november-2026",
+   "outcome": "yes",
+   "entry_price": 0.6799999999999999,
+   "shares": 147.05882352941177,
+   "cost": 102.24,
+   "rate": 0.07,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 44.8188,
+   "token": "35677473437457780926344428806282711386293739308437937457926843772128905824886",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1794639414,
+   "end_ts": 1796101200,
+   "resolution": "fidelity=1 (tp cache)",
+   "hits": {
+    "0.9": {
+     "t": 1794669585,
+     "price": 0.9,
+     "remain_days": 16.57,
+     "tp_pnl": 27.6346
+    },
+    "0.92": {
+     "t": 1794669765,
+     "price": 0.945,
+     "remain_days": 16.57,
+     "tp_pnl": 34.6344
+    },
+    "0.94": {
+     "t": 1794669765,
+     "price": 0.945,
+     "remain_days": 16.57,
+     "tp_pnl": 34.6344
+    },
+    "0.95": {
+     "t": 1794669984,
+     "price": 0.955,
+     "remain_days": 16.57,
+     "tp_pnl": 36.1956
+    },
+    "0.96": {
+     "t": 1794670242,
+     "price": 0.965,
+     "remain_days": 16.56,
+     "tp_pnl": 37.7588
+    },
+    "0.97": {
+     "t": 1794672798,
+     "price": 0.9755,
+     "remain_days": 16.53,
+     "tp_pnl": 39.4024
+    },
+    "0.98": {
+     "t": 1794675025,
+     "price": 0.9995,
+     "remain_days": 16.51,
+     "tp_pnl": 43.1678
+    },
+    "0.99": {
+     "t": 1794675025,
+     "price": 0.9995,
+     "remain_days": 16.51,
+     "tp_pnl": 43.1678
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-bitcoin-dip-to-62pt5k-in-november-2026",
+   "outcome": "yes",
+   "entry_price": 0.793998955891373,
+   "shares": 125.94475,
+   "cost": 101.4418,
+   "rate": 0.07,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 24.5029,
+   "token": "78419247485230562445004226605472252700415796699412233656564899556935327490412",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1794690947,
+   "end_ts": 1796101200,
+   "resolution": "fidelity=1 (tp cache)",
+   "hits": {
+    "0.9": {
+     "t": 1794704597,
+     "price": 0.935,
+     "remain_days": 16.16,
+     "tp_pnl": 14.4455
+    },
+    "0.92": {
+     "t": 1794704597,
+     "price": 0.935,
+     "remain_days": 16.16,
+     "tp_pnl": 14.4455
+    },
+    "0.94": {
+     "t": 1794704613,
+     "price": 0.945,
+     "remain_days": 16.16,
+     "tp_pnl": 15.7807
+    },
+    "0.95": {
+     "t": 1794704775,
+     "price": 0.955,
+     "remain_days": 16.16,
+     "tp_pnl": 17.1178
+    },
+    "0.96": {
+     "t": 1794704921,
+     "price": 0.995,
+     "remain_days": 16.16,
+     "tp_pnl": 22.4835
+    },
+    "0.97": {
+     "t": 1794704921,
+     "price": 0.995,
+     "remain_days": 16.16,
+     "tp_pnl": 22.4835
+    },
+    "0.98": {
+     "t": 1794704921,
+     "price": 0.995,
+     "remain_days": 16.16,
+     "tp_pnl": 22.4835
+    },
+    "0.99": {
+     "t": 1794704921,
+     "price": 0.995,
+     "remain_days": 16.16,
+     "tp_pnl": 22.4835
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-bilibili-gaming-win-worlds-2026",
+   "outcome": "yes",
+   "entry_price": 0.7133950380186749,
+   "shares": 140.1747905027933,
+   "cost": 101.43297,
+   "rate": 0.05,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 38.7418,
+   "token": "101156861859248010272982388611860996032700684150053028417361465335294418301847",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1794697238,
+   "end_ts": 1795928340,
+   "resolution": "fidelity=1 (tp cache)",
+   "hits": {
+    "0.9": {
+     "t": 1794699924,
+     "price": 0.917,
+     "remain_days": 14.22,
+     "tp_pnl": 25.1144
+    },
+    "0.92": {
+     "t": 1794699977,
+     "price": 0.941,
+     "remain_days": 14.22,
+     "tp_pnl": 28.6195
+    },
+    "0.94": {
+     "t": 1794699977,
+     "price": 0.941,
+     "remain_days": 14.22,
+     "tp_pnl": 28.6195
+    },
+    "0.95": {
+     "t": 1794700051,
+     "price": 0.969,
+     "remain_days": 14.22,
+     "tp_pnl": 32.7191
+    },
+    "0.96": {
+     "t": 1794700051,
+     "price": 0.969,
+     "remain_days": 14.22,
+     "tp_pnl": 32.7191
+    },
+    "0.97": {
+     "t": 1794700963,
+     "price": 0.9995,
+     "remain_days": 14.21,
+     "tp_pnl": 37.1972
+    },
+    "0.98": {
+     "t": 1794700963,
+     "price": 0.9995,
+     "remain_days": 14.21,
+     "tp_pnl": 37.1972
+    },
+    "0.99": {
+     "t": 1794700963,
+     "price": 0.9995,
+     "remain_days": 14.21,
+     "tp_pnl": 37.1972
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "will-genptg-win-worlds-2026",
+   "outcome": "no",
+   "entry_price": 0.815388458656008,
+   "shares": 122.64093137254903,
+   "cost": 100.92306,
+   "rate": 0.05,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 21.7179,
+   "token": "82487289327586076731223934931200437075809701560479426984178227650142334617441",
+   "last_price": 0.9995,
+   "reverse_disagree": true,
+   "entry_ts": 1794700810,
+   "end_ts": 1795928340,
+   "resolution": "fidelity=1 (tp cache)",
+   "hits": {
+    "0.9": {
+     "t": 1794700861,
+     "price": 0.9245,
+     "remain_days": 14.21,
+     "tp_pnl": 10.7526
+    },
+    "0.92": {
+     "t": 1794700861,
+     "price": 0.9245,
+     "remain_days": 14.21,
+     "tp_pnl": 10.7526
+    },
+    "0.94": {
+     "t": 1794700962,
+     "price": 0.9995,
+     "remain_days": 14.21,
+     "tp_pnl": 20.3664
+    },
+    "0.95": {
+     "t": 1794700962,
+     "price": 0.9995,
+     "remain_days": 14.21,
+     "tp_pnl": 20.3664
+    },
+    "0.96": {
+     "t": 1794700962,
+     "price": 0.9995,
+     "remain_days": 14.21,
+     "tp_pnl": 20.3664
+    },
+    "0.97": {
+     "t": 1794700962,
+     "price": 0.9995,
+     "remain_days": 14.21,
+     "tp_pnl": 20.3664
+    },
+    "0.98": {
+     "t": 1794700962,
+     "price": 0.9995,
+     "remain_days": 14.21,
+     "tp_pnl": 20.3664
+    },
+    "0.99": {
+     "t": 1794700962,
+     "price": 0.9995,
+     "remain_days": 14.21,
+     "tp_pnl": 20.3664
+    }
+   }
+  },
+  {
+   "source": "paper",
+   "slug": "atp-becroft-hazawa-2026-11-14",
+   "outcome": "isaac becroft",
+   "entry_price": 0.89,
+   "shares": 112.35955056179775,
+   "cost": 100.55,
+   "rate": 0.05,
+   "won": true,
+   "won_source": "path_last_price",
+   "hold_pnl": 11.8096,
+   "token": "30108096087675095590309516215005875777325724272197265908726602465771243766752",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1794720577,
+   "end_ts": 1795311000,
+   "resolution": "fidelity=1 (tp cache)",
+   "hits": {
+    "0.9": {
+     "t": 1794720630,
+     "price": 0.905,
+     "remain_days": 6.83,
+     "tp_pnl": -0.5162
+    },
+    "0.92": {
+     "t": 1794720709,
+     "price": 0.965,
+     "remain_days": 6.83,
+     "tp_pnl": 6.5119
+    },
+    "0.94": {
+     "t": 1794720709,
+     "price": 0.965,
+     "remain_days": 6.83,
+     "tp_pnl": 6.5119
+    },
+    "0.95": {
+     "t": 1794720709,
+     "price": 0.965,
+     "remain_days": 6.83,
+     "tp_pnl": 6.5119
+    },
+    "0.96": {
+     "t": 1794720709,
+     "price": 0.965,
+     "remain_days": 6.83,
+     "tp_pnl": 6.5119
+    },
+    "0.97": {
+     "t": 1794720793,
+     "price": 0.98,
+     "remain_days": 6.83,
+     "tp_pnl": 8.2753
+    },
+    "0.98": {
+     "t": 1794720793,
+     "price": 0.98,
+     "remain_days": 6.83,
+     "tp_pnl": 8.2753
+    },
+    "0.99": {
+     "t": 1794721054,
+     "price": 0.995,
+     "remain_days": 6.83,
+     "tp_pnl": 10.0412
+    }
+   }
+  },
+  {
+   "source": "app",
+   "slug": "will-bitcoin-dip-to-65k-in-november-2026",
+   "outcome": "Yes",
+   "entry_price": 0.7049,
+   "shares": 7.246377,
+   "cost": 5.2170000000000005,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "data_api_current_price",
+   "hold_pnl": 2.1378,
+   "token": "35677473437457780926344428806282711386293739308437937457926843772128905824886",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1794636731,
+   "end_ts": 1796083200,
+   "resolution": "fidelity=1 (tp cache)",
+   "hits": {
+    "0.9": {
+     "t": 1794669585,
+     "price": 0.9,
+     "remain_days": 16.36,
+     "tp_pnl": 1.2323
+    },
+    "0.92": {
+     "t": 1794669765,
+     "price": 0.945,
+     "remain_days": 16.36,
+     "tp_pnl": 1.5584
+    },
+    "0.94": {
+     "t": 1794669765,
+     "price": 0.945,
+     "remain_days": 16.36,
+     "tp_pnl": 1.5584
+    },
+    "0.95": {
+     "t": 1794669984,
+     "price": 0.955,
+     "remain_days": 16.36,
+     "tp_pnl": 1.6308
+    },
+    "0.96": {
+     "t": 1794670242,
+     "price": 0.965,
+     "remain_days": 16.35,
+     "tp_pnl": 1.7033
+    },
+    "0.97": {
+     "t": 1794672798,
+     "price": 0.9755,
+     "remain_days": 16.32,
+     "tp_pnl": 1.7794
+    },
+    "0.98": {
+     "t": 1794675025,
+     "price": 0.9995,
+     "remain_days": 16.3,
+     "tp_pnl": 1.9533
+    },
+    "0.99": {
+     "t": 1794675025,
+     "price": 0.9995,
+     "remain_days": 16.3,
+     "tp_pnl": 1.9533
+    }
+   }
+  },
+  {
+   "source": "app",
+   "slug": "will-bitcoin-dip-to-67pt5k-in-november-2026",
+   "outcome": "Yes",
+   "entry_price": 0.8779,
+   "shares": 5.747123,
+   "cost": 5.090977,
+   "rate": 0.0,
+   "won": true,
+   "won_source": "data_api_current_price",
+   "hold_pnl": 0.7016,
+   "token": "15542710001866766202110323156169725417182779903002226439100570924289697216169",
+   "last_price": 0.9995,
+   "reverse_disagree": false,
+   "entry_ts": 1794622663,
+   "end_ts": 1796083200,
+   "resolution": "fidelity=1 (tp cache)",
+   "hits": {
+    "0.9": {
+     "t": 1794622959,
+     "price": 0.935,
+     "remain_days": 16.9,
+     "tp_pnl": 0.2251
+    },
+    "0.92": {
+     "t": 1794622959,
+     "price": 0.935,
+     "remain_days": 16.9,
+     "tp_pnl": 0.2251
+    },
+    "0.94": {
+     "t": 1794623338,
+     "price": 0.9995,
+     "remain_days": 16.9,
+     "tp_pnl": 0.5958
+    },
+    "0.95": {
+     "t": 1794623338,
+     "price": 0.9995,
+     "remain_days": 16.9,
+     "tp_pnl": 0.5958
+    },
+    "0.96": {
+     "t": 1794623338,
+     "price": 0.9995,
+     "remain_days": 16.9,
+     "tp_pnl": 0.5958
+    },
+    "0.97": {
+     "t": 1794623338,
+     "price": 0.9995,
+     "remain_days": 16.9,
+     "tp_pnl": 0.5958
+    },
+    "0.98": {
+     "t": 1794623338,
+     "price": 0.9995,
+     "remain_days": 16.9,
+     "tp_pnl": 0.5958
+    },
+    "0.99": {
+     "t": 1794623338,
+     "price": 0.9995,
+     "remain_days": 16.9,
+     "tp_pnl": 0.5958
+    }
+   }
+  },
+  {
+   "source": "app",
+   "slug": "will-genptg-win-worlds-2026",
+   "outcome": "Yes",
+   "entry_price": 0.6416,
+   "shares": 7.936508,
+   "cost": 5.1850000000000005,
+   "rate": 0.0,
+   "won": false,
+   "won_source": "data_api_current_price",
+   "hold_pnl": -5.0924,
+   "token": "15907269680083135091620869613557617263613890890387514554477997501123964677519",
+   "last_price": 0.0005,
+   "reverse_disagree": false,
+   "entry_ts": 1794678386,
+   "end_ts": 1795910400,
+   "resolution": "fidelity=1 (tp cache)",
+   "hits": {
+    "0.9": null,
+    "0.92": null,
+    "0.94": null,
+    "0.95": null,
+    "0.96": null,
+    "0.97": null,
+    "0.98": null,
+    "0.99": null
+   }
+  },
+  {
+   "source": "app",
+   "slug": "will-bilibili-gaming-win-worlds-2026",
+   "outcome": "No",
+   "entry_price": 0.6307,
+   "shares": 8.077545,
+   "cost": 5.1905,
+   "rate": 0.0,
+   "won": false,
+   "won_source": "data_api_current_price",
+   "hold_pnl": -5.0952,
+   "token": "869171973276415956635131341744431858844932704288749717904028189815261072106",
+   "last_price": 0.0005,
+   "reverse_disagree": false,
+   "entry_ts": 1794678382,
+   "end_ts": 1795910400,
+   "resolution": "fidelity=1 (tp cache)",
+   "hits": {
+    "0.9": null,
+    "0.92": null,
+    "0.94": null,
+    "0.95": null,
+    "0.96": null,
+    "0.97": null,
+    "0.98": null,
+    "0.99": null
+   }
+  }
+ ]
+}

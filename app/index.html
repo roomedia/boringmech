@@ -405,6 +405,7 @@
         var pnl = (p.current_value != null && cost != null)
           ? Number(p.current_value) - cost : null;
         var lines = [
+          ['마감', p.end_date || '—'],
           ['진입 → 현재', fmtPrice(p.avg_price) + ' → ' + fmtPrice(p.current_price)],
           ['수량', p.current_size != null ? Number(p.current_size).toLocaleString('en-US') + '주' : '—'],
           ['평가액', p.current_value != null ? fmt(p.current_value) : '—'],

@@ -1,0 +1,2971 @@
+{
+ "assumptions": [
+  "4차는 1~3차와 같은 표본·가격 경로·가정 위에서 잔여 기간 R만 5일 단위로 스윕한 것이다. 가격 경로는 캐시만 사용했고 재수집은 코드로 차단했다 (no_path 건은 상대 임계 재계산에서 경로를 못 읽은 건).",
+  "R=0(none)은 잔여 조건 없음. 잔여 기준: 표본 A는 예정 만기(endDate), 표본 B는 실제 정산(closedTime) — 기존과 동일.",
+  "표본 B 마켓 수명은 60.2~86.7일이라 도달 시점 잔여가 큰 구간(R 45일 이상)은 발동 표본이 구조적으로 얇다. n을 그대로 표기했다.",
+  "절대 X는 {0.90, 0.95, 0.98, 0.99}만 스윕했다 (1·2차 전체 그리드의 부분집합). 상대 Δ는 3차와 동일 {0.25~0.40}, 판정가 0.99 캡 동일.",
+  "베이스라인은 손절 없는 만기 보유, 포트폴리오 시뮬레이션도 손절 미적용. 매도가 = 도달가 - 0.01, 수수료 정식 커브.",
+  "합산(A+B) 그리드는 자본 규모가 다른 두 표본(A 실금액, B 건당 $100 정규화)의 단순 합이다 — 2차와 동일 한계."
+ ],
+ "r_sweep_days": [
+  0,
+  5,
+  10,
+  15,
+  20,
+  25,
+  30,
+  35,
+  40,
+  45,
+  50,
+  55,
+  60
+ ],
+ "samples": {
+  "A": 52,
+  "B": 140,
+  "rel_A": 52,
+  "rel_B": 140,
+  "rel_no_path": {
+   "A": [],
+   "B": []
+  }
+ },
+ "per_trade": {
+  "absolute": {
+   "B": {
+    "X=0.9|R=none": {
+     "n_fired": 124,
+     "total_delta": -961.8299,
+     "avg_delta_per_fired": -7.7567,
+     "avoided_losses": 4,
+     "early_release_days_avg": 43.55,
+     "early_release_days_median": 59.77
+    },
+    "X=0.9|R=5d": {
+     "n_fired": 99,
+     "total_delta": -684.591,
+     "avg_delta_per_fired": -6.9151,
+     "avoided_losses": 4,
+     "early_release_days_avg": 54.39,
+     "early_release_days_median": 60.14
+    },
+    "X=0.9|R=10d": {
+     "n_fired": 95,
+     "total_delta": -626.9699,
+     "avg_delta_per_fired": -6.5997,
+     "avoided_losses": 4,
+     "early_release_days_avg": 56.38,
+     "early_release_days_median": 60.17
+    },
+    "X=0.9|R=15d": {
+     "n_fired": 93,
+     "total_delta": -593.2462,
+     "avg_delta_per_fired": -6.379,
+     "avoided_losses": 4,
+     "early_release_days_avg": 57.36,
+     "early_release_days_median": 60.17
+    },
+    "X=0.9|R=20d": {
+     "n_fired": 86,
+     "total_delta": -499.5217,
+     "avg_delta_per_fired": -5.8084,
+     "avoided_losses": 4,
+     "early_release_days_avg": 60.66,
+     "early_release_days_median": 60.96
+    },
+    "X=0.9|R=25d": {
+     "n_fired": 83,
+     "total_delta": -455.6276,
+     "avg_delta_per_fired": -5.4895,
+     "avoided_losses": 4,
+     "early_release_days_avg": 62.0,
+     "early_release_days_median": 61.18
+    },
+    "X=0.9|R=30d": {
+     "n_fired": 81,
+     "total_delta": -428.378,
+     "avg_delta_per_fired": -5.2886,
+     "avoided_losses": 4,
+     "early_release_days_avg": 62.82,
+     "early_release_days_median": 61.79
+    },
+    "X=0.9|R=35d": {
+     "n_fired": 79,
+     "total_delta": -396.9776,
+     "avg_delta_per_fired": -5.025,
+     "avoided_losses": 4,
+     "early_release_days_avg": 63.6,
+     "early_release_days_median": 63.11
+    },
+    "X=0.9|R=40d": {
+     "n_fired": 77,
+     "total_delta": -361.1046,
+     "avg_delta_per_fired": -4.6897,
+     "avoided_losses": 4,
+     "early_release_days_avg": 64.29,
+     "early_release_days_median": 63.81
+    },
+    "X=0.9|R=45d": {
+     "n_fired": 76,
+     "total_delta": -475.7543,
+     "avg_delta_per_fired": -6.2599,
+     "avoided_losses": 3,
+     "early_release_days_avg": 64.59,
+     "early_release_days_median": 63.9
+    },
+    "X=0.9|R=50d": {
+     "n_fired": 73,
+     "total_delta": -426.3169,
+     "avg_delta_per_fired": -5.84,
+     "avoided_losses": 3,
+     "early_release_days_avg": 65.28,
+     "early_release_days_median": 64.1
+    },
+    "X=0.9|R=55d": {
+     "n_fired": 70,
+     "total_delta": -372.295,
+     "avg_delta_per_fired": -5.3185,
+     "avoided_losses": 3,
+     "early_release_days_avg": 65.85,
+     "early_release_days_median": 64.12
+    },
+    "X=0.9|R=60d": {
+     "n_fired": 55,
+     "total_delta": -192.9026,
+     "avg_delta_per_fired": -3.5073,
+     "avoided_losses": 3,
+     "early_release_days_avg": 67.54,
+     "early_release_days_median": 64.86
+    },
+    "X=0.95|R=none": {
+     "n_fired": 118,
+     "total_delta": -494.9873,
+     "avg_delta_per_fired": -4.1948,
+     "avoided_losses": 2,
+     "early_release_days_avg": 36.25,
+     "early_release_days_median": 46.98
+    },
+    "X=0.95|R=5d": {
+     "n_fired": 83,
+     "total_delta": -357.4829,
+     "avg_delta_per_fired": -4.307,
+     "avoided_losses": 2,
+     "early_release_days_avg": 51.31,
+     "early_release_days_median": 59.77
+    },
+    "X=0.95|R=10d": {
+     "n_fired": 77,
+     "total_delta": -310.4479,
+     "avg_delta_per_fired": -4.0318,
+     "avoided_losses": 2,
+     "early_release_days_avg": 54.72,
+     "early_release_days_median": 59.84
+    },
+    "X=0.95|R=15d": {
+     "n_fired": 72,
+     "total_delta": -397.7354,
+     "avg_delta_per_fired": -5.5241,
+     "avoided_losses": 1,
+     "early_release_days_avg": 57.6,
+     "early_release_days_median": 59.99
+    },
+    "X=0.95|R=20d": {
+     "n_fired": 70,
+     "total_delta": -379.447,
+     "avg_delta_per_fired": -5.4207,
+     "avoided_losses": 1,
+     "early_release_days_avg": 58.78,
+     "early_release_days_median": 60.01
+    },
+    "X=0.95|R=25d": {
+     "n_fired": 69,
+     "total_delta": -371.9301,
+     "avg_delta_per_fired": -5.3903,
+     "avoided_losses": 1,
+     "early_release_days_avg": 59.29,
+     "early_release_days_median": 60.03
+    },
+    "X=0.95|R=30d": {
+     "n_fired": 66,
+     "total_delta": -351.7039,
+     "avg_delta_per_fired": -5.3288,
+     "avoided_losses": 1,
+     "early_release_days_avg": 60.73,
+     "early_release_days_median": 60.13
+    },
+    "X=0.95|R=35d": {
+     "n_fired": 65,
+     "total_delta": -341.0459,
+     "avg_delta_per_fired": -5.2469,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.18,
+     "early_release_days_median": 60.13
+    },
+    "X=0.95|R=40d": {
+     "n_fired": 63,
+     "total_delta": -323.8393,
+     "avg_delta_per_fired": -5.1403,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.92,
+     "early_release_days_median": 60.34
+    },
+    "X=0.95|R=45d": {
+     "n_fired": 62,
+     "total_delta": -316.914,
+     "avg_delta_per_fired": -5.1115,
+     "avoided_losses": 1,
+     "early_release_days_avg": 62.24,
+     "early_release_days_median": 60.37
+    },
+    "X=0.95|R=50d": {
+     "n_fired": 57,
+     "total_delta": -277.3388,
+     "avg_delta_per_fired": -4.8656,
+     "avoided_losses": 1,
+     "early_release_days_avg": 63.61,
+     "early_release_days_median": 61.79
+    },
+    "X=0.95|R=55d": {
+     "n_fired": 54,
+     "total_delta": -252.598,
+     "avg_delta_per_fired": -4.6777,
+     "avoided_losses": 1,
+     "early_release_days_avg": 64.19,
+     "early_release_days_median": 62.06
+    },
+    "X=0.95|R=60d": {
+     "n_fired": 35,
+     "total_delta": -122.5767,
+     "avg_delta_per_fired": -3.5022,
+     "avoided_losses": 1,
+     "early_release_days_avg": 66.63,
+     "early_release_days_median": 64.78
+    },
+    "X=0.98|R=none": {
+     "n_fired": 116,
+     "total_delta": -209.6942,
+     "avg_delta_per_fired": -1.8077,
+     "avoided_losses": 1,
+     "early_release_days_avg": 27.51,
+     "early_release_days_median": 15.55
+    },
+    "X=0.98|R=5d": {
+     "n_fired": 71,
+     "total_delta": -107.1595,
+     "avg_delta_per_fired": -1.5093,
+     "avoided_losses": 1,
+     "early_release_days_avg": 44.63,
+     "early_release_days_median": 57.68
+    },
+    "X=0.98|R=10d": {
+     "n_fired": 64,
+     "total_delta": -84.5642,
+     "avg_delta_per_fired": -1.3213,
+     "avoided_losses": 1,
+     "early_release_days_avg": 48.71,
+     "early_release_days_median": 58.73
+    },
+    "X=0.98|R=15d": {
+     "n_fired": 58,
+     "total_delta": -62.4756,
+     "avg_delta_per_fired": -1.0772,
+     "avoided_losses": 1,
+     "early_release_days_avg": 52.5,
+     "early_release_days_median": 59.09
+    },
+    "X=0.98|R=20d": {
+     "n_fired": 55,
+     "total_delta": -51.2115,
+     "avg_delta_per_fired": -0.9311,
+     "avoided_losses": 1,
+     "early_release_days_avg": 54.35,
+     "early_release_days_median": 59.2
+    },
+    "X=0.98|R=25d": {
+     "n_fired": 52,
+     "total_delta": -40.7017,
+     "avg_delta_per_fired": -0.7827,
+     "avoided_losses": 1,
+     "early_release_days_avg": 56.24,
+     "early_release_days_median": 59.22
+    },
+    "X=0.98|R=30d": {
+     "n_fired": 46,
+     "total_delta": -21.0781,
+     "avg_delta_per_fired": -0.4582,
+     "avoided_losses": 1,
+     "early_release_days_avg": 60.06,
+     "early_release_days_median": 59.56
+    },
+    "X=0.98|R=35d": {
+     "n_fired": 46,
+     "total_delta": -21.0781,
+     "avg_delta_per_fired": -0.4582,
+     "avoided_losses": 1,
+     "early_release_days_avg": 60.06,
+     "early_release_days_median": 59.56
+    },
+    "X=0.98|R=40d": {
+     "n_fired": 45,
+     "total_delta": -17.0559,
+     "avg_delta_per_fired": -0.379,
+     "avoided_losses": 1,
+     "early_release_days_avg": 60.61,
+     "early_release_days_median": 59.6
+    },
+    "X=0.98|R=45d": {
+     "n_fired": 44,
+     "total_delta": -13.086,
+     "avg_delta_per_fired": -0.2974,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.0,
+     "early_release_days_median": 59.6
+    },
+    "X=0.98|R=50d": {
+     "n_fired": 41,
+     "total_delta": -3.2321,
+     "avg_delta_per_fired": -0.0788,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.98,
+     "early_release_days_median": 59.6
+    },
+    "X=0.98|R=55d": {
+     "n_fired": 41,
+     "total_delta": -3.2321,
+     "avg_delta_per_fired": -0.0788,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.98,
+     "early_release_days_median": 59.6
+    },
+    "X=0.98|R=60d": {
+     "n_fired": 16,
+     "total_delta": 78.632,
+     "avg_delta_per_fired": 4.9145,
+     "avoided_losses": 1,
+     "early_release_days_avg": 67.4,
+     "early_release_days_median": 66.47
+    },
+    "X=0.99|R=none": {
+     "n_fired": 116,
+     "total_delta": -125.1276,
+     "avg_delta_per_fired": -1.0787,
+     "avoided_losses": 1,
+     "early_release_days_avg": 22.27,
+     "early_release_days_median": 7.1
+    },
+    "X=0.99|R=5d": {
+     "n_fired": 60,
+     "total_delta": -13.0432,
+     "avg_delta_per_fired": -0.2174,
+     "avoided_losses": 1,
+     "early_release_days_avg": 42.55,
+     "early_release_days_median": 49.89
+    },
+    "X=0.99|R=10d": {
+     "n_fired": 53,
+     "total_delta": 4.7167,
+     "avg_delta_per_fired": 0.089,
+     "avoided_losses": 1,
+     "early_release_days_avg": 47.12,
+     "early_release_days_median": 55.52
+    },
+    "X=0.99|R=15d": {
+     "n_fired": 49,
+     "total_delta": 14.8609,
+     "avg_delta_per_fired": 0.3033,
+     "avoided_losses": 1,
+     "early_release_days_avg": 49.87,
+     "early_release_days_median": 56.31
+    },
+    "X=0.99|R=20d": {
+     "n_fired": 45,
+     "total_delta": 25.4474,
+     "avg_delta_per_fired": 0.5655,
+     "avoided_losses": 1,
+     "early_release_days_avg": 52.7,
+     "early_release_days_median": 56.78
+    },
+    "X=0.99|R=25d": {
+     "n_fired": 42,
+     "total_delta": 32.294,
+     "avg_delta_per_fired": 0.7689,
+     "avoided_losses": 1,
+     "early_release_days_avg": 54.88,
+     "early_release_days_median": 57.3
+    },
+    "X=0.99|R=30d": {
+     "n_fired": 39,
+     "total_delta": 39.7236,
+     "avg_delta_per_fired": 1.0186,
+     "avoided_losses": 1,
+     "early_release_days_avg": 57.02,
+     "early_release_days_median": 57.6
+    },
+    "X=0.99|R=35d": {
+     "n_fired": 38,
+     "total_delta": 42.78,
+     "avg_delta_per_fired": 1.1258,
+     "avoided_losses": 1,
+     "early_release_days_avg": 57.68,
+     "early_release_days_median": 57.98
+    },
+    "X=0.99|R=40d": {
+     "n_fired": 37,
+     "total_delta": 45.7165,
+     "avg_delta_per_fired": 1.2356,
+     "avoided_losses": 1,
+     "early_release_days_avg": 58.19,
+     "early_release_days_median": 58.36
+    },
+    "X=0.99|R=45d": {
+     "n_fired": 34,
+     "total_delta": 53.7243,
+     "avg_delta_per_fired": 1.5801,
+     "avoided_losses": 1,
+     "early_release_days_avg": 59.57,
+     "early_release_days_median": 59.17
+    },
+    "X=0.99|R=50d": {
+     "n_fired": 30,
+     "total_delta": 63.068,
+     "avg_delta_per_fired": 2.1023,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.15,
+     "early_release_days_median": 59.53
+    },
+    "X=0.99|R=55d": {
+     "n_fired": 27,
+     "total_delta": 69.84,
+     "avg_delta_per_fired": 2.5867,
+     "avoided_losses": 1,
+     "early_release_days_avg": 62.04,
+     "early_release_days_median": 59.7
+    },
+    "X=0.99|R=60d": {
+     "n_fired": 11,
+     "total_delta": 108.749,
+     "avg_delta_per_fired": 9.8863,
+     "avoided_losses": 1,
+     "early_release_days_avg": 67.91,
+     "early_release_days_median": 66.14
+    }
+   },
+   "A": {
+    "X=0.9|R=none": {
+     "n_fired": 43,
+     "total_delta": -442.0003,
+     "avg_delta_per_fired": -10.2791,
+     "avoided_losses": 1,
+     "early_release_days_avg": 4.65,
+     "early_release_days_median": 0.2
+    },
+    "X=0.9|R=5d": {
+     "n_fired": 12,
+     "total_delta": -139.6801,
+     "avg_delta_per_fired": -11.64,
+     "avoided_losses": 0,
+     "early_release_days_avg": 15.59,
+     "early_release_days_median": 16.46
+    },
+    "X=0.9|R=10d": {
+     "n_fired": 10,
+     "total_delta": -115.978,
+     "avg_delta_per_fired": -11.5978,
+     "avoided_losses": 0,
+     "early_release_days_avg": 17.39,
+     "early_release_days_median": 16.73
+    },
+    "X=0.9|R=15d": {
+     "n_fired": 8,
+     "total_delta": -91.3853,
+     "avg_delta_per_fired": -11.4232,
+     "avoided_losses": 0,
+     "early_release_days_avg": 18.18,
+     "early_release_days_median": 17.5
+    },
+    "X=0.9|R=20d": {
+     "n_fired": 3,
+     "total_delta": -44.4702,
+     "avg_delta_per_fired": -14.8234,
+     "avoided_losses": 0,
+     "early_release_days_avg": 20.45,
+     "early_release_days_median": 20.55
+    },
+    "X=0.9|R=25d": {
+     "n_fired": 0
+    },
+    "X=0.9|R=30d": {
+     "n_fired": 0
+    },
+    "X=0.9|R=35d": {
+     "n_fired": 0
+    },
+    "X=0.9|R=40d": {
+     "n_fired": 0
+    },
+    "X=0.9|R=45d": {
+     "n_fired": 0
+    },
+    "X=0.9|R=50d": {
+     "n_fired": 0
+    },
+    "X=0.9|R=55d": {
+     "n_fired": 0
+    },
+    "X=0.9|R=60d": {
+     "n_fired": 0
+    },
+    "X=0.95|R=none": {
+     "n_fired": 42,
+     "total_delta": -170.4892,
+     "avg_delta_per_fired": -4.0593,
+     "avoided_losses": 1,
+     "early_release_days_avg": 4.54,
+     "early_release_days_median": 0.17
+    },
+    "X=0.95|R=5d": {
+     "n_fired": 12,
+     "total_delta": -56.6037,
+     "avg_delta_per_fired": -4.717,
+     "avoided_losses": 0,
+     "early_release_days_avg": 15.26,
+     "early_release_days_median": 16.46
+    },
+    "X=0.95|R=10d": {
+     "n_fired": 10,
+     "total_delta": -44.7022,
+     "avg_delta_per_fired": -4.4702,
+     "avoided_losses": 0,
+     "early_release_days_avg": 17.0,
+     "early_release_days_median": 16.73
+    },
+    "X=0.95|R=15d": {
+     "n_fired": 8,
+     "total_delta": -37.328,
+     "avg_delta_per_fired": -4.666,
+     "avoided_losses": 0,
+     "early_release_days_avg": 17.7,
+     "early_release_days_median": 17.49
+    },
+    "X=0.95|R=20d": {
+     "n_fired": 1,
+     "total_delta": -6.2351,
+     "avg_delta_per_fired": -6.2351,
+     "avoided_losses": 0,
+     "early_release_days_avg": 20.16,
+     "early_release_days_median": 20.16
+    },
+    "X=0.95|R=25d": {
+     "n_fired": 0
+    },
+    "X=0.95|R=30d": {
+     "n_fired": 0
+    },
+    "X=0.95|R=35d": {
+     "n_fired": 0
+    },
+    "X=0.95|R=40d": {
+     "n_fired": 0
+    },
+    "X=0.95|R=45d": {
+     "n_fired": 0
+    },
+    "X=0.95|R=50d": {
+     "n_fired": 0
+    },
+    "X=0.95|R=55d": {
+     "n_fired": 0
+    },
+    "X=0.95|R=60d": {
+     "n_fired": 0
+    },
+    "X=0.98|R=none": {
+     "n_fired": 41,
+     "total_delta": -14.3932,
+     "avg_delta_per_fired": -0.3511,
+     "avoided_losses": 1,
+     "early_release_days_avg": 4.53,
+     "early_release_days_median": 0.14
+    },
+    "X=0.98|R=5d": {
+     "n_fired": 11,
+     "total_delta": -21.3116,
+     "avg_delta_per_fired": -1.9374,
+     "avoided_losses": 0,
+     "early_release_days_avg": 16.06,
+     "early_release_days_median": 16.51
+    },
+    "X=0.98|R=10d": {
+     "n_fired": 10,
+     "total_delta": -17.7773,
+     "avg_delta_per_fired": -1.7777,
+     "avoided_losses": 0,
+     "early_release_days_avg": 16.98,
+     "early_release_days_median": 16.7
+    },
+    "X=0.98|R=15d": {
+     "n_fired": 8,
+     "total_delta": -14.8812,
+     "avg_delta_per_fired": -1.8601,
+     "avoided_losses": 0,
+     "early_release_days_avg": 17.68,
+     "early_release_days_median": 17.49
+    },
+    "X=0.98|R=20d": {
+     "n_fired": 1,
+     "total_delta": -3.433,
+     "avg_delta_per_fired": -3.433,
+     "avoided_losses": 0,
+     "early_release_days_avg": 20.15,
+     "early_release_days_median": 20.15
+    },
+    "X=0.98|R=25d": {
+     "n_fired": 0
+    },
+    "X=0.98|R=30d": {
+     "n_fired": 0
+    },
+    "X=0.98|R=35d": {
+     "n_fired": 0
+    },
+    "X=0.98|R=40d": {
+     "n_fired": 0
+    },
+    "X=0.98|R=45d": {
+     "n_fired": 0
+    },
+    "X=0.98|R=50d": {
+     "n_fired": 0
+    },
+    "X=0.98|R=55d": {
+     "n_fired": 0
+    },
+    "X=0.98|R=60d": {
+     "n_fired": 0
+    },
+    "X=0.99|R=none": {
+     "n_fired": 34,
+     "total_delta": -78.2563,
+     "avg_delta_per_fired": -2.3017,
+     "avoided_losses": 0,
+     "early_release_days_avg": 5.39,
+     "early_release_days_median": 0.15
+    },
+    "X=0.99|R=5d": {
+     "n_fired": 11,
+     "total_delta": -17.4245,
+     "avg_delta_per_fired": -1.584,
+     "avoided_losses": 0,
+     "early_release_days_avg": 16.06,
+     "early_release_days_median": 16.51
+    },
+    "X=0.99|R=10d": {
+     "n_fired": 10,
+     "total_delta": -15.6561,
+     "avg_delta_per_fired": -1.5656,
+     "avoided_losses": 0,
+     "early_release_days_avg": 16.98,
+     "early_release_days_median": 16.7
+    },
+    "X=0.99|R=15d": {
+     "n_fired": 8,
+     "total_delta": -12.76,
+     "avg_delta_per_fired": -1.595,
+     "avoided_losses": 0,
+     "early_release_days_avg": 17.68,
+     "early_release_days_median": 17.49
+    },
+    "X=0.99|R=20d": {
+     "n_fired": 1,
+     "total_delta": -1.3118,
+     "avg_delta_per_fired": -1.3118,
+     "avoided_losses": 0,
+     "early_release_days_avg": 20.14,
+     "early_release_days_median": 20.14
+    },
+    "X=0.99|R=25d": {
+     "n_fired": 0
+    },
+    "X=0.99|R=30d": {
+     "n_fired": 0
+    },
+    "X=0.99|R=35d": {
+     "n_fired": 0
+    },
+    "X=0.99|R=40d": {
+     "n_fired": 0
+    },
+    "X=0.99|R=45d": {
+     "n_fired": 0
+    },
+    "X=0.99|R=50d": {
+     "n_fired": 0
+    },
+    "X=0.99|R=55d": {
+     "n_fired": 0
+    },
+    "X=0.99|R=60d": {
+     "n_fired": 0
+    }
+   },
+   "combined": {
+    "X=0.9|R=none": {
+     "n_fired": 167,
+     "total_delta": -1403.8302,
+     "avg_delta_per_fired": -8.4062,
+     "avoided_losses": 5,
+     "early_release_days_avg": 33.53,
+     "early_release_days_median": 24.54
+    },
+    "X=0.9|R=5d": {
+     "n_fired": 111,
+     "total_delta": -824.2711,
+     "avg_delta_per_fired": -7.4259,
+     "avoided_losses": 4,
+     "early_release_days_avg": 50.19,
+     "early_release_days_median": 59.98
+    },
+    "X=0.9|R=10d": {
+     "n_fired": 105,
+     "total_delta": -742.9479,
+     "avg_delta_per_fired": -7.0757,
+     "avoided_losses": 4,
+     "early_release_days_avg": 52.67,
+     "early_release_days_median": 60.03
+    },
+    "X=0.9|R=15d": {
+     "n_fired": 101,
+     "total_delta": -684.6315,
+     "avg_delta_per_fired": -6.7785,
+     "avoided_losses": 4,
+     "early_release_days_avg": 54.26,
+     "early_release_days_median": 60.14
+    },
+    "X=0.9|R=20d": {
+     "n_fired": 89,
+     "total_delta": -543.9919,
+     "avg_delta_per_fired": -6.1123,
+     "avoided_losses": 4,
+     "early_release_days_avg": 59.31,
+     "early_release_days_median": 60.38
+    },
+    "X=0.9|R=25d": {
+     "n_fired": 83,
+     "total_delta": -455.6276,
+     "avg_delta_per_fired": -5.4895,
+     "avoided_losses": 4,
+     "early_release_days_avg": 62.0,
+     "early_release_days_median": 61.18
+    },
+    "X=0.9|R=30d": {
+     "n_fired": 81,
+     "total_delta": -428.378,
+     "avg_delta_per_fired": -5.2886,
+     "avoided_losses": 4,
+     "early_release_days_avg": 62.82,
+     "early_release_days_median": 61.79
+    },
+    "X=0.9|R=35d": {
+     "n_fired": 79,
+     "total_delta": -396.9776,
+     "avg_delta_per_fired": -5.025,
+     "avoided_losses": 4,
+     "early_release_days_avg": 63.6,
+     "early_release_days_median": 63.11
+    },
+    "X=0.9|R=40d": {
+     "n_fired": 77,
+     "total_delta": -361.1046,
+     "avg_delta_per_fired": -4.6897,
+     "avoided_losses": 4,
+     "early_release_days_avg": 64.29,
+     "early_release_days_median": 63.81
+    },
+    "X=0.9|R=45d": {
+     "n_fired": 76,
+     "total_delta": -475.7543,
+     "avg_delta_per_fired": -6.2599,
+     "avoided_losses": 3,
+     "early_release_days_avg": 64.59,
+     "early_release_days_median": 63.9
+    },
+    "X=0.9|R=50d": {
+     "n_fired": 73,
+     "total_delta": -426.3169,
+     "avg_delta_per_fired": -5.84,
+     "avoided_losses": 3,
+     "early_release_days_avg": 65.28,
+     "early_release_days_median": 64.1
+    },
+    "X=0.9|R=55d": {
+     "n_fired": 70,
+     "total_delta": -372.295,
+     "avg_delta_per_fired": -5.3185,
+     "avoided_losses": 3,
+     "early_release_days_avg": 65.85,
+     "early_release_days_median": 64.12
+    },
+    "X=0.9|R=60d": {
+     "n_fired": 55,
+     "total_delta": -192.9026,
+     "avg_delta_per_fired": -3.5073,
+     "avoided_losses": 3,
+     "early_release_days_avg": 67.54,
+     "early_release_days_median": 64.86
+    },
+    "X=0.95|R=none": {
+     "n_fired": 160,
+     "total_delta": -665.4765,
+     "avg_delta_per_fired": -4.1592,
+     "avoided_losses": 3,
+     "early_release_days_avg": 27.93,
+     "early_release_days_median": 14.82
+    },
+    "X=0.95|R=5d": {
+     "n_fired": 95,
+     "total_delta": -414.0866,
+     "avg_delta_per_fired": -4.3588,
+     "avoided_losses": 2,
+     "early_release_days_avg": 46.76,
+     "early_release_days_median": 59.61
+    },
+    "X=0.95|R=10d": {
+     "n_fired": 87,
+     "total_delta": -355.1501,
+     "avg_delta_per_fired": -4.0822,
+     "avoided_losses": 2,
+     "early_release_days_avg": 50.38,
+     "early_release_days_median": 59.77
+    },
+    "X=0.95|R=15d": {
+     "n_fired": 80,
+     "total_delta": -435.0634,
+     "avg_delta_per_fired": -5.4383,
+     "avoided_losses": 1,
+     "early_release_days_avg": 53.61,
+     "early_release_days_median": 59.77
+    },
+    "X=0.95|R=20d": {
+     "n_fired": 71,
+     "total_delta": -385.6821,
+     "avg_delta_per_fired": -5.4321,
+     "avoided_losses": 1,
+     "early_release_days_avg": 58.24,
+     "early_release_days_median": 59.99
+    },
+    "X=0.95|R=25d": {
+     "n_fired": 69,
+     "total_delta": -371.9301,
+     "avg_delta_per_fired": -5.3903,
+     "avoided_losses": 1,
+     "early_release_days_avg": 59.29,
+     "early_release_days_median": 60.03
+    },
+    "X=0.95|R=30d": {
+     "n_fired": 66,
+     "total_delta": -351.7039,
+     "avg_delta_per_fired": -5.3288,
+     "avoided_losses": 1,
+     "early_release_days_avg": 60.73,
+     "early_release_days_median": 60.13
+    },
+    "X=0.95|R=35d": {
+     "n_fired": 65,
+     "total_delta": -341.0459,
+     "avg_delta_per_fired": -5.2469,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.18,
+     "early_release_days_median": 60.13
+    },
+    "X=0.95|R=40d": {
+     "n_fired": 63,
+     "total_delta": -323.8393,
+     "avg_delta_per_fired": -5.1403,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.92,
+     "early_release_days_median": 60.34
+    },
+    "X=0.95|R=45d": {
+     "n_fired": 62,
+     "total_delta": -316.914,
+     "avg_delta_per_fired": -5.1115,
+     "avoided_losses": 1,
+     "early_release_days_avg": 62.24,
+     "early_release_days_median": 60.37
+    },
+    "X=0.95|R=50d": {
+     "n_fired": 57,
+     "total_delta": -277.3388,
+     "avg_delta_per_fired": -4.8656,
+     "avoided_losses": 1,
+     "early_release_days_avg": 63.61,
+     "early_release_days_median": 61.79
+    },
+    "X=0.95|R=55d": {
+     "n_fired": 54,
+     "total_delta": -252.598,
+     "avg_delta_per_fired": -4.6777,
+     "avoided_losses": 1,
+     "early_release_days_avg": 64.19,
+     "early_release_days_median": 62.06
+    },
+    "X=0.95|R=60d": {
+     "n_fired": 35,
+     "total_delta": -122.5767,
+     "avg_delta_per_fired": -3.5022,
+     "avoided_losses": 1,
+     "early_release_days_avg": 66.63,
+     "early_release_days_median": 64.78
+    },
+    "X=0.98|R=none": {
+     "n_fired": 157,
+     "total_delta": -224.0874,
+     "avg_delta_per_fired": -1.4273,
+     "avoided_losses": 2,
+     "early_release_days_avg": 21.5,
+     "early_release_days_median": 6.99
+    },
+    "X=0.98|R=5d": {
+     "n_fired": 82,
+     "total_delta": -128.4711,
+     "avg_delta_per_fired": -1.5667,
+     "avoided_losses": 1,
+     "early_release_days_avg": 40.8,
+     "early_release_days_median": 52.33
+    },
+    "X=0.98|R=10d": {
+     "n_fired": 74,
+     "total_delta": -102.3415,
+     "avg_delta_per_fired": -1.383,
+     "avoided_losses": 1,
+     "early_release_days_avg": 44.42,
+     "early_release_days_median": 56.58
+    },
+    "X=0.98|R=15d": {
+     "n_fired": 66,
+     "total_delta": -77.3568,
+     "avg_delta_per_fired": -1.1721,
+     "avoided_losses": 1,
+     "early_release_days_avg": 48.28,
+     "early_release_days_median": 58.6
+    },
+    "X=0.98|R=20d": {
+     "n_fired": 56,
+     "total_delta": -54.6445,
+     "avg_delta_per_fired": -0.9758,
+     "avoided_losses": 1,
+     "early_release_days_avg": 53.74,
+     "early_release_days_median": 59.2
+    },
+    "X=0.98|R=25d": {
+     "n_fired": 52,
+     "total_delta": -40.7017,
+     "avg_delta_per_fired": -0.7827,
+     "avoided_losses": 1,
+     "early_release_days_avg": 56.24,
+     "early_release_days_median": 59.22
+    },
+    "X=0.98|R=30d": {
+     "n_fired": 46,
+     "total_delta": -21.0781,
+     "avg_delta_per_fired": -0.4582,
+     "avoided_losses": 1,
+     "early_release_days_avg": 60.06,
+     "early_release_days_median": 59.56
+    },
+    "X=0.98|R=35d": {
+     "n_fired": 46,
+     "total_delta": -21.0781,
+     "avg_delta_per_fired": -0.4582,
+     "avoided_losses": 1,
+     "early_release_days_avg": 60.06,
+     "early_release_days_median": 59.56
+    },
+    "X=0.98|R=40d": {
+     "n_fired": 45,
+     "total_delta": -17.0559,
+     "avg_delta_per_fired": -0.379,
+     "avoided_losses": 1,
+     "early_release_days_avg": 60.61,
+     "early_release_days_median": 59.6
+    },
+    "X=0.98|R=45d": {
+     "n_fired": 44,
+     "total_delta": -13.086,
+     "avg_delta_per_fired": -0.2974,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.0,
+     "early_release_days_median": 59.6
+    },
+    "X=0.98|R=50d": {
+     "n_fired": 41,
+     "total_delta": -3.2321,
+     "avg_delta_per_fired": -0.0788,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.98,
+     "early_release_days_median": 59.6
+    },
+    "X=0.98|R=55d": {
+     "n_fired": 41,
+     "total_delta": -3.2321,
+     "avg_delta_per_fired": -0.0788,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.98,
+     "early_release_days_median": 59.6
+    },
+    "X=0.98|R=60d": {
+     "n_fired": 16,
+     "total_delta": 78.632,
+     "avg_delta_per_fired": 4.9145,
+     "avoided_losses": 1,
+     "early_release_days_avg": 67.4,
+     "early_release_days_median": 66.47
+    },
+    "X=0.99|R=none": {
+     "n_fired": 150,
+     "total_delta": -203.3839,
+     "avg_delta_per_fired": -1.3559,
+     "avoided_losses": 1,
+     "early_release_days_avg": 18.44,
+     "early_release_days_median": 1.8
+    },
+    "X=0.99|R=5d": {
+     "n_fired": 71,
+     "total_delta": -30.4677,
+     "avg_delta_per_fired": -0.4291,
+     "avoided_losses": 1,
+     "early_release_days_avg": 38.45,
+     "early_release_days_median": 43.33
+    },
+    "X=0.99|R=10d": {
+     "n_fired": 63,
+     "total_delta": -10.9394,
+     "avg_delta_per_fired": -0.1736,
+     "avoided_losses": 1,
+     "early_release_days_avg": 42.34,
+     "early_release_days_median": 47.94
+    },
+    "X=0.99|R=15d": {
+     "n_fired": 57,
+     "total_delta": 2.1009,
+     "avg_delta_per_fired": 0.0369,
+     "avoided_losses": 1,
+     "early_release_days_avg": 45.35,
+     "early_release_days_median": 54.07
+    },
+    "X=0.99|R=20d": {
+     "n_fired": 46,
+     "total_delta": 24.1356,
+     "avg_delta_per_fired": 0.5247,
+     "avoided_losses": 1,
+     "early_release_days_avg": 51.99,
+     "early_release_days_median": 56.63
+    },
+    "X=0.99|R=25d": {
+     "n_fired": 42,
+     "total_delta": 32.294,
+     "avg_delta_per_fired": 0.7689,
+     "avoided_losses": 1,
+     "early_release_days_avg": 54.88,
+     "early_release_days_median": 57.3
+    },
+    "X=0.99|R=30d": {
+     "n_fired": 39,
+     "total_delta": 39.7236,
+     "avg_delta_per_fired": 1.0186,
+     "avoided_losses": 1,
+     "early_release_days_avg": 57.02,
+     "early_release_days_median": 57.6
+    },
+    "X=0.99|R=35d": {
+     "n_fired": 38,
+     "total_delta": 42.78,
+     "avg_delta_per_fired": 1.1258,
+     "avoided_losses": 1,
+     "early_release_days_avg": 57.68,
+     "early_release_days_median": 57.98
+    },
+    "X=0.99|R=40d": {
+     "n_fired": 37,
+     "total_delta": 45.7165,
+     "avg_delta_per_fired": 1.2356,
+     "avoided_losses": 1,
+     "early_release_days_avg": 58.19,
+     "early_release_days_median": 58.36
+    },
+    "X=0.99|R=45d": {
+     "n_fired": 34,
+     "total_delta": 53.7243,
+     "avg_delta_per_fired": 1.5801,
+     "avoided_losses": 1,
+     "early_release_days_avg": 59.57,
+     "early_release_days_median": 59.17
+    },
+    "X=0.99|R=50d": {
+     "n_fired": 30,
+     "total_delta": 63.068,
+     "avg_delta_per_fired": 2.1023,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.15,
+     "early_release_days_median": 59.53
+    },
+    "X=0.99|R=55d": {
+     "n_fired": 27,
+     "total_delta": 69.84,
+     "avg_delta_per_fired": 2.5867,
+     "avoided_losses": 1,
+     "early_release_days_avg": 62.04,
+     "early_release_days_median": 59.7
+    },
+    "X=0.99|R=60d": {
+     "n_fired": 11,
+     "total_delta": 108.749,
+     "avg_delta_per_fired": 9.8863,
+     "avoided_losses": 1,
+     "early_release_days_avg": 67.91,
+     "early_release_days_median": 66.14
+    }
+   }
+  },
+  "relative": {
+   "B": {
+    "D=0.25|R=none": {
+     "n_fired": 118,
+     "total_delta": -539.5048,
+     "avg_delta_per_fired": -4.5721,
+     "avoided_losses": 3,
+     "early_release_days_avg": 33.95,
+     "early_release_days_median": 30.05
+    },
+    "D=0.25|R=5d": {
+     "n_fired": 82,
+     "total_delta": -298.5486,
+     "avg_delta_per_fired": -3.6408,
+     "avoided_losses": 3,
+     "early_release_days_avg": 48.64,
+     "early_release_days_median": 56.05
+    },
+    "D=0.25|R=10d": {
+     "n_fired": 75,
+     "total_delta": -231.5351,
+     "avg_delta_per_fired": -3.0871,
+     "avoided_losses": 3,
+     "early_release_days_avg": 52.47,
+     "early_release_days_median": 58.52
+    },
+    "D=0.25|R=15d": {
+     "n_fired": 72,
+     "total_delta": -214.9405,
+     "avg_delta_per_fired": -2.9853,
+     "avoided_losses": 3,
+     "early_release_days_avg": 54.13,
+     "early_release_days_median": 59.28
+    },
+    "D=0.25|R=20d": {
+     "n_fired": 70,
+     "total_delta": -201.6924,
+     "avg_delta_per_fired": -2.8813,
+     "avoided_losses": 3,
+     "early_release_days_avg": 55.2,
+     "early_release_days_median": 59.53
+    },
+    "D=0.25|R=25d": {
+     "n_fired": 64,
+     "total_delta": -133.9678,
+     "avg_delta_per_fired": -2.0932,
+     "avoided_losses": 3,
+     "early_release_days_avg": 58.27,
+     "early_release_days_median": 59.77
+    },
+    "D=0.25|R=30d": {
+     "n_fired": 59,
+     "total_delta": -108.6084,
+     "avg_delta_per_fired": -1.8408,
+     "avoided_losses": 3,
+     "early_release_days_avg": 60.83,
+     "early_release_days_median": 59.9
+    },
+    "D=0.25|R=35d": {
+     "n_fired": 58,
+     "total_delta": -91.1481,
+     "avg_delta_per_fired": -1.5715,
+     "avoided_losses": 3,
+     "early_release_days_avg": 61.36,
+     "early_release_days_median": 60.15
+    },
+    "D=0.25|R=40d": {
+     "n_fired": 57,
+     "total_delta": -74.1132,
+     "avg_delta_per_fired": -1.3002,
+     "avoided_losses": 3,
+     "early_release_days_avg": 61.82,
+     "early_release_days_median": 60.4
+    },
+    "D=0.25|R=45d": {
+     "n_fired": 55,
+     "total_delta": -69.302,
+     "avg_delta_per_fired": -1.26,
+     "avoided_losses": 3,
+     "early_release_days_avg": 62.48,
+     "early_release_days_median": 60.47
+    },
+    "D=0.25|R=50d": {
+     "n_fired": 49,
+     "total_delta": -28.4293,
+     "avg_delta_per_fired": -0.5802,
+     "avoided_losses": 3,
+     "early_release_days_avg": 64.28,
+     "early_release_days_median": 61.75
+    },
+    "D=0.25|R=55d": {
+     "n_fired": 43,
+     "total_delta": 38.0042,
+     "avg_delta_per_fired": 0.8838,
+     "avoided_losses": 3,
+     "early_release_days_avg": 65.9,
+     "early_release_days_median": 64.1
+    },
+    "D=0.25|R=60d": {
+     "n_fired": 29,
+     "total_delta": 107.8606,
+     "avg_delta_per_fired": 3.7193,
+     "avoided_losses": 3,
+     "early_release_days_avg": 69.53,
+     "early_release_days_median": 67.68
+    },
+    "D=0.3|R=none": {
+     "n_fired": 117,
+     "total_delta": -361.3944,
+     "avg_delta_per_fired": -3.0888,
+     "avoided_losses": 2,
+     "early_release_days_avg": 29.34,
+     "early_release_days_median": 17.64
+    },
+    "D=0.3|R=5d": {
+     "n_fired": 72,
+     "total_delta": -170.3009,
+     "avg_delta_per_fired": -2.3653,
+     "avoided_losses": 2,
+     "early_release_days_avg": 47.24,
+     "early_release_days_median": 55.86
+    },
+    "D=0.3|R=10d": {
+     "n_fired": 66,
+     "total_delta": -129.4859,
+     "avg_delta_per_fired": -1.9619,
+     "avoided_losses": 2,
+     "early_release_days_avg": 50.86,
+     "early_release_days_median": 57.41
+    },
+    "D=0.3|R=15d": {
+     "n_fired": 61,
+     "total_delta": -93.961,
+     "avg_delta_per_fired": -1.5403,
+     "avoided_losses": 2,
+     "early_release_days_avg": 53.93,
+     "early_release_days_median": 59.35
+    },
+    "D=0.3|R=20d": {
+     "n_fired": 58,
+     "total_delta": -69.9637,
+     "avg_delta_per_fired": -1.2063,
+     "avoided_losses": 2,
+     "early_release_days_avg": 55.83,
+     "early_release_days_median": 59.56
+    },
+    "D=0.3|R=25d": {
+     "n_fired": 55,
+     "total_delta": -63.1172,
+     "avg_delta_per_fired": -1.1476,
+     "avoided_losses": 2,
+     "early_release_days_avg": 57.66,
+     "early_release_days_median": 59.7
+    },
+    "D=0.3|R=30d": {
+     "n_fired": 51,
+     "total_delta": -46.7689,
+     "avg_delta_per_fired": -0.917,
+     "avoided_losses": 2,
+     "early_release_days_avg": 60.06,
+     "early_release_days_median": 59.84
+    },
+    "D=0.3|R=35d": {
+     "n_fired": 51,
+     "total_delta": -46.7689,
+     "avg_delta_per_fired": -0.917,
+     "avoided_losses": 2,
+     "early_release_days_avg": 60.06,
+     "early_release_days_median": 59.84
+    },
+    "D=0.3|R=40d": {
+     "n_fired": 49,
+     "total_delta": -21.2807,
+     "avg_delta_per_fired": -0.4343,
+     "avoided_losses": 2,
+     "early_release_days_avg": 61.0,
+     "early_release_days_median": 59.86
+    },
+    "D=0.3|R=45d": {
+     "n_fired": 47,
+     "total_delta": -16.4695,
+     "avg_delta_per_fired": -0.3504,
+     "avoided_losses": 2,
+     "early_release_days_avg": 61.75,
+     "early_release_days_median": 59.9
+    },
+    "D=0.3|R=50d": {
+     "n_fired": 43,
+     "total_delta": -7.1257,
+     "avg_delta_per_fired": -0.1657,
+     "avoided_losses": 2,
+     "early_release_days_avg": 63.05,
+     "early_release_days_median": 60.74
+    },
+    "D=0.3|R=55d": {
+     "n_fired": 38,
+     "total_delta": 36.3692,
+     "avg_delta_per_fired": 0.9571,
+     "avoided_losses": 2,
+     "early_release_days_avg": 64.4,
+     "early_release_days_median": 62.39
+    },
+    "D=0.3|R=60d": {
+     "n_fired": 22,
+     "total_delta": 118.6103,
+     "avg_delta_per_fired": 5.3914,
+     "avoided_losses": 2,
+     "early_release_days_avg": 68.76,
+     "early_release_days_median": 68.34
+    },
+    "D=0.35|R=none": {
+     "n_fired": 116,
+     "total_delta": -214.4652,
+     "avg_delta_per_fired": -1.8488,
+     "avoided_losses": 1,
+     "early_release_days_avg": 24.75,
+     "early_release_days_median": 10.35
+    },
+    "D=0.35|R=5d": {
+     "n_fired": 65,
+     "total_delta": -107.6139,
+     "avg_delta_per_fired": -1.6556,
+     "avoided_losses": 1,
+     "early_release_days_avg": 43.75,
+     "early_release_days_median": 53.42
+    },
+    "D=0.35|R=10d": {
+     "n_fired": 58,
+     "total_delta": -81.9668,
+     "avg_delta_per_fired": -1.4132,
+     "avoided_losses": 1,
+     "early_release_days_avg": 48.11,
+     "early_release_days_median": 55.7
+    },
+    "D=0.35|R=15d": {
+     "n_fired": 54,
+     "total_delta": -67.0897,
+     "avg_delta_per_fired": -1.2424,
+     "avoided_losses": 1,
+     "early_release_days_avg": 50.7,
+     "early_release_days_median": 56.76
+    },
+    "D=0.35|R=20d": {
+     "n_fired": 50,
+     "total_delta": -46.6741,
+     "avg_delta_per_fired": -0.9335,
+     "avoided_losses": 1,
+     "early_release_days_avg": 53.36,
+     "early_release_days_median": 58.09
+    },
+    "D=0.35|R=25d": {
+     "n_fired": 47,
+     "total_delta": -39.8276,
+     "avg_delta_per_fired": -0.8474,
+     "avoided_losses": 1,
+     "early_release_days_avg": 55.34,
+     "early_release_days_median": 58.63
+    },
+    "D=0.35|R=30d": {
+     "n_fired": 44,
+     "total_delta": -32.3979,
+     "avg_delta_per_fired": -0.7363,
+     "avoided_losses": 1,
+     "early_release_days_avg": 57.28,
+     "early_release_days_median": 59.2
+    },
+    "D=0.35|R=35d": {
+     "n_fired": 42,
+     "total_delta": -18.6834,
+     "avg_delta_per_fired": -0.4448,
+     "avoided_losses": 1,
+     "early_release_days_avg": 58.48,
+     "early_release_days_median": 59.28
+    },
+    "D=0.35|R=40d": {
+     "n_fired": 41,
+     "total_delta": -11.3913,
+     "avg_delta_per_fired": -0.2778,
+     "avoided_losses": 1,
+     "early_release_days_avg": 58.96,
+     "early_release_days_median": 59.35
+    },
+    "D=0.35|R=45d": {
+     "n_fired": 39,
+     "total_delta": -6.5801,
+     "avg_delta_per_fired": -0.1687,
+     "avoided_losses": 1,
+     "early_release_days_avg": 59.76,
+     "early_release_days_median": 59.7
+    },
+    "D=0.35|R=50d": {
+     "n_fired": 35,
+     "total_delta": 2.7637,
+     "avg_delta_per_fired": 0.079,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.14,
+     "early_release_days_median": 59.7
+    },
+    "D=0.35|R=55d": {
+     "n_fired": 30,
+     "total_delta": 27.2456,
+     "avg_delta_per_fired": 0.9082,
+     "avoided_losses": 1,
+     "early_release_days_avg": 62.51,
+     "early_release_days_median": 59.88
+    },
+    "D=0.35|R=60d": {
+     "n_fired": 14,
+     "total_delta": 82.7169,
+     "avg_delta_per_fired": 5.9083,
+     "avoided_losses": 1,
+     "early_release_days_avg": 67.08,
+     "early_release_days_median": 65.42
+    },
+    "D=0.4|R=none": {
+     "n_fired": 116,
+     "total_delta": -125.1275,
+     "avg_delta_per_fired": -1.0787,
+     "avoided_losses": 1,
+     "early_release_days_avg": 22.27,
+     "early_release_days_median": 7.1
+    },
+    "D=0.4|R=5d": {
+     "n_fired": 60,
+     "total_delta": -13.0434,
+     "avg_delta_per_fired": -0.2174,
+     "avoided_losses": 1,
+     "early_release_days_avg": 42.55,
+     "early_release_days_median": 49.89
+    },
+    "D=0.4|R=10d": {
+     "n_fired": 53,
+     "total_delta": 4.7162,
+     "avg_delta_per_fired": 0.089,
+     "avoided_losses": 1,
+     "early_release_days_avg": 47.12,
+     "early_release_days_median": 55.52
+    },
+    "D=0.4|R=15d": {
+     "n_fired": 49,
+     "total_delta": 14.8606,
+     "avg_delta_per_fired": 0.3033,
+     "avoided_losses": 1,
+     "early_release_days_avg": 49.87,
+     "early_release_days_median": 56.31
+    },
+    "D=0.4|R=20d": {
+     "n_fired": 45,
+     "total_delta": 25.447,
+     "avg_delta_per_fired": 0.5655,
+     "avoided_losses": 1,
+     "early_release_days_avg": 52.7,
+     "early_release_days_median": 56.78
+    },
+    "D=0.4|R=25d": {
+     "n_fired": 42,
+     "total_delta": 32.2935,
+     "avg_delta_per_fired": 0.7689,
+     "avoided_losses": 1,
+     "early_release_days_avg": 54.88,
+     "early_release_days_median": 57.3
+    },
+    "D=0.4|R=30d": {
+     "n_fired": 39,
+     "total_delta": 39.7232,
+     "avg_delta_per_fired": 1.0185,
+     "avoided_losses": 1,
+     "early_release_days_avg": 57.02,
+     "early_release_days_median": 57.6
+    },
+    "D=0.4|R=35d": {
+     "n_fired": 38,
+     "total_delta": 42.7797,
+     "avg_delta_per_fired": 1.1258,
+     "avoided_losses": 1,
+     "early_release_days_avg": 57.68,
+     "early_release_days_median": 57.98
+    },
+    "D=0.4|R=40d": {
+     "n_fired": 37,
+     "total_delta": 45.7162,
+     "avg_delta_per_fired": 1.2356,
+     "avoided_losses": 1,
+     "early_release_days_avg": 58.19,
+     "early_release_days_median": 58.36
+    },
+    "D=0.4|R=45d": {
+     "n_fired": 34,
+     "total_delta": 53.7241,
+     "avg_delta_per_fired": 1.5801,
+     "avoided_losses": 1,
+     "early_release_days_avg": 59.57,
+     "early_release_days_median": 59.17
+    },
+    "D=0.4|R=50d": {
+     "n_fired": 30,
+     "total_delta": 63.0679,
+     "avg_delta_per_fired": 2.1023,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.15,
+     "early_release_days_median": 59.53
+    },
+    "D=0.4|R=55d": {
+     "n_fired": 27,
+     "total_delta": 69.8399,
+     "avg_delta_per_fired": 2.5867,
+     "avoided_losses": 1,
+     "early_release_days_avg": 62.04,
+     "early_release_days_median": 59.7
+    },
+    "D=0.4|R=60d": {
+     "n_fired": 11,
+     "total_delta": 108.7491,
+     "avg_delta_per_fired": 9.8863,
+     "avoided_losses": 1,
+     "early_release_days_avg": 67.91,
+     "early_release_days_median": 66.14
+    }
+   },
+   "A": {
+    "D=0.25|R=none": {
+     "n_fired": 36,
+     "total_delta": -310.2342,
+     "avg_delta_per_fired": -8.6176,
+     "avoided_losses": 0,
+     "early_release_days_avg": 5.23,
+     "early_release_days_median": 0.18
+    },
+    "D=0.25|R=5d": {
+     "n_fired": 11,
+     "total_delta": -78.2749,
+     "avg_delta_per_fired": -7.1159,
+     "avoided_losses": 0,
+     "early_release_days_avg": 16.42,
+     "early_release_days_median": 16.57
+    },
+    "D=0.25|R=10d": {
+     "n_fired": 10,
+     "total_delta": -76.5065,
+     "avg_delta_per_fired": -7.6507,
+     "avoided_losses": 0,
+     "early_release_days_avg": 17.38,
+     "early_release_days_median": 16.73
+    },
+    "D=0.25|R=15d": {
+     "n_fired": 8,
+     "total_delta": -69.1323,
+     "avg_delta_per_fired": -8.6415,
+     "avoided_losses": 0,
+     "early_release_days_avg": 18.17,
+     "early_release_days_median": 17.54
+    },
+    "D=0.25|R=20d": {
+     "n_fired": 3,
+     "total_delta": -31.1226,
+     "avg_delta_per_fired": -10.3742,
+     "avoided_losses": 0,
+     "early_release_days_avg": 20.4,
+     "early_release_days_median": 20.52
+    },
+    "D=0.25|R=25d": {
+     "n_fired": 0
+    },
+    "D=0.25|R=30d": {
+     "n_fired": 0
+    },
+    "D=0.25|R=35d": {
+     "n_fired": 0
+    },
+    "D=0.25|R=40d": {
+     "n_fired": 0
+    },
+    "D=0.25|R=45d": {
+     "n_fired": 0
+    },
+    "D=0.25|R=50d": {
+     "n_fired": 0
+    },
+    "D=0.25|R=55d": {
+     "n_fired": 0
+    },
+    "D=0.25|R=60d": {
+     "n_fired": 0
+    },
+    "D=0.3|R=none": {
+     "n_fired": 34,
+     "total_delta": -161.7513,
+     "avg_delta_per_fired": -4.7574,
+     "avoided_losses": 0,
+     "early_release_days_avg": 5.4,
+     "early_release_days_median": 0.18
+    },
+    "D=0.3|R=5d": {
+     "n_fired": 11,
+     "total_delta": -29.6229,
+     "avg_delta_per_fired": -2.693,
+     "avoided_losses": 0,
+     "early_release_days_avg": 16.06,
+     "early_release_days_median": 16.51
+    },
+    "D=0.3|R=10d": {
+     "n_fired": 10,
+     "total_delta": -27.8545,
+     "avg_delta_per_fired": -2.7854,
+     "avoided_losses": 0,
+     "early_release_days_avg": 16.99,
+     "early_release_days_median": 16.7
+    },
+    "D=0.3|R=15d": {
+     "n_fired": 8,
+     "total_delta": -24.9584,
+     "avg_delta_per_fired": -3.1198,
+     "avoided_losses": 0,
+     "early_release_days_avg": 17.68,
+     "early_release_days_median": 17.5
+    },
+    "D=0.3|R=20d": {
+     "n_fired": 1,
+     "total_delta": -1.3118,
+     "avg_delta_per_fired": -1.3118,
+     "avoided_losses": 0,
+     "early_release_days_avg": 20.14,
+     "early_release_days_median": 20.14
+    },
+    "D=0.3|R=25d": {
+     "n_fired": 0
+    },
+    "D=0.3|R=30d": {
+     "n_fired": 0
+    },
+    "D=0.3|R=35d": {
+     "n_fired": 0
+    },
+    "D=0.3|R=40d": {
+     "n_fired": 0
+    },
+    "D=0.3|R=45d": {
+     "n_fired": 0
+    },
+    "D=0.3|R=50d": {
+     "n_fired": 0
+    },
+    "D=0.3|R=55d": {
+     "n_fired": 0
+    },
+    "D=0.3|R=60d": {
+     "n_fired": 0
+    },
+    "D=0.35|R=none": {
+     "n_fired": 34,
+     "total_delta": -116.4885,
+     "avg_delta_per_fired": -3.4261,
+     "avoided_losses": 0,
+     "early_release_days_avg": 5.4,
+     "early_release_days_median": 0.15
+    },
+    "D=0.35|R=5d": {
+     "n_fired": 11,
+     "total_delta": -17.4245,
+     "avg_delta_per_fired": -1.584,
+     "avoided_losses": 0,
+     "early_release_days_avg": 16.06,
+     "early_release_days_median": 16.51
+    },
+    "D=0.35|R=10d": {
+     "n_fired": 10,
+     "total_delta": -15.6561,
+     "avg_delta_per_fired": -1.5656,
+     "avoided_losses": 0,
+     "early_release_days_avg": 16.98,
+     "early_release_days_median": 16.7
+    },
+    "D=0.35|R=15d": {
+     "n_fired": 8,
+     "total_delta": -12.76,
+     "avg_delta_per_fired": -1.595,
+     "avoided_losses": 0,
+     "early_release_days_avg": 17.68,
+     "early_release_days_median": 17.49
+    },
+    "D=0.35|R=20d": {
+     "n_fired": 1,
+     "total_delta": -1.3118,
+     "avg_delta_per_fired": -1.3118,
+     "avoided_losses": 0,
+     "early_release_days_avg": 20.14,
+     "early_release_days_median": 20.14
+    },
+    "D=0.35|R=25d": {
+     "n_fired": 0
+    },
+    "D=0.35|R=30d": {
+     "n_fired": 0
+    },
+    "D=0.35|R=35d": {
+     "n_fired": 0
+    },
+    "D=0.35|R=40d": {
+     "n_fired": 0
+    },
+    "D=0.35|R=45d": {
+     "n_fired": 0
+    },
+    "D=0.35|R=50d": {
+     "n_fired": 0
+    },
+    "D=0.35|R=55d": {
+     "n_fired": 0
+    },
+    "D=0.35|R=60d": {
+     "n_fired": 0
+    },
+    "D=0.4|R=none": {
+     "n_fired": 34,
+     "total_delta": -95.4787,
+     "avg_delta_per_fired": -2.8082,
+     "avoided_losses": 0,
+     "early_release_days_avg": 5.4,
+     "early_release_days_median": 0.15
+    },
+    "D=0.4|R=5d": {
+     "n_fired": 11,
+     "total_delta": -17.4245,
+     "avg_delta_per_fired": -1.584,
+     "avoided_losses": 0,
+     "early_release_days_avg": 16.06,
+     "early_release_days_median": 16.51
+    },
+    "D=0.4|R=10d": {
+     "n_fired": 10,
+     "total_delta": -15.6561,
+     "avg_delta_per_fired": -1.5656,
+     "avoided_losses": 0,
+     "early_release_days_avg": 16.98,
+     "early_release_days_median": 16.7
+    },
+    "D=0.4|R=15d": {
+     "n_fired": 8,
+     "total_delta": -12.76,
+     "avg_delta_per_fired": -1.595,
+     "avoided_losses": 0,
+     "early_release_days_avg": 17.68,
+     "early_release_days_median": 17.49
+    },
+    "D=0.4|R=20d": {
+     "n_fired": 1,
+     "total_delta": -1.3118,
+     "avg_delta_per_fired": -1.3118,
+     "avoided_losses": 0,
+     "early_release_days_avg": 20.14,
+     "early_release_days_median": 20.14
+    },
+    "D=0.4|R=25d": {
+     "n_fired": 0
+    },
+    "D=0.4|R=30d": {
+     "n_fired": 0
+    },
+    "D=0.4|R=35d": {
+     "n_fired": 0
+    },
+    "D=0.4|R=40d": {
+     "n_fired": 0
+    },
+    "D=0.4|R=45d": {
+     "n_fired": 0
+    },
+    "D=0.4|R=50d": {
+     "n_fired": 0
+    },
+    "D=0.4|R=55d": {
+     "n_fired": 0
+    },
+    "D=0.4|R=60d": {
+     "n_fired": 0
+    }
+   },
+   "combined": {
+    "D=0.25|R=none": {
+     "n_fired": 154,
+     "total_delta": -849.739,
+     "avg_delta_per_fired": -5.5178,
+     "avoided_losses": 3,
+     "early_release_days_avg": 27.24,
+     "early_release_days_median": 16.46
+    },
+    "D=0.25|R=5d": {
+     "n_fired": 93,
+     "total_delta": -376.8235,
+     "avg_delta_per_fired": -4.0519,
+     "avoided_losses": 3,
+     "early_release_days_avg": 44.83,
+     "early_release_days_median": 52.2
+    },
+    "D=0.25|R=10d": {
+     "n_fired": 85,
+     "total_delta": -308.0416,
+     "avg_delta_per_fired": -3.624,
+     "avoided_losses": 3,
+     "early_release_days_avg": 48.34,
+     "early_release_days_median": 55.52
+    },
+    "D=0.25|R=15d": {
+     "n_fired": 80,
+     "total_delta": -284.0728,
+     "avg_delta_per_fired": -3.5509,
+     "avoided_losses": 3,
+     "early_release_days_avg": 50.53,
+     "early_release_days_median": 56.27
+    },
+    "D=0.25|R=20d": {
+     "n_fired": 73,
+     "total_delta": -232.815,
+     "avg_delta_per_fired": -3.1892,
+     "avoided_losses": 3,
+     "early_release_days_avg": 53.77,
+     "early_release_days_median": 59.2
+    },
+    "D=0.25|R=25d": {
+     "n_fired": 64,
+     "total_delta": -133.9678,
+     "avg_delta_per_fired": -2.0932,
+     "avoided_losses": 3,
+     "early_release_days_avg": 58.27,
+     "early_release_days_median": 59.77
+    },
+    "D=0.25|R=30d": {
+     "n_fired": 59,
+     "total_delta": -108.6084,
+     "avg_delta_per_fired": -1.8408,
+     "avoided_losses": 3,
+     "early_release_days_avg": 60.83,
+     "early_release_days_median": 59.9
+    },
+    "D=0.25|R=35d": {
+     "n_fired": 58,
+     "total_delta": -91.1481,
+     "avg_delta_per_fired": -1.5715,
+     "avoided_losses": 3,
+     "early_release_days_avg": 61.36,
+     "early_release_days_median": 60.15
+    },
+    "D=0.25|R=40d": {
+     "n_fired": 57,
+     "total_delta": -74.1132,
+     "avg_delta_per_fired": -1.3002,
+     "avoided_losses": 3,
+     "early_release_days_avg": 61.82,
+     "early_release_days_median": 60.4
+    },
+    "D=0.25|R=45d": {
+     "n_fired": 55,
+     "total_delta": -69.302,
+     "avg_delta_per_fired": -1.26,
+     "avoided_losses": 3,
+     "early_release_days_avg": 62.48,
+     "early_release_days_median": 60.47
+    },
+    "D=0.25|R=50d": {
+     "n_fired": 49,
+     "total_delta": -28.4293,
+     "avg_delta_per_fired": -0.5802,
+     "avoided_losses": 3,
+     "early_release_days_avg": 64.28,
+     "early_release_days_median": 61.75
+    },
+    "D=0.25|R=55d": {
+     "n_fired": 43,
+     "total_delta": 38.0042,
+     "avg_delta_per_fired": 0.8838,
+     "avoided_losses": 3,
+     "early_release_days_avg": 65.9,
+     "early_release_days_median": 64.1
+    },
+    "D=0.25|R=60d": {
+     "n_fired": 29,
+     "total_delta": 107.8606,
+     "avg_delta_per_fired": 3.7193,
+     "avoided_losses": 3,
+     "early_release_days_avg": 69.53,
+     "early_release_days_median": 67.68
+    },
+    "D=0.3|R=none": {
+     "n_fired": 151,
+     "total_delta": -523.1457,
+     "avg_delta_per_fired": -3.4645,
+     "avoided_losses": 2,
+     "early_release_days_avg": 23.95,
+     "early_release_days_median": 11.86
+    },
+    "D=0.3|R=5d": {
+     "n_fired": 83,
+     "total_delta": -199.9238,
+     "avg_delta_per_fired": -2.4087,
+     "avoided_losses": 2,
+     "early_release_days_avg": 43.11,
+     "early_release_days_median": 52.2
+    },
+    "D=0.3|R=10d": {
+     "n_fired": 76,
+     "total_delta": -157.3404,
+     "avg_delta_per_fired": -2.0703,
+     "avoided_losses": 2,
+     "early_release_days_avg": 46.4,
+     "early_release_days_median": 55.25
+    },
+    "D=0.3|R=15d": {
+     "n_fired": 69,
+     "total_delta": -118.9194,
+     "avg_delta_per_fired": -1.7235,
+     "avoided_losses": 2,
+     "early_release_days_avg": 49.72,
+     "early_release_days_median": 56.31
+    },
+    "D=0.3|R=20d": {
+     "n_fired": 59,
+     "total_delta": -71.2755,
+     "avg_delta_per_fired": -1.2081,
+     "avoided_losses": 2,
+     "early_release_days_avg": 55.22,
+     "early_release_days_median": 59.43
+    },
+    "D=0.3|R=25d": {
+     "n_fired": 55,
+     "total_delta": -63.1172,
+     "avg_delta_per_fired": -1.1476,
+     "avoided_losses": 2,
+     "early_release_days_avg": 57.66,
+     "early_release_days_median": 59.7
+    },
+    "D=0.3|R=30d": {
+     "n_fired": 51,
+     "total_delta": -46.7689,
+     "avg_delta_per_fired": -0.917,
+     "avoided_losses": 2,
+     "early_release_days_avg": 60.06,
+     "early_release_days_median": 59.84
+    },
+    "D=0.3|R=35d": {
+     "n_fired": 51,
+     "total_delta": -46.7689,
+     "avg_delta_per_fired": -0.917,
+     "avoided_losses": 2,
+     "early_release_days_avg": 60.06,
+     "early_release_days_median": 59.84
+    },
+    "D=0.3|R=40d": {
+     "n_fired": 49,
+     "total_delta": -21.2807,
+     "avg_delta_per_fired": -0.4343,
+     "avoided_losses": 2,
+     "early_release_days_avg": 61.0,
+     "early_release_days_median": 59.86
+    },
+    "D=0.3|R=45d": {
+     "n_fired": 47,
+     "total_delta": -16.4695,
+     "avg_delta_per_fired": -0.3504,
+     "avoided_losses": 2,
+     "early_release_days_avg": 61.75,
+     "early_release_days_median": 59.9
+    },
+    "D=0.3|R=50d": {
+     "n_fired": 43,
+     "total_delta": -7.1257,
+     "avg_delta_per_fired": -0.1657,
+     "avoided_losses": 2,
+     "early_release_days_avg": 63.05,
+     "early_release_days_median": 60.74
+    },
+    "D=0.3|R=55d": {
+     "n_fired": 38,
+     "total_delta": 36.3692,
+     "avg_delta_per_fired": 0.9571,
+     "avoided_losses": 2,
+     "early_release_days_avg": 64.4,
+     "early_release_days_median": 62.39
+    },
+    "D=0.3|R=60d": {
+     "n_fired": 22,
+     "total_delta": 118.6103,
+     "avg_delta_per_fired": 5.3914,
+     "avoided_losses": 2,
+     "early_release_days_avg": 68.76,
+     "early_release_days_median": 68.34
+    },
+    "D=0.35|R=none": {
+     "n_fired": 150,
+     "total_delta": -330.9537,
+     "avg_delta_per_fired": -2.2064,
+     "avoided_losses": 1,
+     "early_release_days_avg": 20.36,
+     "early_release_days_median": 6.87
+    },
+    "D=0.35|R=5d": {
+     "n_fired": 76,
+     "total_delta": -125.0384,
+     "avg_delta_per_fired": -1.6452,
+     "avoided_losses": 1,
+     "early_release_days_avg": 39.74,
+     "early_release_days_median": 46.62
+    },
+    "D=0.35|R=10d": {
+     "n_fired": 68,
+     "total_delta": -97.6229,
+     "avg_delta_per_fired": -1.4356,
+     "avoided_losses": 1,
+     "early_release_days_avg": 43.53,
+     "early_release_days_median": 51.08
+    },
+    "D=0.35|R=15d": {
+     "n_fired": 62,
+     "total_delta": -79.8497,
+     "avg_delta_per_fired": -1.2879,
+     "avoided_losses": 1,
+     "early_release_days_avg": 46.44,
+     "early_release_days_median": 54.52
+    },
+    "D=0.35|R=20d": {
+     "n_fired": 51,
+     "total_delta": -47.9859,
+     "avg_delta_per_fired": -0.9409,
+     "avoided_losses": 1,
+     "early_release_days_avg": 52.71,
+     "early_release_days_median": 57.6
+    },
+    "D=0.35|R=25d": {
+     "n_fired": 47,
+     "total_delta": -39.8276,
+     "avg_delta_per_fired": -0.8474,
+     "avoided_losses": 1,
+     "early_release_days_avg": 55.34,
+     "early_release_days_median": 58.63
+    },
+    "D=0.35|R=30d": {
+     "n_fired": 44,
+     "total_delta": -32.3979,
+     "avg_delta_per_fired": -0.7363,
+     "avoided_losses": 1,
+     "early_release_days_avg": 57.28,
+     "early_release_days_median": 59.2
+    },
+    "D=0.35|R=35d": {
+     "n_fired": 42,
+     "total_delta": -18.6834,
+     "avg_delta_per_fired": -0.4448,
+     "avoided_losses": 1,
+     "early_release_days_avg": 58.48,
+     "early_release_days_median": 59.28
+    },
+    "D=0.35|R=40d": {
+     "n_fired": 41,
+     "total_delta": -11.3913,
+     "avg_delta_per_fired": -0.2778,
+     "avoided_losses": 1,
+     "early_release_days_avg": 58.96,
+     "early_release_days_median": 59.35
+    },
+    "D=0.35|R=45d": {
+     "n_fired": 39,
+     "total_delta": -6.5801,
+     "avg_delta_per_fired": -0.1687,
+     "avoided_losses": 1,
+     "early_release_days_avg": 59.76,
+     "early_release_days_median": 59.7
+    },
+    "D=0.35|R=50d": {
+     "n_fired": 35,
+     "total_delta": 2.7637,
+     "avg_delta_per_fired": 0.079,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.14,
+     "early_release_days_median": 59.7
+    },
+    "D=0.35|R=55d": {
+     "n_fired": 30,
+     "total_delta": 27.2456,
+     "avg_delta_per_fired": 0.9082,
+     "avoided_losses": 1,
+     "early_release_days_avg": 62.51,
+     "early_release_days_median": 59.88
+    },
+    "D=0.35|R=60d": {
+     "n_fired": 14,
+     "total_delta": 82.7169,
+     "avg_delta_per_fired": 5.9083,
+     "avoided_losses": 1,
+     "early_release_days_avg": 67.08,
+     "early_release_days_median": 65.42
+    },
+    "D=0.4|R=none": {
+     "n_fired": 150,
+     "total_delta": -220.6062,
+     "avg_delta_per_fired": -1.4707,
+     "avoided_losses": 1,
+     "early_release_days_avg": 18.45,
+     "early_release_days_median": 1.8
+    },
+    "D=0.4|R=5d": {
+     "n_fired": 71,
+     "total_delta": -30.4679,
+     "avg_delta_per_fired": -0.4291,
+     "avoided_losses": 1,
+     "early_release_days_avg": 38.45,
+     "early_release_days_median": 43.33
+    },
+    "D=0.4|R=10d": {
+     "n_fired": 63,
+     "total_delta": -10.9399,
+     "avg_delta_per_fired": -0.1736,
+     "avoided_losses": 1,
+     "early_release_days_avg": 42.34,
+     "early_release_days_median": 47.94
+    },
+    "D=0.4|R=15d": {
+     "n_fired": 57,
+     "total_delta": 2.1006,
+     "avg_delta_per_fired": 0.0369,
+     "avoided_losses": 1,
+     "early_release_days_avg": 45.35,
+     "early_release_days_median": 54.07
+    },
+    "D=0.4|R=20d": {
+     "n_fired": 46,
+     "total_delta": 24.1352,
+     "avg_delta_per_fired": 0.5247,
+     "avoided_losses": 1,
+     "early_release_days_avg": 51.99,
+     "early_release_days_median": 56.63
+    },
+    "D=0.4|R=25d": {
+     "n_fired": 42,
+     "total_delta": 32.2935,
+     "avg_delta_per_fired": 0.7689,
+     "avoided_losses": 1,
+     "early_release_days_avg": 54.88,
+     "early_release_days_median": 57.3
+    },
+    "D=0.4|R=30d": {
+     "n_fired": 39,
+     "total_delta": 39.7232,
+     "avg_delta_per_fired": 1.0185,
+     "avoided_losses": 1,
+     "early_release_days_avg": 57.02,
+     "early_release_days_median": 57.6
+    },
+    "D=0.4|R=35d": {
+     "n_fired": 38,
+     "total_delta": 42.7797,
+     "avg_delta_per_fired": 1.1258,
+     "avoided_losses": 1,
+     "early_release_days_avg": 57.68,
+     "early_release_days_median": 57.98
+    },
+    "D=0.4|R=40d": {
+     "n_fired": 37,
+     "total_delta": 45.7162,
+     "avg_delta_per_fired": 1.2356,
+     "avoided_losses": 1,
+     "early_release_days_avg": 58.19,
+     "early_release_days_median": 58.36
+    },
+    "D=0.4|R=45d": {
+     "n_fired": 34,
+     "total_delta": 53.7241,
+     "avg_delta_per_fired": 1.5801,
+     "avoided_losses": 1,
+     "early_release_days_avg": 59.57,
+     "early_release_days_median": 59.17
+    },
+    "D=0.4|R=50d": {
+     "n_fired": 30,
+     "total_delta": 63.0679,
+     "avg_delta_per_fired": 2.1023,
+     "avoided_losses": 1,
+     "early_release_days_avg": 61.15,
+     "early_release_days_median": 59.53
+    },
+    "D=0.4|R=55d": {
+     "n_fired": 27,
+     "total_delta": 69.8399,
+     "avg_delta_per_fired": 2.5867,
+     "avoided_losses": 1,
+     "early_release_days_avg": 62.04,
+     "early_release_days_median": 59.7
+    },
+    "D=0.4|R=60d": {
+     "n_fired": 11,
+     "total_delta": 108.7491,
+     "avg_delta_per_fired": 9.8863,
+     "avoided_losses": 1,
+     "early_release_days_avg": 67.91,
+     "early_release_days_median": 66.14
+    }
+   }
+  }
+ },
+ "portfolio_sim_B": {
+  "slots": 4,
+  "candidates": 140,
+  "baseline_no_takeprofit": {
+   "total_pnl": 708.7955,
+   "entries": 16,
+   "skipped": 124,
+   "avg_occupancy_days": 68.23
+  },
+  "absolute": {
+   "X=0.9|R=none": {
+    "total_pnl": 352.6603,
+    "entries": 28,
+    "skipped": 112,
+    "avg_occupancy_days": 34.82,
+    "delta_vs_baseline": -356.1352
+   },
+   "X=0.9|R=5d": {
+    "total_pnl": 450.0689,
+    "entries": 28,
+    "skipped": 112,
+    "avg_occupancy_days": 34.94,
+    "delta_vs_baseline": -258.7266
+   },
+   "X=0.9|R=10d": {
+    "total_pnl": 450.0689,
+    "entries": 28,
+    "skipped": 112,
+    "avg_occupancy_days": 34.94,
+    "delta_vs_baseline": -258.7266
+   },
+   "X=0.9|R=15d": {
+    "total_pnl": 450.0689,
+    "entries": 28,
+    "skipped": 112,
+    "avg_occupancy_days": 34.94,
+    "delta_vs_baseline": -258.7266
+   },
+   "X=0.9|R=20d": {
+    "total_pnl": 458.7693,
+    "entries": 28,
+    "skipped": 112,
+    "avg_occupancy_days": 35.5,
+    "delta_vs_baseline": -250.0262
+   },
+   "X=0.9|R=25d": {
+    "total_pnl": 458.7693,
+    "entries": 28,
+    "skipped": 112,
+    "avg_occupancy_days": 35.5,
+    "delta_vs_baseline": -250.0262
+   },
+   "X=0.9|R=30d": {
+    "total_pnl": 458.7693,
+    "entries": 28,
+    "skipped": 112,
+    "avg_occupancy_days": 35.5,
+    "delta_vs_baseline": -250.0262
+   },
+   "X=0.9|R=35d": {
+    "total_pnl": 500.6606,
+    "entries": 28,
+    "skipped": 112,
+    "avg_occupancy_days": 36.3,
+    "delta_vs_baseline": -208.1349
+   },
+   "X=0.9|R=40d": {
+    "total_pnl": 486.8883,
+    "entries": 27,
+    "skipped": 113,
+    "avg_occupancy_days": 39.5,
+    "delta_vs_baseline": -221.9072
+   },
+   "X=0.9|R=45d": {
+    "total_pnl": 486.8883,
+    "entries": 27,
+    "skipped": 113,
+    "avg_occupancy_days": 39.5,
+    "delta_vs_baseline": -221.9072
+   },
+   "X=0.9|R=50d": {
+    "total_pnl": 515.6981,
+    "entries": 26,
+    "skipped": 114,
+    "avg_occupancy_days": 42.28,
+    "delta_vs_baseline": -193.0974
+   },
+   "X=0.9|R=55d": {
+    "total_pnl": 684.4396,
+    "entries": 25,
+    "skipped": 115,
+    "avg_occupancy_days": 44.06,
+    "delta_vs_baseline": -24.3559
+   },
+   "X=0.9|R=60d": {
+    "total_pnl": 627.9062,
+    "entries": 24,
+    "skipped": 116,
+    "avg_occupancy_days": 46.07,
+    "delta_vs_baseline": -80.8893
+   },
+   "X=0.95|R=none": {
+    "total_pnl": 586.993,
+    "entries": 21,
+    "skipped": 119,
+    "avg_occupancy_days": 46.86,
+    "delta_vs_baseline": -121.8025
+   },
+   "X=0.95|R=5d": {
+    "total_pnl": 611.4254,
+    "entries": 21,
+    "skipped": 119,
+    "avg_occupancy_days": 46.97,
+    "delta_vs_baseline": -97.3701
+   },
+   "X=0.95|R=10d": {
+    "total_pnl": 611.4254,
+    "entries": 21,
+    "skipped": 119,
+    "avg_occupancy_days": 46.97,
+    "delta_vs_baseline": -97.3701
+   },
+   "X=0.95|R=15d": {
+    "total_pnl": 652.6156,
+    "entries": 21,
+    "skipped": 119,
+    "avg_occupancy_days": 46.85,
+    "delta_vs_baseline": -56.1799
+   },
+   "X=0.95|R=20d": {
+    "total_pnl": 661.316,
+    "entries": 21,
+    "skipped": 119,
+    "avg_occupancy_days": 47.58,
+    "delta_vs_baseline": -47.4795
+   },
+   "X=0.95|R=25d": {
+    "total_pnl": 661.316,
+    "entries": 21,
+    "skipped": 119,
+    "avg_occupancy_days": 47.58,
+    "delta_vs_baseline": -47.4795
+   },
+   "X=0.95|R=30d": {
+    "total_pnl": 667.5382,
+    "entries": 21,
+    "skipped": 119,
+    "avg_occupancy_days": 48.92,
+    "delta_vs_baseline": -41.2573
+   },
+   "X=0.95|R=35d": {
+    "total_pnl": 707.8635,
+    "entries": 21,
+    "skipped": 119,
+    "avg_occupancy_days": 49.74,
+    "delta_vs_baseline": -0.932
+   },
+   "X=0.95|R=40d": {
+    "total_pnl": 848.5731,
+    "entries": 21,
+    "skipped": 119,
+    "avg_occupancy_days": 51.32,
+    "delta_vs_baseline": 139.7776
+   },
+   "X=0.95|R=45d": {
+    "total_pnl": 848.5731,
+    "entries": 21,
+    "skipped": 119,
+    "avg_occupancy_days": 51.32,
+    "delta_vs_baseline": 139.7776
+   },
+   "X=0.95|R=50d": {
+    "total_pnl": 848.5731,
+    "entries": 21,
+    "skipped": 119,
+    "avg_occupancy_days": 51.32,
+    "delta_vs_baseline": 139.7776
+   },
+   "X=0.95|R=55d": {
+    "total_pnl": 848.5731,
+    "entries": 21,
+    "skipped": 119,
+    "avg_occupancy_days": 51.32,
+    "delta_vs_baseline": 139.7776
+   },
+   "X=0.95|R=60d": {
+    "total_pnl": 840.6795,
+    "entries": 20,
+    "skipped": 120,
+    "avg_occupancy_days": 54.78,
+    "delta_vs_baseline": 131.884
+   },
+   "X=0.98|R=none": {
+    "total_pnl": 610.3028,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 64.14,
+    "delta_vs_baseline": -98.4927
+   },
+   "X=0.98|R=5d": {
+    "total_pnl": 624.2756,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 64.16,
+    "delta_vs_baseline": -84.5199
+   },
+   "X=0.98|R=10d": {
+    "total_pnl": 624.2609,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 64.39,
+    "delta_vs_baseline": -84.5346
+   },
+   "X=0.98|R=15d": {
+    "total_pnl": 626.4276,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 65.26,
+    "delta_vs_baseline": -82.3679
+   },
+   "X=0.98|R=20d": {
+    "total_pnl": 626.4276,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 65.26,
+    "delta_vs_baseline": -82.3679
+   },
+   "X=0.98|R=25d": {
+    "total_pnl": 626.4276,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 65.26,
+    "delta_vs_baseline": -82.3679
+   },
+   "X=0.98|R=30d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "X=0.98|R=35d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "X=0.98|R=40d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "X=0.98|R=45d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "X=0.98|R=50d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "X=0.98|R=55d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "X=0.98|R=60d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "X=0.99|R=none": {
+    "total_pnl": 614.0099,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 65.83,
+    "delta_vs_baseline": -94.7856
+   },
+   "X=0.99|R=5d": {
+    "total_pnl": 627.9827,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 65.86,
+    "delta_vs_baseline": -80.8128
+   },
+   "X=0.99|R=10d": {
+    "total_pnl": 626.3013,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 66.08,
+    "delta_vs_baseline": -82.4942
+   },
+   "X=0.99|R=15d": {
+    "total_pnl": 656.2659,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 67.21,
+    "delta_vs_baseline": -52.5296
+   },
+   "X=0.99|R=20d": {
+    "total_pnl": 688.5822,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 67.31,
+    "delta_vs_baseline": -20.2133
+   },
+   "X=0.99|R=25d": {
+    "total_pnl": 688.5822,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 67.31,
+    "delta_vs_baseline": -20.2133
+   },
+   "X=0.99|R=30d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "X=0.99|R=35d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "X=0.99|R=40d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "X=0.99|R=45d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "X=0.99|R=50d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "X=0.99|R=55d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "X=0.99|R=60d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   }
+  },
+  "relative": {
+   "D=0.25|R=none": {
+    "total_pnl": 639.6537,
+    "entries": 19,
+    "skipped": 121,
+    "avg_occupancy_days": 52.54,
+    "delta_vs_baseline": -69.1418
+   },
+   "D=0.25|R=5d": {
+    "total_pnl": 717.1647,
+    "entries": 19,
+    "skipped": 121,
+    "avg_occupancy_days": 52.59,
+    "delta_vs_baseline": 8.3692
+   },
+   "D=0.25|R=10d": {
+    "total_pnl": 717.1647,
+    "entries": 19,
+    "skipped": 121,
+    "avg_occupancy_days": 52.59,
+    "delta_vs_baseline": 8.3692
+   },
+   "D=0.25|R=15d": {
+    "total_pnl": 719.3314,
+    "entries": 19,
+    "skipped": 121,
+    "avg_occupancy_days": 53.32,
+    "delta_vs_baseline": 10.5359
+   },
+   "D=0.25|R=20d": {
+    "total_pnl": 717.6799,
+    "entries": 19,
+    "skipped": 121,
+    "avg_occupancy_days": 53.99,
+    "delta_vs_baseline": 8.8844
+   },
+   "D=0.25|R=25d": {
+    "total_pnl": 717.6799,
+    "entries": 19,
+    "skipped": 121,
+    "avg_occupancy_days": 53.99,
+    "delta_vs_baseline": 8.8844
+   },
+   "D=0.25|R=30d": {
+    "total_pnl": 777.4869,
+    "entries": 19,
+    "skipped": 121,
+    "avg_occupancy_days": 55.9,
+    "delta_vs_baseline": 68.6914
+   },
+   "D=0.25|R=35d": {
+    "total_pnl": 813.3016,
+    "entries": 19,
+    "skipped": 121,
+    "avg_occupancy_days": 56.74,
+    "delta_vs_baseline": 104.5061
+   },
+   "D=0.25|R=40d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.25|R=45d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.25|R=50d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.25|R=55d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.25|R=60d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.3|R=none": {
+    "total_pnl": 580.0288,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 65.43,
+    "delta_vs_baseline": -128.7667
+   },
+   "D=0.3|R=5d": {
+    "total_pnl": 617.9032,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 65.46,
+    "delta_vs_baseline": -90.8923
+   },
+   "D=0.3|R=10d": {
+    "total_pnl": 617.9032,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 65.46,
+    "delta_vs_baseline": -90.8923
+   },
+   "D=0.3|R=15d": {
+    "total_pnl": 656.2658,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 67.21,
+    "delta_vs_baseline": -52.5297
+   },
+   "D=0.3|R=20d": {
+    "total_pnl": 688.5821,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 67.31,
+    "delta_vs_baseline": -20.2134
+   },
+   "D=0.3|R=25d": {
+    "total_pnl": 688.5821,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 67.31,
+    "delta_vs_baseline": -20.2134
+   },
+   "D=0.3|R=30d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.3|R=35d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.3|R=40d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.3|R=45d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.3|R=50d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.3|R=55d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.3|R=60d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.35|R=none": {
+    "total_pnl": 612.343,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 65.83,
+    "delta_vs_baseline": -96.4525
+   },
+   "D=0.35|R=5d": {
+    "total_pnl": 626.3159,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 65.85,
+    "delta_vs_baseline": -82.4796
+   },
+   "D=0.35|R=10d": {
+    "total_pnl": 626.3011,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 66.08,
+    "delta_vs_baseline": -82.4944
+   },
+   "D=0.35|R=15d": {
+    "total_pnl": 656.2658,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 67.21,
+    "delta_vs_baseline": -52.5297
+   },
+   "D=0.35|R=20d": {
+    "total_pnl": 688.5821,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 67.31,
+    "delta_vs_baseline": -20.2134
+   },
+   "D=0.35|R=25d": {
+    "total_pnl": 688.5821,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 67.31,
+    "delta_vs_baseline": -20.2134
+   },
+   "D=0.35|R=30d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.35|R=35d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.35|R=40d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.35|R=45d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.35|R=50d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.35|R=55d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.35|R=60d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.4|R=none": {
+    "total_pnl": 614.0097,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 65.83,
+    "delta_vs_baseline": -94.7858
+   },
+   "D=0.4|R=5d": {
+    "total_pnl": 627.9826,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 65.86,
+    "delta_vs_baseline": -80.8129
+   },
+   "D=0.4|R=10d": {
+    "total_pnl": 626.3011,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 66.08,
+    "delta_vs_baseline": -82.4944
+   },
+   "D=0.4|R=15d": {
+    "total_pnl": 656.2658,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 67.21,
+    "delta_vs_baseline": -52.5297
+   },
+   "D=0.4|R=20d": {
+    "total_pnl": 688.5821,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 67.31,
+    "delta_vs_baseline": -20.2134
+   },
+   "D=0.4|R=25d": {
+    "total_pnl": 688.5821,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 67.31,
+    "delta_vs_baseline": -20.2134
+   },
+   "D=0.4|R=30d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.4|R=35d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.4|R=40d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.4|R=45d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.4|R=50d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.4|R=55d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   },
+   "D=0.4|R=60d": {
+    "total_pnl": 708.7955,
+    "entries": 16,
+    "skipped": 124,
+    "avg_occupancy_days": 68.23,
+    "delta_vs_baseline": 0.0
+   }
+  }
+ }
+}
