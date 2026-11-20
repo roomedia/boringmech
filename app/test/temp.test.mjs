@@ -239,6 +239,11 @@ eq(
     true,
     "reserve guard: reserve activates only with temp candidates present",
   );
+  eq(
+    cycleSrc.includes("if (!aborted && !budgetOut)"),
+    true,
+    "reserve guard: budget-exhausted pass skips deferred pass (native parity)",
+  );
 }
 
 console.log(`temp tests: ${passed} passed, ${failed} failed`);

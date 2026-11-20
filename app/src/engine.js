@@ -2177,16 +2177,20 @@ async function runCycle(gen) {
     && candidates.some((c) => c.strategy === "temp_no");
   const deferredMain = [];
   let aborted = false;
+  let budgetOut = false;
   for (const cand of candidates) {
     if (!state.running || gen !== state.gen) { aborted = true; break; }
     if (tempReserve && tempReserveDefersMain(cand.strategy, slotsLeft, verified)) {
       deferredMain.push(cand);
       continue;
     }
-    if (slotsLeft < 1 || verified >= VERIFY_CAP) break;
+    if (slotsLeft < 1 || verified >= VERIFY_CAP) { budgetOut = true; break; }
     if (await attemptCandidate(cand)) { aborted = true; break; }
   }
-  if (!aborted) {
+  // 예산 소진으로 끊긴 패스는 미룬 메인을 다시 타지 않는다 — 예산은
+  // 단조라 재주행이 즉시 같은 지점에서 끊기고, 네이티브 드라이버와
+  // 동일하게 요약 로그까지 그대로 진행한다 (감사 패리티 수리).
+  if (!aborted && !budgetOut) {
     for (const cand of deferredMain) {
       if (!state.running || gen !== state.gen) { aborted = true; break; }
       if (slotsLeft < 1 || verified >= VERIFY_CAP) break;
