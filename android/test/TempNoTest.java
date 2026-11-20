@@ -1,0 +1,278 @@
+// 기온 No 페이드 JVM 단위 테스트 — TempNo 순수 로직(정수/꼬리 판정·밴드
+// 경계·진입 창 경계·토글 OFF·설정 해석·수수료), StopLoss.evaluate의
+// 태그 기준 기온 제외, CandidateVerifier의 기온 밴드·창 분기를 대조한다.
+// 실행: android/test/run_temp_no_test.sh
+import com.roomedia.boringmech.engine.BoughtReconcile;
+import com.roomedia.boringmech.engine.CandidateVerifier;
+import com.roomedia.boringmech.engine.JsonText;
+import com.roomedia.boringmech.engine.ScanFilter;
+import com.roomedia.boringmech.engine.StopLoss;
+import com.roomedia.boringmech.engine.TempNo;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+public class TempNoTest {
+    private static int passed = 0;
+    private static int failed = 0;
+
+    private static void check(String name, boolean cond) {
+        if (cond) {
+            passed++;
+        } else {
+            failed++;
+            System.out.println("FAIL: " + name);
+        }
+    }
+
+    private static void checkEq(String name, Object actual, Object expected) {
+        boolean ok = expected == null ? actual == null : expected.equals(actual);
+        if (ok) {
+            passed++;
+        } else {
+            failed++;
+            System.out.println("FAIL: " + name + " expected=" + expected + " got=" + actual);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Object> jlist(String text) {
+        return (List<Object>) JsonText.parse(text);
+    }
+
+    private static final String EVENT_SLUG = "highest-temperature-in-seoul-on-november-18-2026";
+    private static final long END_MS = Instant.parse("2026-11-18T12:00:00Z").toEpochMilli();
+    private static final long AT_7AM = Instant.parse("2026-11-18T07:00:00Z").toEpochMilli();
+
+    private static String marketJson(String title, String noPrice) {
+        double yes = 1 - Double.parseDouble(noPrice);
+        return "{\"slug\":\"" + EVENT_SLUG + "-m" + title + "\","
+                + "\"question\":\"Will the highest temperature in Seoul be X?\","
+                + "\"groupItemTitle\":\"" + title + "\","
+                + "\"active\":true,\"closed\":false,\"acceptingOrders\":true,"
+                + "\"endDate\":\"2026-11-18T12:00:00Z\","
+                + "\"outcomePrices\":\"[" + yes + "," + noPrice + "]\","
+                + "\"clobTokenIds\":\"[\\\"t0\\\",\\\"t1\\\"]\","
+                + "\"feeType\":\"weather_fees\",\"feeSchedule\":{\"rate\":0.05}}";
+    }
+
+    private static List<Object> eventOf(String... markets) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[{\"slug\":\"").append(EVENT_SLUG)
+                .append("\",\"endDate\":\"2026-11-18T12:00:00Z\",\"markets\":[");
+        for (int i = 0; i < markets.length; i++) {
+            if (i > 0) sb.append(",");
+            sb.append(markets[i]);
+        }
+        sb.append("]}]");
+        return jlist(sb.toString());
+    }
+
+    private static TempNo.Settings settings(boolean enabled, double bandLo) {
+        return TempNo.parseSettings("{\"tempNoEnabled\":" + enabled
+                + ",\"tempNoBandLo\":" + bandLo + "}");
+    }
+
+    private static int scanCount(List<Object> events, TempNo.Settings s, long nowMs) {
+        return TempNo.scanTempCandidates(events, new HashSet<>(), new HashSet<>(), s, nowMs, null).size();
+    }
+
+    public static void main(String[] args) throws Exception {
+        // ── 슬러그·제목 판정 ──
+        check("event slug", TempNo.isTempSlug(EVENT_SLUG));
+        check("market slug", TempNo.isTempSlug(EVENT_SLUG + "-7c"));
+        check("other slug", !TempNo.isTempSlug("will-btc-hit-100k"));
+        check("null slug", !TempNo.isTempSlug(null));
+        check("exact C", TempNo.isExactTempTitle("3°C"));
+        check("exact F", TempNo.isExactTempTitle("72°F"));
+        check("negative exact", TempNo.isExactTempTitle("-3°C"));
+        check("tail below", !TempNo.isExactTempTitle("6°C or below"));
+        check("tail higher", !TempNo.isExactTempTitle("21°C or higher"));
+        check("range bucket", !TempNo.isExactTempTitle("50-51°F"));
+        check("empty title", !TempNo.isExactTempTitle(""));
+        check("null title", !TempNo.isExactTempTitle(null));
+
+        // ── 이벤트 슬러그 생성 ──
+        checkEq("slug seoul", TempNo.eventSlugFor("seoul", AT_7AM), EVENT_SLUG);
+        checkEq("cities 40", TempNo.CITIES.size(), 40);
+        checkEq("today slugs 40", TempNo.todayEventSlugs(AT_7AM).size(), 40);
+
+        // ── 진입 창 경계 ──
+        check("window 05:59 closed", !TempNo.windowOpen(
+                Instant.parse("2026-11-18T05:59:59Z").toEpochMilli(), END_MS));
+        check("window 06:00 open", TempNo.windowOpen(
+                Instant.parse("2026-11-18T06:00:00Z").toEpochMilli(), END_MS));
+        check("window 11:59 open", TempNo.windowOpen(
+                Instant.parse("2026-11-18T11:59:59Z").toEpochMilli(), END_MS));
+        check("window endDate closed", !TempNo.windowOpen(END_MS, END_MS));
+
+        // ── 설정 해석 ──
+        TempNo.Settings def = TempNo.parseSettings(null);
+        check("settings null off", !def.enabled && def.bandLo == TempNo.DEFAULT_BAND_LO);
+        check("settings bad json", !TempNo.parseSettings("not json").enabled);
+        TempNo.Settings custom = settings(true, 0.93);
+        check("settings custom", custom.enabled && custom.bandLo == 0.93);
+        check("settings band above hi falls back",
+                TempNo.parseSettings("{\"tempNoEnabled\":true,\"tempNoBandLo\":0.999}").bandLo
+                        == TempNo.DEFAULT_BAND_LO);
+        check("settings string true is off",
+                !TempNo.parseSettings("{\"tempNoEnabled\":\"true\"}").enabled);
+        check("settings band hi boundary kept",
+                TempNo.parseSettings("{\"tempNoBandLo\":0.998}").bandLo == 0.998);
+
+        // ── 수수료 해석 ──
+        Object weather = JsonText.parse("{\"feeType\":\"weather_fees\"}");
+        checkEq("fee weather", TempNo.feeRateFor(weather), 0.05);
+        Object schedOnly = JsonText.parse("{\"feeSchedule\":{\"rate\":0.05}}");
+        checkEq("fee schedule fallback", TempNo.feeRateFor(schedOnly), 0.05);
+        checkEq("fee unknown", TempNo.feeRateFor(JsonText.parse("{}")), null);
+
+        // ── 후보 스캔 ──
+        TempNo.Settings on = settings(true, 0.80);
+        checkEq("scan toggle off", scanCount(eventOf(marketJson("7°C", "0.9")),
+                settings(false, 0.80), AT_7AM), 0);
+        checkEq("scan band lo inclusive", scanCount(eventOf(marketJson("7°C", "0.8")), on, AT_7AM), 1);
+        checkEq("scan band hi inclusive", scanCount(eventOf(marketJson("7°C", "0.998")), on, AT_7AM), 1);
+        checkEq("scan 0.999 excluded", scanCount(eventOf(marketJson("7°C", "0.999")), on, AT_7AM), 0);
+        checkEq("scan below lo excluded", scanCount(eventOf(marketJson("7°C", "0.799")), on, AT_7AM), 0);
+        checkEq("scan custom lo excludes", scanCount(eventOf(marketJson("7°C", "0.92")),
+                settings(true, 0.93), AT_7AM), 0);
+        checkEq("scan custom lo inclusive", scanCount(eventOf(marketJson("7°C", "0.93")),
+                settings(true, 0.93), AT_7AM), 1);
+        checkEq("scan tail excluded", scanCount(eventOf(marketJson("6°C or below", "0.9")), on, AT_7AM), 0);
+        checkEq("scan range excluded", scanCount(eventOf(marketJson("50-51°F", "0.9")), on, AT_7AM), 0);
+        checkEq("scan before window", scanCount(eventOf(marketJson("7°C", "0.9")), on,
+                Instant.parse("2026-11-18T05:59:00Z").toEpochMilli()), 0);
+        checkEq("scan after end", scanCount(eventOf(marketJson("7°C", "0.9")), on, END_MS), 0);
+        {
+            List<Object> ev = eventOf(marketJson("7°C", "0.9"));
+            @SuppressWarnings("unchecked")
+            List<Object> markets = (List<Object>) ((java.util.Map<?, ?>) ev.get(0)).get("markets");
+            String slug = (String) ((java.util.Map<?, ?>) markets.get(0)).get("slug");
+            Set<String> held = new HashSet<>();
+            held.add(slug);
+            checkEq("scan held excluded",
+                    TempNo.scanTempCandidates(ev, held, new HashSet<>(), on, AT_7AM, null).size(), 0);
+            Set<String> exclude = new HashSet<>();
+            exclude.add(slug);
+            checkEq("scan main-slug excluded",
+                    TempNo.scanTempCandidates(ev, new HashSet<>(), new HashSet<>(), on, AT_7AM, exclude).size(), 0);
+            List<ScanFilter.Candidate> cands = TempNo.scanTempCandidates(
+                    ev, new HashSet<>(), new HashSet<>(), on, AT_7AM, null);
+            checkEq("candidate side", cands.get(0).side, "no");
+            checkEq("candidate strategy", cands.get(0).strategy, TempNo.STRATEGY);
+            check("candidate band", cands.get(0).bandLo == 0.80 && cands.get(0).bandHi == 0.998);
+            checkEq("candidate feeRate", cands.get(0).feeRate, 0.05);
+            check("candidate price", cands.get(0).price == 0.9);
+        }
+
+        // ── 손절 제외 판정 (태그 방식) ──
+        {
+            Object page = jlist("[{\"outcomes\":\"[\\\"Yes\\\",\\\"No\\\"]\","
+                    + "\"outcomePrices\":\"[0.9,0.1]\"}]");
+            String tempSlug = EVENT_SLUG + "-7c";
+            Object tempRow = JsonText.parse("{\"slug\":\"" + tempSlug + "\","
+                    + "\"token_id\":\"t1\",\"avg_price\":0.98,\"current_size\":10,"
+                    + "\"outcome\":\"No\"}");
+            // 태그가 있을 때만 제외 — 태그가 없으면 같은 슬러그·같은 가격에도 발화한다
+            checkEq("stoploss temp tagged excluded",
+                    StopLoss.evaluate(tempRow, page, page, true).action, "skip");
+            checkEq("stoploss temp untagged triggers",
+                    StopLoss.evaluate(tempRow, page, page, false).action, "triggered");
+            checkEq("stoploss temp default triggers",
+                    StopLoss.evaluate(tempRow, page, page).action, "triggered");
+            Object mainRow = JsonText.parse("{\"slug\":\"some-other-market\","
+                    + "\"token_id\":\"t1\",\"avg_price\":0.98,\"current_size\":10,"
+                    + "\"outcome\":\"No\"}");
+            checkEq("stoploss main still triggers", StopLoss.evaluate(mainRow, page, page).action, "triggered");
+
+            // 매수 기록 태그 조회 — 문자열·객체·부재 형태를 가른다
+            @SuppressWarnings("unchecked")
+            List<Object> tagged = (List<Object>) JsonText.parse(
+                    "[{\"slug\":\"" + tempSlug + "\",\"strategy\":\"temp_no\"}]");
+            @SuppressWarnings("unchecked")
+            List<Object> plain = (List<Object>) JsonText.parse("[\"" + tempSlug + "\"]");
+            @SuppressWarnings("unchecked")
+            List<Object> empty = (List<Object>) JsonText.parse("[]");
+            checkEq("tag: strategyOf tagged",
+                    BoughtReconcile.strategyOf(tagged, tempSlug), TempNo.STRATEGY);
+            checkEq("tag: strategyOf plain", BoughtReconcile.strategyOf(plain, tempSlug), null);
+            checkEq("tag: strategyOf missing", BoughtReconcile.strategyOf(empty, tempSlug), null);
+            check("exempt: tagged temp", TempNo.isStopLossExempt(tagged, tempSlug));
+            check("exempt: plain temp not exempt", !TempNo.isStopLossExempt(plain, tempSlug));
+            check("exempt: no record not exempt", !TempNo.isStopLossExempt(empty, tempSlug));
+            check("exempt: tagged non-temp not exempt",
+                    !TempNo.isStopLossExempt(tagged, "some-other-market"));
+
+            // 정화는 태그 항목을 slug로 대조하고 원본 형태 그대로 남긴다
+            Set<Object> boughtSet = new java.util.LinkedHashSet<>(tagged);
+            Set<Object> onChain = new HashSet<>();
+            onChain.add(tempSlug);
+            BoughtReconcile.Reconcile rec = BoughtReconcile.reconcileBought(
+                    boughtSet, onChain, new HashSet<>());
+            check("reconcile: tagged kept", rec.kept.size() == 1 && rec.dropped.isEmpty());
+            check("reconcile: tag preserved",
+                    TempNo.STRATEGY.equals(BoughtReconcile.strategyOf(rec.kept, tempSlug)));
+            BoughtReconcile.Reconcile rec2 = BoughtReconcile.reconcileBought(
+                    boughtSet, new HashSet<>(), new HashSet<>());
+            check("reconcile: tagged dropped when no truth",
+                    rec2.dropped.size() == 1 && rec2.kept.isEmpty());
+        }
+
+        // ── 검증 분기 (밴드·창) ──
+        {
+            Object page = jlist("[{\"slug\":\"" + EVENT_SLUG + "-7c\",\"active\":true,"
+                    + "\"closed\":false,\"endDate\":\"2026-11-18T12:00:00Z\","
+                    + "\"outcomePrices\":\"[0.03,0.97]\",\"clobTokenIds\":\"[\\\"t0\\\",\\\"t1\\\"]\"}]");
+            Object book = JsonText.parse("{\"asks\":[{\"price\":0.97,\"size\":100}],"
+                    + "\"bids\":[{\"price\":0.96,\"size\":100}],\"tick_size\":\"0.001\","
+                    + "\"min_order_size\":5,\"neg_risk\":true}");
+            CandidateVerifier.GammaSource gamma = slug -> page;
+            CandidateVerifier.BookSource books = new CandidateVerifier.BookSource() {
+                @Override public Object getOrderBook(String tokenId) { return book; }
+                @Override public double getTickSize(String tokenId) { return 0.001; }
+            };
+            ScanFilter.Candidate tempCand = new ScanFilter.Candidate(
+                    EVENT_SLUG + "-7c", "q", "no", 0.97, "2026-11-18T12:00:00Z",
+                    TempNo.STRATEGY, 0.80, TempNo.BAND_HI, 0.05);
+            CandidateVerifier.Result okRes = CandidateVerifier.verifyCandidate(tempCand, 5, gamma, books, AT_7AM);
+            check("verify temp ok", okRes.ok);
+            check("verify temp limitPrice", okRes.ok && Math.abs(okRes.limitPrice - 0.985) < 1e-9);
+            check("verify temp negRisk", okRes.ok && okRes.negRisk);
+
+            // 메인 후보는 당일 만기면 만기 범위에서 먼저 걸리므로, 밴드
+            // 검사만 보려면 미래 만기 페이지를 따로 쓴다.
+            Object mainPage = jlist("[{\"slug\":\"some-main-market\",\"active\":true,"
+                    + "\"closed\":false,\"endDate\":\"2026-12-01T12:00:00Z\","
+                    + "\"outcomePrices\":\"[0.03,0.97]\",\"clobTokenIds\":\"[\\\"t0\\\",\\\"t1\\\"]\"}]");
+            CandidateVerifier.GammaSource mainGamma = slug -> mainPage;
+            ScanFilter.Candidate mainCand = new ScanFilter.Candidate(
+                    "some-main-market", "q", "no", 0.97, "2026-12-01T12:00:00Z");
+            CandidateVerifier.Result mainRes = CandidateVerifier.verifyCandidate(mainCand, 5, mainGamma, books, AT_7AM);
+            check("verify main band rejects 0.97 ask",
+                    !mainRes.ok && "ask_out_of_band".equals(mainRes.reason));
+
+            CandidateVerifier.Result earlyRes = CandidateVerifier.verifyCandidate(
+                    tempCand, 5, gamma, books, Instant.parse("2026-11-18T05:00:00Z").toEpochMilli());
+            check("verify temp before window rejects",
+                    !earlyRes.ok && "end_out_of_range".equals(earlyRes.reason));
+
+            Object richBook = JsonText.parse("{\"asks\":[{\"price\":0.999,\"size\":100}],"
+                    + "\"bids\":[{\"price\":0.99,\"size\":100}],\"tick_size\":\"0.001\","
+                    + "\"min_order_size\":5,\"neg_risk\":true}");
+            CandidateVerifier.BookSource richBooks = new CandidateVerifier.BookSource() {
+                @Override public Object getOrderBook(String tokenId) { return richBook; }
+                @Override public double getTickSize(String tokenId) { return 0.001; }
+            };
+            CandidateVerifier.Result richRes = CandidateVerifier.verifyCandidate(tempCand, 5, gamma, richBooks, AT_7AM);
+            check("verify temp ask 0.999 rejects",
+                    !richRes.ok && "ask_out_of_band".equals(richRes.reason));
+        }
+
+        System.out.println("TempNo tests: " + passed + " passed, " + failed + " failed");
+        System.exit(failed == 0 ? 0 : 1);
+    }
+}

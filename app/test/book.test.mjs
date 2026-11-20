@@ -1226,5 +1226,22 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   eq(src.includes("LS.redeemDoneArchive"), true, "done-archive: wired");
 }
 
+// 43. 기온 손절 제외는 태그 방식 — 슬러그 단독 가드가 되돌아오지 않게
+// 소스 가드로 고정하고, 매수 기록 전 경로가 전략을 넘기는지 본다.
+{
+  const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+  eq(src.includes("if (isTempNoSlug(slug)) return false;"), false,
+    "temp-tag: no slug-only stop-loss guard");
+  eq(
+    src.includes('if (isTempNoSlug(slug) && boughtStrategyOf(slug) === "temp_no") return false;'),
+    true,
+    "temp-tag: stop-loss guard requires bought tag",
+  );
+  eq(src.split("markBought(cand.slug, cand.strategy)").length - 1, 4,
+    "temp-tag: all four buy record paths pass strategy");
+  eq(src.includes("markBought(cand.slug);"), false,
+    "temp-tag: no untagged buy record path");
+}
+
 console.log(`book tests: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

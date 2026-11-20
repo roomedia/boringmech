@@ -201,6 +201,16 @@ const runners = {
     H.__setFetch(async () => pages[qi++]);
     const row = inp.row;
     const slug = row?.slug;
+    // 기온 No 페이드 손절 제외는 태그 방식 — 원본 checkStopLossPosition의
+    // 가드와 같이, 매수 기록(bm_bought)에 temp_no 태그가 있을 때만 제외한다.
+    if (inp.bought != null) {
+      localStorage.setItem("bm_bought", JSON.stringify(inp.bought));
+    } else {
+      localStorage.removeItem("bm_bought");
+    }
+    if (BM.isTempNoSlug(slug) && BM.boughtStrategyOf(slug) === "temp_no") {
+      return { action: "skip" };
+    }
     const entry = Number(row?.avg_price);
     const size = Number(row?.current_size);
     if (!slug || !row?.token_id || !Number.isFinite(entry)) return { action: "skip" };

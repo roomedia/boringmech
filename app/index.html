@@ -145,6 +145,18 @@
     </div>
 
     <div class="card">
+      <h2>기온 No 페이드</h2>
+      <div class="row"><span class="k">전략</span><span class="v" id="tempNoState">—</span></div>
+      <div class="row"><span class="k">사용</span><input type="checkbox" id="tempNoEnabled"></div>
+      <div class="row"><span class="k">밴드 하한 (No 가격)</span><span class="v"><input type="number" id="tempNoBandLo" step="0.01" min="0.01" max="0.998" style="width:90px"> · 상한 0.998</span></div>
+      <div class="stack" style="margin-top:10px">
+        <button class="btn ghost" id="btnTempSave">설정 저장</button>
+      </div>
+      <div class="err" id="tempNoErr"></div>
+      <p class="note">기본 꺼짐. 켜면 당일 최고기온의 정확한 정수 기온 시장 No를 밴드 안에서 매수합니다. 진입 창은 당일 06:00 UTC부터 이벤트 종료까지이고, 손절 없이 정산까지 보유합니다.</p>
+    </div>
+
+    <div class="card">
       <h2>최근 로그</h2>
       <div class="log" id="logBox">—</div>
       <div class="stack" style="margin-top:10px">
@@ -493,6 +505,34 @@
       $('relayerSaved').classList.toggle('hidden', !has);
     }
 
+    // 기온 No 페이드 설정 — bm_settings에 JSON으로 저장한다 (엔진이
+    // durableRead로 읽는 그 경로). 네이티브 미러에도 같이 써서 웹뷰
+    // localStorage가 비어도 네이티브 엔진이 설정을 읽게 한다.
+    function readTempSettings(){
+      var raw = null;
+      try { raw = localStorage.getItem('bm_settings'); } catch (e) {}
+      if (!raw) {
+        try {
+          if (window.AndroidBridge && AndroidBridge.getDurable) raw = AndroidBridge.getDurable('bm_settings');
+        } catch (e) {}
+      }
+      var o = null;
+      try { o = raw ? JSON.parse(raw) : null; } catch (e) {}
+      if (!o || typeof o !== 'object') o = {};
+      var lo = Number(o.tempNoBandLo);
+      return {
+        enabled: o.tempNoEnabled === true,
+        bandLo: (isFinite(lo) && lo > 0 && lo <= 0.998) ? lo : 0.80
+      };
+    }
+
+    function renderTempSettings(){
+      var s = readTempSettings();
+      $('tempNoState').textContent = s.enabled ? '켜짐' : '꺼짐 (기본)';
+      $('tempNoEnabled').checked = s.enabled;
+      $('tempNoBandLo').value = s.bandLo;
+    }
+
     // 네이티브 섀도우 대조 상태 — 실행 횟수·일치 횟수와 최근 불일치 필드만 작게.
     function renderShadow(){
       var el = $('shadowState');
@@ -602,6 +642,7 @@
       renderLogs();
       renderUpdate();
       renderRelayer();
+      renderTempSettings();
       renderShadow();
       renderBattery();
     }
@@ -785,6 +826,22 @@
     $('btnRelayerClear').addEventListener('click', function(){
       try { BM.clearRelayerKey(); } catch (e) {}
       renderRelayer();
+    });
+    $('btnTempSave').addEventListener('click', function(){
+      $('tempNoErr').textContent = '';
+      var lo = Number($('tempNoBandLo').value);
+      if (!isFinite(lo) || lo <= 0 || lo > 0.998) {
+        $('tempNoErr').textContent = '밴드 하한은 0보다 크고 0.998 이하여야 합니다.';
+        return;
+      }
+      var settings = { tempNoEnabled: !!$('tempNoEnabled').checked, tempNoBandLo: lo };
+      try { localStorage.setItem('bm_settings', JSON.stringify(settings)); } catch (e) {}
+      try {
+        if (window.AndroidBridge && AndroidBridge.putDurable) {
+          AndroidBridge.putDurable('bm_settings', JSON.stringify(settings));
+        }
+      } catch (e) {}
+      renderTempSettings();
     });
     // 수동 매도 제출은 이 핸들러가 유일한 경로다.
     $('btnSellConfirm').addEventListener('click', function(){

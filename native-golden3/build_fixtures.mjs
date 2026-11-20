@@ -295,6 +295,23 @@ add("slEvaluate", "eval-no-index", "보유 쪽을 가격 목록에서 못 찾음
 add("slEvaluate", "eval-skip-fetch-fail", "1차 조회 실패 → skip", {
   row: slRow(), page1: null, page2: null,
 });
+const TEMP_ROW = {
+  slug: "highest-temperature-in-seoul-on-november-18-2026-7c",
+  token_id: "tok-1", avg_price: 0.98, current_size: 10, outcome: "No",
+};
+const TEMP_PAGE = gammaPage(["Yes", "No"], ["0.9", "0.1"]);
+add("slEvaluate", "eval-temp-tagged-skip", "기온 슬러그 + temp_no 태그 매수 → 손절 제외 skip", {
+  row: TEMP_ROW, page1: TEMP_PAGE, page2: TEMP_PAGE,
+  bought: [{ slug: TEMP_ROW.slug, strategy: "temp_no" }],
+});
+add("slEvaluate", "eval-temp-untagged-triggered", "기온 슬러그지만 태그 없는(메인) 매수 → 손절 적용", {
+  row: TEMP_ROW, page1: TEMP_PAGE, page2: TEMP_PAGE,
+  bought: [TEMP_ROW.slug],
+});
+add("slEvaluate", "eval-temp-norecord-triggered", "기온 슬러그 + 매수 기록 없음 → 손절 적용", {
+  row: TEMP_ROW, page1: TEMP_PAGE, page2: TEMP_PAGE,
+  bought: [],
+});
 
 // ── 리딤 ─────────────────────────────────────────────────────
 const CID_A = "aa".repeat(32);

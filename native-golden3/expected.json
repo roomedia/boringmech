@@ -431,6 +431,17 @@
   "eval-skip-fetch-fail": {
    "action": "skip"
   },
+  "eval-temp-tagged-skip": {
+   "action": "skip"
+  },
+  "eval-temp-untagged-triggered": {
+   "action": "triggered",
+   "current": 0.1
+  },
+  "eval-temp-norecord-triggered": {
+   "action": "triggered",
+   "current": 0.1
+  },
   "plan-mixed": {
    "targets": [
     {

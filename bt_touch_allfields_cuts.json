@@ -1,0 +1,459 @@
+{
+ "occurrence_10k": {
+  "entry_band": {
+   "survival|0.70-0.80": {
+    "n": 128,
+    "win_rate": 0.8125,
+    "avg_entry": 0.7481640625,
+    "pnl_per_trade": 8.381087610063544,
+    "turnover_mean_daily": 0.00235995793004063
+   },
+   "ALL|0.70-0.80": {
+    "n": 155,
+    "win_rate": 0.7354838709677419,
+    "avg_entry": 0.7463870967741936,
+    "pnl_per_trade": -1.6263096186396253,
+    "turnover_mean_daily": -0.0017889298905031843
+   },
+   "survival|0.80-0.90": {
+    "n": 170,
+    "win_rate": 0.8647058823529412,
+    "avg_entry": 0.8615411764705881,
+    "pnl_per_trade": 0.15461940282468675,
+    "turnover_mean_daily": 0.0029102456014654236
+   },
+   "ALL|0.80-0.90": {
+    "n": 187,
+    "win_rate": 0.8502673796791443,
+    "avg_entry": 0.8609224598930482,
+    "pnl_per_trade": -1.3546580089047715,
+    "turnover_mean_daily": 0.002288042907273976
+   },
+   "touch|0.60-0.70": {
+    "n": 71,
+    "win_rate": 0.352112676056338,
+    "avg_entry": 0.638281690140845,
+    "pnl_per_trade": -45.46205844120198,
+    "turnover_mean_daily": -0.020648671754529443
+   },
+   "ALL|0.60-0.70": {
+    "n": 194,
+    "win_rate": 0.5618556701030928,
+    "avg_entry": 0.6380592783505155,
+    "pnl_per_trade": -12.207479311592175,
+    "turnover_mean_daily": -0.010617096087427443
+   },
+   "survival|0.60-0.70": {
+    "n": 123,
+    "win_rate": 0.6829268292682927,
+    "avg_entry": 0.6379308943089431,
+    "pnl_per_trade": 6.988253356719175,
+    "turnover_mean_daily": -0.004826511759262874
+   },
+   "touch|0.80-0.90": {
+    "n": 17,
+    "win_rate": 0.7058823529411765,
+    "avg_entry": 0.854735294117647,
+    "pnl_per_trade": -16.447432126199352,
+    "turnover_mean_daily": -0.0039339840346405
+   },
+   "touch|0.70-0.80": {
+    "n": 27,
+    "win_rate": 0.37037037037037035,
+    "avg_entry": 0.737962962962963,
+    "pnl_per_trade": -49.06878536952872,
+    "turnover_mean_daily": -0.021457731410118305
+   }
+  },
+  "ttm_band": {
+   "survival|31-45d": {
+    "n": 233,
+    "win_rate": 0.7725321888412017,
+    "avg_entry": 0.7579248927038627,
+    "pnl_per_trade": 2.271259252549459,
+    "turnover_mean_daily": -0.001612227463742774
+   },
+   "ALL|31-45d": {
+    "n": 298,
+    "win_rate": 0.7114093959731543,
+    "avg_entry": 0.7434563758389262,
+    "pnl_per_trade": -4.817243592192682,
+    "turnover_mean_daily": -0.0027000853111483606
+   },
+   "touch|31-45d": {
+    "n": 65,
+    "win_rate": 0.49230769230769234,
+    "avg_entry": 0.6915923076923076,
+    "pnl_per_trade": -30.22679994334528,
+    "turnover_mean_daily": -0.0065996372872330015
+   },
+   "touch|<=3d": {
+    "n": 4,
+    "win_rate": 0.25,
+    "avg_entry": 0.6725,
+    "pnl_per_trade": -67.13241721854305,
+    "turnover_mean_daily": -0.1833810566666447
+   },
+   "ALL|<=3d": {
+    "n": 28,
+    "win_rate": 0.8928571428571429,
+    "avg_entry": 0.7930357142857142,
+    "pnl_per_trade": 10.680973975942768,
+    "turnover_mean_daily": 0.018692848078857554
+   },
+   "survival|8-14d": {
+    "n": 26,
+    "win_rate": 0.6923076923076923,
+    "avg_entry": 0.7476923076923078,
+    "pnl_per_trade": -9.415425378850957,
+    "turnover_mean_daily": 0.002537611219831981
+   },
+   "ALL|8-14d": {
+    "n": 34,
+    "win_rate": 0.6470588235294118,
+    "avg_entry": 0.7391176470588235,
+    "pnl_per_trade": -14.708292903721452,
+    "turnover_mean_daily": 0.0015339907544173572
+   },
+   "survival|15-30d": {
+    "n": 110,
+    "win_rate": 0.8272727272727273,
+    "avg_entry": 0.7729181818181818,
+    "pnl_per_trade": 6.732439707601832,
+    "turnover_mean_daily": -0.012532361447885396
+   },
+   "ALL|15-30d": {
+    "n": 142,
+    "win_rate": 0.6971830985915493,
+    "avg_entry": 0.756556338028169,
+    "pnl_per_trade": -9.135678983116954,
+    "turnover_mean_daily": -0.015302116775353064
+   },
+   "survival|<=3d": {
+    "n": 24,
+    "win_rate": 1.0,
+    "avg_entry": 0.813125,
+    "pnl_per_trade": 23.649872508357074,
+    "turnover_mean_daily": 0.052371832203107926
+   },
+   "survival|4-7d": {
+    "n": 28,
+    "win_rate": 0.7857142857142857,
+    "avg_entry": 0.7185714285714286,
+    "pnl_per_trade": 13.073286479075664,
+    "turnover_mean_daily": 0.022659368379793834
+   },
+   "ALL|4-7d": {
+    "n": 34,
+    "win_rate": 0.7058823529411765,
+    "avg_entry": 0.7102941176470587,
+    "pnl_per_trade": 1.7696961315571225,
+    "turnover_mean_daily": 0.01449511243045473
+   },
+   "touch|8-14d": {
+    "n": 8,
+    "win_rate": 0.5,
+    "avg_entry": 0.7112499999999999,
+    "pnl_per_trade": -31.910112359550563,
+    "turnover_mean_daily": -0.001727775758180171
+   },
+   "touch|15-30d": {
+    "n": 32,
+    "win_rate": 0.25,
+    "avg_entry": 0.7003125,
+    "pnl_per_trade": -63.68233698246277,
+    "turnover_mean_daily": -0.024823150713523173
+   },
+   "touch|4-7d": {
+    "n": 6,
+    "win_rate": 0.3333333333333333,
+    "avg_entry": 0.6716666666666667,
+    "pnl_per_trade": -50.98039215686274,
+    "turnover_mean_daily": -0.023604748666461083
+   }
+  },
+  "neg_risk": {
+   "survival|False": {
+    "n": 415,
+    "win_rate": 0.8,
+    "avg_entry": 0.762355421686747,
+    "pnl_per_trade": 5.283690347638514,
+    "turnover_mean_daily": 0.000684331263153815
+   },
+   "ALL|False": {
+    "n": 529,
+    "win_rate": 0.7145557655954632,
+    "avg_entry": 0.7472703213610585,
+    "pnl_per_trade": -5.024350475320026,
+    "turnover_mean_daily": -0.003463766637237674
+   },
+   "touch|False": {
+    "n": 114,
+    "win_rate": 0.40350877192982454,
+    "avg_entry": 0.6923552631578948,
+    "pnl_per_trade": -42.54923592731822,
+    "turnover_mean_daily": -0.0185642984676102
+   },
+   "survival|True": {
+    "n": 6,
+    "win_rate": 0.5,
+    "avg_entry": 0.7191666666666667,
+    "pnl_per_trade": -39.01863647086577,
+    "turnover_mean_daily": -0.013473675550640671
+   },
+   "ALL|True": {
+    "n": 7,
+    "win_rate": 0.5714285714285714,
+    "avg_entry": 0.7371428571428572,
+    "pnl_per_trade": -30.824089079846065,
+    "turnover_mean_daily": -0.01097202846142208
+   },
+   "touch|True": {
+    "n": 1,
+    "win_rate": 1.0,
+    "avg_entry": 0.845,
+    "pnl_per_trade": 18.34319526627219,
+    "turnover_mean_daily": 0.004037854073889479
+   }
+  }
+ },
+ "baseline_population_50k": {
+  "entry_band": {
+   "survival|0.80-0.90": {
+    "n": 46,
+    "win_rate": 0.9565217391304348,
+    "avg_entry": 0.8647934782608695,
+    "pnl_per_trade": 10.69854985549033,
+    "turnover_mean_daily": 0.006988998639794692
+   },
+   "ALL|0.80-0.90": {
+    "n": 131,
+    "win_rate": 0.9007633587786259,
+    "avg_entry": 0.866469465648855,
+    "pnl_per_trade": 3.7667676191124406,
+    "turnover_mean_daily": 0.004771828000196949
+   },
+   "fixed|0.80-0.90": {
+    "n": 84,
+    "win_rate": 0.8690476190476191,
+    "avg_entry": 0.8676428571428572,
+    "pnl_per_trade": -0.20273726803687708,
+    "turnover_mean_daily": 0.0035664009109685115
+   },
+   "fixed|0.60-0.70": {
+    "n": 21,
+    "win_rate": 0.6666666666666666,
+    "avg_entry": 0.6526666666666666,
+    "pnl_per_trade": 2.5729441112303753,
+    "turnover_mean_daily": 0.0028355573055562394
+   },
+   "ALL|0.60-0.70": {
+    "n": 41,
+    "win_rate": 0.7804878048780488,
+    "avg_entry": 0.646548780487805,
+    "pnl_per_trade": 20.980913539578335,
+    "turnover_mean_daily": 0.014399272513788305
+   },
+   "fixed|0.70-0.80": {
+    "n": 32,
+    "win_rate": 0.71875,
+    "avg_entry": 0.7436875,
+    "pnl_per_trade": -3.6462448510465117,
+    "turnover_mean_daily": -0.0018042626352396387
+   },
+   "ALL|0.70-0.80": {
+    "n": 43,
+    "win_rate": 0.7674418604651163,
+    "avg_entry": 0.7480697674418605,
+    "pnl_per_trade": 2.339472488221281,
+    "turnover_mean_daily": 0.0033246975325118763
+   },
+   "touch|0.80-0.90": {
+    "n": 1,
+    "win_rate": 1.0,
+    "avg_entry": 0.845,
+    "pnl_per_trade": 18.34319526627219,
+    "turnover_mean_daily": 0.004037854073889479
+   },
+   "survival|0.60-0.70": {
+    "n": 17,
+    "win_rate": 0.9411764705882353,
+    "avg_entry": 0.6446176470588236,
+    "pnl_per_trade": 45.76459515772158,
+    "turnover_mean_daily": 0.030618408627884605
+   },
+   "touch|0.60-0.70": {
+    "n": 3,
+    "win_rate": 0.6666666666666666,
+    "avg_entry": 0.6146666666666666,
+    "pnl_per_trade": 9.395837035202305,
+    "turnover_mean_daily": 0.0034368409915337323
+   },
+   "survival|0.70-0.80": {
+    "n": 10,
+    "win_rate": 0.9,
+    "avg_entry": 0.7614,
+    "pnl_per_trade": 18.482682110117565,
+    "turnover_mean_daily": 0.015797762805544076
+   },
+   "touch|0.70-0.80": {
+    "n": 1,
+    "win_rate": 1.0,
+    "avg_entry": 0.755,
+    "pnl_per_trade": 32.4503311258278,
+    "turnover_mean_daily": 0.042720770170238356
+   }
+  },
+  "ttm_band": {
+   "survival|31-45d": {
+    "n": 51,
+    "win_rate": 0.9215686274509803,
+    "avg_entry": 0.8088333333333334,
+    "pnl_per_trade": 15.438188201048929,
+    "turnover_mean_daily": 0.004004988108884495
+   },
+   "ALL|31-45d": {
+    "n": 186,
+    "win_rate": 0.8279569892473119,
+    "avg_entry": 0.8008682795698925,
+    "pnl_per_trade": 3.6770207443134093,
+    "turnover_mean_daily": 0.001987751704522479
+   },
+   "fixed|31-45d": {
+    "n": 130,
+    "win_rate": 0.7923076923076923,
+    "avg_entry": 0.8020538461538461,
+    "pnl_per_trade": -1.4030982869916004,
+    "turnover_mean_daily": 0.0008338328943795594
+   },
+   "fixed|15-30d": {
+    "n": 7,
+    "win_rate": 1.0,
+    "avg_entry": 0.8741428571428571,
+    "pnl_per_trade": 14.674976842308554,
+    "turnover_mean_daily": 0.027569957048717834
+   },
+   "ALL|15-30d": {
+    "n": 14,
+    "win_rate": 1.0,
+    "avg_entry": 0.8286785714285714,
+    "pnl_per_trade": 21.69180674669203,
+    "turnover_mean_daily": 0.020759750140821483
+   },
+   "touch|31-45d": {
+    "n": 5,
+    "win_rate": 0.8,
+    "avg_entry": 0.6888,
+    "pnl_per_trade": 15.796207499541381,
+    "turnover_mean_daily": 0.011413829443745806
+   },
+   "survival|15-30d": {
+    "n": 7,
+    "win_rate": 1.0,
+    "avg_entry": 0.7832142857142858,
+    "pnl_per_trade": 28.708636651075505,
+    "turnover_mean_daily": 0.013949543232925132
+   },
+   "survival|4-7d": {
+    "n": 6,
+    "win_rate": 1.0,
+    "avg_entry": 0.7744166666666666,
+    "pnl_per_trade": 30.436127389262037,
+    "turnover_mean_daily": 0.06088386363140352
+   },
+   "ALL|4-7d": {
+    "n": 6,
+    "win_rate": 1.0,
+    "avg_entry": 0.7744166666666666,
+    "pnl_per_trade": 30.436127389262037,
+    "turnover_mean_daily": 0.06088386363140352
+   },
+   "survival|8-14d": {
+    "n": 7,
+    "win_rate": 1.0,
+    "avg_entry": 0.7460000000000001,
+    "pnl_per_trade": 36.513275963418934,
+    "turnover_mean_daily": 0.038575267900277405
+   },
+   "ALL|8-14d": {
+    "n": 7,
+    "win_rate": 1.0,
+    "avg_entry": 0.7460000000000001,
+    "pnl_per_trade": 36.513275963418934,
+    "turnover_mean_daily": 0.038575267900277405
+   },
+   "survival|<=3d": {
+    "n": 2,
+    "win_rate": 1.0,
+    "avg_entry": 0.87575,
+    "pnl_per_trade": 14.220240622234577,
+    "turnover_mean_daily": 0.03137662944304337
+   },
+   "ALL|<=3d": {
+    "n": 2,
+    "win_rate": 1.0,
+    "avg_entry": 0.87575,
+    "pnl_per_trade": 14.220240622234577,
+    "turnover_mean_daily": 0.03137662944304337
+   }
+  },
+  "neg_risk": {
+   "survival|False": {
+    "n": 60,
+    "win_rate": 0.9666666666666667,
+    "avg_entry": 0.80265,
+    "pnl_per_trade": 22.649805730523326,
+    "turnover_mean_daily": 0.015482846684028032
+   },
+   "ALL|False": {
+    "n": 81,
+    "win_rate": 0.9259259259259259,
+    "avg_entry": 0.7997530864197531,
+    "pnl_per_trade": 17.157997526426772,
+    "turnover_mean_daily": 0.01213727025919521
+   },
+   "fixed|True": {
+    "n": 118,
+    "win_rate": 0.7966101694915254,
+    "avg_entry": 0.8063135593220339,
+    "pnl_per_trade": -1.5087886787804192,
+    "turnover_mean_daily": 0.0022831752111946604
+   },
+   "ALL|True": {
+    "n": 134,
+    "win_rate": 0.8059701492537313,
+    "avg_entry": 0.8015149253731344,
+    "pnl_per_trade": 0.4810711237267754,
+    "turnover_mean_daily": 0.0028009159999576073
+   },
+   "survival|True": {
+    "n": 13,
+    "win_rate": 0.8461538461538461,
+    "avg_entry": 0.7841538461538461,
+    "pnl_per_trade": 7.38229910027679,
+    "turnover_mean_daily": 0.005462593162950229
+   },
+   "touch|True": {
+    "n": 3,
+    "win_rate": 1.0,
+    "avg_entry": 0.6880000000000001,
+    "pnl_per_trade": 48.843568790626364,
+    "turnover_mean_daily": 0.011631452651665493
+   },
+   "fixed|False": {
+    "n": 19,
+    "win_rate": 0.8421052631578947,
+    "avg_entry": 0.8021578947368421,
+    "pnl_per_trade": 5.1767960359653316,
+    "turnover_mean_daily": 0.0016828052994419815
+   },
+   "touch|False": {
+    "n": 2,
+    "win_rate": 0.5,
+    "avg_entry": 0.69,
+    "pnl_per_trade": -33.7748344370861,
+    "turnover_mean_daily": 0.011087394631866278
+   }
+  }
+ }
+}

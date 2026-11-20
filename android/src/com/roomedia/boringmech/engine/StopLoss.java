@@ -134,7 +134,21 @@ public final class StopLoss {
      * triggered가 된다 (원본 checkStopLossPosition과 같은 순서·같은 가드).
      */
     public static Eval evaluate(Object row, Object gammaPage1, Object gammaPage2) {
+        return evaluate(row, gammaPage1, gammaPage2, false);
+    }
+
+    /**
+     * tempTagged는 호출자가 매수 기록으로 확정한 손절 제외 여부
+     * (TempNo.isStopLossExempt)다. 기온 No 페이드는 정산까지 보유가
+     * 백테스트 전제라 손절 대상이 아니지만, 제외는 temp_no 태그 매수만 —
+     * 슬러그만으로는 메인 매수와 구분할 수 없다.
+     */
+    public static Eval evaluate(Object row, Object gammaPage1, Object gammaPage2,
+                                boolean tempTagged) {
         Object slug = Js.field(row, "slug");
+        if (tempTagged && slug instanceof String && TempNo.isTempSlug((String) slug)) {
+            return new Eval("skip", null);
+        }
         double entry = Js.fieldNum(row, "avg_price");
         double size = Js.fieldNum(row, "current_size");
         if (!Js.truthy(slug) || !Js.truthy(Js.field(row, "token_id")) || !Double.isFinite(entry)) {

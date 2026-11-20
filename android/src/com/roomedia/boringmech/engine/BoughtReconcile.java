@@ -36,9 +36,43 @@ public final class BoughtReconcile {
         List<Object> kept = new ArrayList<>();
         List<Object> dropped = new ArrayList<>();
         for (Object s : boughtSet) {
-            (truth.contains(s) ? kept : dropped).add(s);
+            // 진실 대조는 항목 형태가 아니라 slug로 한다 — 전략 태그를 단
+            // 객체 항목도 문자열 항목과 같은 기준으로 남기고, 남는 항목은
+            // 원본 형태(태그 포함) 그대로 돌려준다.
+            String slug = slugOfEntry(s);
+            (slug != null && truth.contains(slug) ? kept : dropped).add(s);
         }
         return new Reconcile(kept, dropped);
+    }
+
+    /**
+     * 매수 기록 항목에서 slug를 뽑는다 — 문자열 항목은 그 자체, 전략 태그
+     * 객체({slug, strategy})는 slug 필드. 어느 쪽도 아니면 null.
+     */
+    public static String slugOfEntry(Object entry) {
+        if (entry instanceof String) {
+            return (String) entry;
+        }
+        Object slug = Js.field(entry, "slug");
+        return slug instanceof String ? (String) slug : null;
+    }
+
+    /**
+     * 해당 slug의 매수 기록에 붙은 전략 태그 — 기온 매수면 "temp_no",
+     * 태그가 없거나 기록 자체가 없으면 null (메인 매수로 간주한다).
+     */
+    public static String strategyOf(List<Object> boughtEntries, String slug) {
+        if (slug == null || boughtEntries == null) {
+            return null;
+        }
+        for (Object e : boughtEntries) {
+            if (!slug.equals(slugOfEntry(e))) {
+                continue;
+            }
+            Object st = Js.field(e, "strategy");
+            return TempNo.STRATEGY.equals(st) ? TempNo.STRATEGY : null;
+        }
+        return null;
     }
 
     /**

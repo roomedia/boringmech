@@ -100,6 +100,13 @@ public final class NativeCycle {
 
         List<Object> fetchMarkets() throws Exception;
 
+        /**
+         * Gamma 기온 이벤트를 슬러그로 조회한다 — 이벤트 모델 목록. 도시별
+         * 실패는 구현이 건너뛰고, 전 도시 실패면 null을 돌려준다 (호출자는
+         * 캐시하지 않는다 — JS fetchTempEvents의 전수 실패 미캐시와 같다).
+         */
+        List<Object> fetchTempEvents(List<String> eventSlugs) throws Exception;
+
         /** Gamma slug 페이지 모델 (배열). 실패 시 예외 — 호출자가 JS .catch 의미론으로 감싼다. */
         Object gammaPageBySlug(String slug) throws Exception;
 
@@ -180,6 +187,10 @@ public final class NativeCycle {
     private boolean posGapWarned = false;
     /** slug → Gamma feeType 캐시 — 손절 판정의 Gamma 조회에서 채워지고 스냅샷의 수수료율 표시에 쓰인다. */
     private final Map<String, String> feeTypeBySlug = new HashMap<>();
+
+    /** 기온 이벤트 조회 캐시 — 사이클마다 도시 전수를 호출하지 않게 15분 유지한다. */
+    private List<Object> tempEventsCache;
+    private long tempEventsCacheAtMs;
 
     private List<Object> lastOpenRows = new ArrayList<>();
     private List<Object> lastWinRows;
@@ -478,18 +489,34 @@ public final class NativeCycle {
     private Set<String> boughtSlugStrings() {
         Set<String> out = new LinkedHashSet<>();
         for (Object v : boughtSlugsObjects()) {
-            if (v instanceof String) {
-                out.add((String) v);
+            // 문자열 항목과 전략 태그 객체 항목 양쪽에서 slug를 뽑는다.
+            String s = BoughtReconcile.slugOfEntry(v);
+            if (s != null) {
+                out.add(s);
             }
         }
         return out;
     }
 
-    private void markBought(String slug) {
-        Set<Object> set = boughtSlugsObjects();
-        set.add(slug);
-        env.durableWrite("bm_bought", ModelJson.stringify(new ArrayList<>(set)));
-        if (!boughtSlugsObjects().contains(slug)) {
+    private void markBought(String slug, String strategy) {
+        // 같은 slug의 기존 항목은 지우고 한 건만 남긴다. 기온 매수는 전략
+        // 태그를 단 객체로, 메인 매수는 기존 문자열 형태로 기록한다.
+        List<Object> entries = new ArrayList<>();
+        for (Object v : boughtSlugsObjects()) {
+            if (!slug.equals(BoughtReconcile.slugOfEntry(v))) {
+                entries.add(v);
+            }
+        }
+        if (TempNo.STRATEGY.equals(strategy)) {
+            Map<String, Object> e = new LinkedHashMap<>();
+            e.put("slug", slug);
+            e.put("strategy", TempNo.STRATEGY);
+            entries.add(e);
+        } else {
+            entries.add(slug);
+        }
+        env.durableWrite("bm_bought", ModelJson.stringify(entries));
+        if (!boughtSlugStrings().contains(slug)) {
             log("매수 기록 저장 확인 실패 " + slug + " — 저장소 쓰기가 반영되지 않았습니다");
         }
     }
@@ -525,6 +552,15 @@ public final class NativeCycle {
                 feeTypeBySlug.put(slug, feeType);
             }
         }
+        // 기온 No 페이드는 정산까지 보유가 전제라 손절 대상이 아니다 —
+        // 단, 제외는 매수 기록에 temp_no 태그가 있는 건만 (메인 매수·기록
+        // 없음은 손절 적용). 수수료 카테고리 캐시만 채우고 판정·매도는
+        // 건너뛴다 (evaluate에도 같은 가드가 있다).
+        boolean tempExempt = slug != null
+                && TempNo.isStopLossExempt(loadDurableJsonList("bm_bought"), slug);
+        if (tempExempt) {
+            return false;
+        }
         // JS는 1차 판정이 triggered일 때만 2차 조회를 한다 — 조회 횟수·시점을 맞춘다.
         boolean firstTriggered = false;
         StopLoss.GammaPrices p1 = StopLoss.parseGammaPrices(page1);
@@ -537,7 +573,7 @@ public final class NativeCycle {
             }
         }
         Object page2 = firstTriggered ? fetchGammaPageQuiet(slug) : null;
-        StopLoss.Eval ev = StopLoss.evaluate(row, page1, page2);
+        StopLoss.Eval ev = StopLoss.evaluate(row, page1, page2, tempExempt);
         String slugStr = Js.truthy(slugRaw) ? Js.str(slugRaw) : "?";
         double entry = Js.fieldNum(row, "avg_price");
         switch (ev.action) {
@@ -1039,7 +1075,7 @@ public final class NativeCycle {
             if (i > 0) {
                 joined.append(", ");
             }
-            joined.append(Js.str(rec.dropped.get(i)));
+            joined.append(BoughtReconcile.slugOfEntry(rec.dropped.get(i)));
         }
         log("기매수 기록 정화 — 온체인 매수 이력 없는 " + rec.dropped.size() + "건 제거: " + joined
                 + (rec.dropped.size() > 5 ? " 외" : ""));
@@ -1243,6 +1279,25 @@ public final class NativeCycle {
         runScanAndBuy(gen, snap);
     }
 
+    /**
+     * 당일 기온 이벤트 조회 — 15분 캐시. 도시별 실패는 Net 구현이
+     * 건너뛰므로 돌아온 목록(빈 목록 포함)을 그대로 캐시한다. 단,
+     * 전 도시 실패(null)는 캐시하지 않아 다음 사이클에 다시 시도한다
+     * (JS fetchTempEvents와 같은 규칙).
+     */
+    private List<Object> tempEvents(long nowMs) throws Exception {
+        if (tempEventsCache != null && nowMs - tempEventsCacheAtMs < TempNo.CACHE_MS) {
+            return tempEventsCache;
+        }
+        List<Object> events = net.fetchTempEvents(TempNo.todayEventSlugs(nowMs));
+        if (events == null) {
+            return new ArrayList<>();
+        }
+        tempEventsCache = events;
+        tempEventsCacheAtMs = nowMs;
+        return events;
+    }
+
     private void runScanAndBuy(int gen, Snap snap) throws Exception {
         List<Object> markets = net.fetchMarkets();
         Map<String, Integer> scanStats = new LinkedHashMap<>();
@@ -1254,6 +1309,28 @@ public final class NativeCycle {
         boughtAll.addAll(StopLossLedger.attemptedSlugs(ledgerStore));
         List<ScanFilter.Candidate> candidates = ScanFilter.scanCandidates(
                 markets, snap.heldSlugs, boughtAll, scanStats, env.nowMs());
+        // 기온 No 페이드 — 설정이 켜졌을 때만 별도 스캔을 붙인다. 후보는
+        // 같은 선정 패스(슬롯·검증 캡 공유)를 타고, 메인 후보와 slug가
+        // 겹치면 메인 쪽이 이긴다. 기온 스캔 통계는 요약에 섞지 않는다.
+        TempNo.Settings tempSettings = TempNo.parseSettings(env.durableRead(TempNo.SETTINGS_KEY));
+        if (tempSettings.enabled) {
+            try {
+                List<Object> events = tempEvents(env.nowMs());
+                Set<String> mainSlugs = new HashSet<>();
+                for (ScanFilter.Candidate c : candidates) {
+                    mainSlugs.add(c.slug);
+                }
+                List<ScanFilter.Candidate> tempCands = TempNo.scanTempCandidates(
+                        events, snap.heldSlugs, boughtAll, tempSettings, env.nowMs(), mainSlugs);
+                if (!tempCands.isEmpty()) {
+                    log("기온 후보 " + tempCands.size() + "건 (밴드 " + n(tempSettings.bandLo)
+                            + "–" + n(TempNo.BAND_HI) + ")");
+                    candidates.addAll(tempCands);
+                }
+            } catch (Exception e) {
+                log("기온 스캔 오류: " + slice(msg(e), 120));
+            }
+        }
         int slotsLeft = snap.slots;
         int verified = 0;
         Map<String, Integer> rejects = new LinkedHashMap<>();
@@ -1320,10 +1397,11 @@ public final class NativeCycle {
                         resp = client.postOrder(signed, "FOK");
                     } catch (Exception e) {
                         failedCount++;
-                        markBought(cand.slug);
+                        markBought(cand.slug, cand.strategy);
                         slotsLeft--;
                         String m = msg(e);
-                        log("주문 결과 불명 " + cand.slug + ": " + slice(m, 120) + " — 중복 방지 기록");
+                        log("주문 결과 불명 " + cand.slug + ": " + slice(m, 120) + " — 중복 방지 기록"
+                                + (TempNo.STRATEGY.equals(cand.strategy) ? " · 전략 temp_no" : ""));
                         errorNotify(com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_UNKNOWN,
                                 "주문 결과 불명",
                                 cand.slug + " · 제출 응답이 끊겨 체결 여부를 모릅니다 — 보유 목록에서 확인하세요");
@@ -1337,10 +1415,11 @@ public final class NativeCycle {
                     JudgeFill.Verdict verdict = JudgeFill.judgeFill(resp);
                     if (!verdict.filled && "unknown".equals(verdict.kind)) {
                         failedCount++;
-                        markBought(cand.slug);
+                        markBought(cand.slug, cand.strategy);
                         slotsLeft--;
                         log("주문 결과 불명 " + cand.slug + ": " + slice(verdict.error == null ? "" : verdict.error, 120)
-                                + " — 중복 방지 기록");
+                                + " — 중복 방지 기록"
+                                + (TempNo.STRATEGY.equals(cand.strategy) ? " · 전략 temp_no" : ""));
                         errorNotify(com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_UNKNOWN,
                                 "주문 결과 불명",
                                 cand.slug + " · 체결 여부를 확정하지 못했습니다 — 보유 목록에서 확인하세요");
@@ -1364,9 +1443,10 @@ public final class NativeCycle {
                     if (!verdict.filled) {
                         unfilledCount++;
                         if ("delayed".equals(verdict.status)) {
-                            markBought(cand.slug);
+                            markBought(cand.slug, cand.strategy);
                             slotsLeft--;
-                            log("미체결(지연 접수) " + cand.slug + " — 뒤늦은 체결에 대비해 기록하고 슬롯을 소모합니다");
+                            log("미체결(지연 접수) " + cand.slug + " — 뒤늦은 체결에 대비해 기록하고 슬롯을 소모합니다"
+                                    + (TempNo.STRATEGY.equals(cand.strategy) ? " · 전략 temp_no" : ""));
                         } else {
                             Object st = Js.field(resp, "status");
                             String statusText = (st == Js.UNDEFINED || st == null) ? "(없음)" : Js.str(st);
@@ -1375,7 +1455,7 @@ public final class NativeCycle {
                         }
                         continue;
                     }
-                    markBought(cand.slug);
+                    markBought(cand.slug, cand.strategy);
                     sessionFills++;
                     filledCount++;
                     slotsLeft--;
@@ -1386,7 +1466,10 @@ public final class NativeCycle {
                     String fill = hasFillPrice ? " 체결가 " + n(fillPrice) : "";
                     Object respStatus = Js.field(resp, "status");
                     log("매수 " + cand.slug + " · $" + n(snap.bet) + " @ " + n(detail.limitPrice) + fill
-                            + " · 상태 " + (Js.truthy(respStatus) ? Js.str(respStatus) : "matched"));
+                            + " · 상태 " + (Js.truthy(respStatus) ? Js.str(respStatus) : "matched")
+                            + (TempNo.STRATEGY.equals(cand.strategy) ? " · 전략 temp_no" : "")
+                            + (TempNo.STRATEGY.equals(cand.strategy) && cand.feeRate != null
+                                    ? " · 수수료율 " + n(cand.feeRate) : ""));
                     // 응답에 실제 체결 수량·가격이 있을 때만 본문에 넣는다.
                     // 없는데 추정 수량·지정가를 넣으면 체결값으로 오독된다.
                     boolean hasTaking = Js.truthy(taking) && Double.isFinite(Js.num(taking));

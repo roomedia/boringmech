@@ -112,7 +112,17 @@ public final class CandidateVerifier {
         if (!Js.truthy(Js.field(m, "active")) || Js.truthy(Js.field(m, "closed"))) {
             return Result.reject("market_inactive");
         }
-        {
+        // 기온 후보는 자기 밴드와 진입 창을 들고 온다 — 메인 밴드(0.60~0.90)와
+        // 45일 만기 창을 적용하면 전건 탈락하므로 전략별로 갈라서 본다.
+        boolean isTemp = TempNo.STRATEGY.equals(cand.strategy);
+        double bandLo = isTemp ? cand.bandLo : ScanFilter.BAND_LO;
+        double bandHi = isTemp ? cand.bandHi : ScanFilter.BAND_HI;
+        if (isTemp) {
+            Long endMs = TempNo.parseEndMs(Js.field(m, "endDate"));
+            if (endMs == null || !TempNo.windowOpen(nowMs, endMs)) {
+                return Result.reject("end_out_of_range");
+            }
+        } else {
             String todayIso = ScanFilter.isoDay(nowMs);
             String endMaxIso = ScanFilter.isoDay(nowMs + ScanFilter.END_WINDOW_DAYS_MS);
             Object endRaw = Js.field(m, "endDate");
@@ -145,7 +155,7 @@ public final class CandidateVerifier {
         }
         double bestAsk = asks.get(0)[0];
         double bestBid = bids.get(0)[0];
-        if (bestAsk < ScanFilter.BAND_LO || bestAsk > ScanFilter.BAND_HI) {
+        if (bestAsk < bandLo || bestAsk > bandHi) {
             return Result.reject("ask_out_of_band");
         }
         // 신호가보다 크게 비싸진 호가는 사지 않는다.
@@ -160,7 +170,7 @@ public final class CandidateVerifier {
         }
         Object tickRaw = Js.field(book, "tick_size");
         double tick = Js.truthy(tickRaw) ? Js.num(tickRaw) : books.getTickSize(tokenId);
-        double limitPrice = Math.min(Js.roundTick(bestAsk + SLIPPAGE_CAP, tick), ScanFilter.BAND_HI);
+        double limitPrice = Math.min(Js.roundTick(bestAsk + SLIPPAGE_CAP, tick), bandHi);
         // 최소 주문 수량 검사용 추정치 — 실제 주식수는 시장가 주문이 금액에서 역산한다
         double estShares = bet / limitPrice;
         double minSize = Js.numOrZero(Js.field(book, "min_order_size"));

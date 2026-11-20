@@ -174,6 +174,33 @@ final class NativeNet implements NativeCycle.Net {
         return fetchJsonModel(GAMMA_API + "?slug=" + enc(slug));
     }
 
+    private static final String GAMMA_EVENTS_API = "https://gamma-api.polymarket.com/events";
+
+    @Override
+    public List<Object> fetchTempEvents(List<String> eventSlugs) {
+        List<Object> events = new ArrayList<>();
+        int failures = 0;
+        for (String slug : eventSlugs) {
+            try {
+                Object page = fetchJsonModel(GAMMA_EVENTS_API + "?slug=" + enc(slug));
+                if (page instanceof List && !((List<?>) page).isEmpty()) {
+                    events.add(((List<?>) page).get(0));
+                }
+            } catch (Exception ignored) {
+                // 도시별 실패는 그 도시만 건너뛴다 (JS fetchTempEvents와 같다).
+                failures++;
+            }
+            beat();
+        }
+        // 전 도시 실패는 빈 목록과 구분한다 — JS는 전부 실패한 조회를
+        // 캐시하지 않으므로, 네이티브도 null로 알려 호출자가 캐시하지
+        // 않게 한다 (감사 2026-11-20 패리티 수리).
+        if (!eventSlugs.isEmpty() && failures == eventSlugs.size()) {
+            return null;
+        }
+        return events;
+    }
+
     @Override
     public NativeCycle.MarketContext fetchMarketContext(String conditionId) throws Exception {
         Object page = fetchJsonModel(GAMMA_API + "?condition_ids=" + enc(conditionId) + "&closed=true");

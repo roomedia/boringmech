@@ -2106,6 +2106,94 @@
    }
   },
   {
+   "kind": "slEvaluate",
+   "name": "eval-temp-tagged-skip",
+   "description": "기온 슬러그 + temp_no 태그 매수 → 손절 제외 skip",
+   "input": {
+    "row": {
+     "slug": "highest-temperature-in-seoul-on-november-18-2026-7c",
+     "token_id": "tok-1",
+     "avg_price": 0.98,
+     "current_size": 10,
+     "outcome": "No"
+    },
+    "page1": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.9\",\"0.1\"]"
+     }
+    ],
+    "page2": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.9\",\"0.1\"]"
+     }
+    ],
+    "bought": [
+     {
+      "slug": "highest-temperature-in-seoul-on-november-18-2026-7c",
+      "strategy": "temp_no"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "slEvaluate",
+   "name": "eval-temp-untagged-triggered",
+   "description": "기온 슬러그지만 태그 없는(메인) 매수 → 손절 적용",
+   "input": {
+    "row": {
+     "slug": "highest-temperature-in-seoul-on-november-18-2026-7c",
+     "token_id": "tok-1",
+     "avg_price": 0.98,
+     "current_size": 10,
+     "outcome": "No"
+    },
+    "page1": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.9\",\"0.1\"]"
+     }
+    ],
+    "page2": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.9\",\"0.1\"]"
+     }
+    ],
+    "bought": [
+     "highest-temperature-in-seoul-on-november-18-2026-7c"
+    ]
+   }
+  },
+  {
+   "kind": "slEvaluate",
+   "name": "eval-temp-norecord-triggered",
+   "description": "기온 슬러그 + 매수 기록 없음 → 손절 적용",
+   "input": {
+    "row": {
+     "slug": "highest-temperature-in-seoul-on-november-18-2026-7c",
+     "token_id": "tok-1",
+     "avg_price": 0.98,
+     "current_size": 10,
+     "outcome": "No"
+    },
+    "page1": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.9\",\"0.1\"]"
+     }
+    ],
+    "page2": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.9\",\"0.1\"]"
+     }
+    ],
+    "bought": []
+   }
+  },
+  {
    "kind": "plan",
    "name": "plan-mixed",
    "description": "승·패 혼합 그룹 분류 + expected 합산",

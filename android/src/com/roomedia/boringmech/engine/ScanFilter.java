@@ -51,13 +51,29 @@ public final class ScanFilter {
         public final String side;
         public final double price;
         public final String endDate;
+        /** 전략 식별 — 메인 후보는 null, 기온 No 페이드는 TempNo.STRATEGY. */
+        public final String strategy;
+        /** 검증 단계에서 쓰는 후보 자신의 밴드 — 메인은 BAND_LO~BAND_HI와 같다. */
+        public final double bandLo;
+        public final double bandHi;
+        /** 스캔 시점에 해석한 테이커 수수료율 — 해석 불가면 null (표시·기록용). */
+        public final Double feeRate;
 
         public Candidate(String slug, String question, String side, double price, String endDate) {
+            this(slug, question, side, price, endDate, null, BAND_LO, BAND_HI, null);
+        }
+
+        public Candidate(String slug, String question, String side, double price, String endDate,
+                         String strategy, double bandLo, double bandHi, Double feeRate) {
             this.slug = slug;
             this.question = question;
             this.side = side;
             this.price = price;
             this.endDate = endDate;
+            this.strategy = strategy;
+            this.bandLo = bandLo;
+            this.bandHi = bandHi;
+            this.feeRate = feeRate;
         }
     }
 

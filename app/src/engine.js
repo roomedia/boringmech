@@ -17,6 +17,7 @@ const APP_VERSION = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : n
 
 const CLOB_HOST = "https://clob.polymarket.com";
 const GAMMA_MARKETS_URL = "https://gamma-api.polymarket.com/markets";
+const GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events";
 const DATA_API_V2 = "https://data-api.polymarket.com/v2";
 const PUSD = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
 const POLYGON_RPCS = [
@@ -85,6 +86,7 @@ const LS = {
   manualSellArchive: "bm_manual_sell_archive",
   manualSellAttempted: "bm_manual_sell_attempted",
   manualSellAttemptedArchive: "bm_manual_sell_attempted_archive",
+  settings: "bm_settings",
 };
 
 // 손절 (2026-11-14 사용자 결정 — 페이퍼 boringmech와 동일 규칙):
@@ -537,6 +539,197 @@ export function scanCandidates(markets, heldSlugs, boughtSlugs, stats = null) {
   return out;
 }
 
+// ── 기온 No 페이드 (2026-11-20) ─────────────────────────────
+// 일일 최고기온 이벤트(highest-temperature-in-<city>-on-<date>, negRisk
+// 그룹)의 정확한 정수 기온 시장 No를 밴드 안에서 사서 정산까지 보유한다.
+// 근거는 전용 백테스트 PASS (backtest-temp-no-20261119.md). 정산까지
+// 보유가 전제라 손절에서는 매수 태그(temp_no)가 있는 건만 제외한다. 기본 OFF — 뷰어
+// 설정(bm_settings)의 tempNoEnabled가 켜질 때만 후보를 만든다.
+export const TEMP_NO_BAND_HI = 0.998;
+export const TEMP_NO_DEFAULT_BAND_LO = 0.8;
+export const TEMP_NO_FEE_RATE = 0.05;
+const TEMP_NO_ENTRY_HOUR_UTC = 6;
+const TEMP_NO_CACHE_MS = 15 * 60_000;
+const TEMP_NO_SLUG_PREFIX = "highest-temperature-in-";
+const TEMP_NO_MONTHS = [
+  "january", "february", "march", "april", "may", "june", "july",
+  "august", "september", "october", "november", "december",
+];
+// 도시 슬러그 전체 — 백테스트 캐시(bt-temp-no-20261119)의 public-search
+// 수확분과 같은 목록이다.
+export const TEMP_NO_CITIES = [
+  "amsterdam", "ankara", "austin", "beijing", "buenos-aires", "busan",
+  "cape-town", "chengdu", "chongqing", "dallas", "guangzhou", "helsinki",
+  "hong-kong", "houston", "istanbul", "jeddah", "kuala-lumpur", "london",
+  "los-angeles", "madrid", "miami", "milan", "munich", "nyc", "paris",
+  "qingdao", "san-francisco", "sao-paulo", "seattle", "seoul", "shanghai",
+  "shenzhen", "singapore", "taipei", "tel-aviv", "tokyo", "toronto",
+  "warsaw", "wellington", "wuhan",
+];
+
+/** 기온 이벤트·하위 시장 슬러그 판정 — 손절 제외의 슬러그 쪽 조건 (매수 태그와 함께 본다). */
+export function isTempNoSlug(slug) {
+  return typeof slug === "string" && slug.startsWith(TEMP_NO_SLUG_PREFIX);
+}
+
+const EXACT_TEMP_TITLE_RE = /^-?\d+°[CF]$/;
+
+/**
+ * 정확한 정수 기온 판정 — groupItemTitle이 정수 기온만으로 된 것만
+ * ("3°C"·"72°F"). "6°C or below"·"21°C or higher" 꼬리 버킷과
+ * "50-51°F" 구간 버킷은 제외한다.
+ */
+export function isExactTempTitle(title) {
+  return typeof title === "string" && EXACT_TEMP_TITLE_RE.test(title.trim());
+}
+
+/** 오늘(UTC) 날짜의 도시별 이벤트 슬러그. */
+export function tempEventSlugFor(city, nowMs) {
+  const d = new Date(nowMs);
+  return `${TEMP_NO_SLUG_PREFIX}${city}-on-${TEMP_NO_MONTHS[d.getUTCMonth()]}-${d.getUTCDate()}-${d.getUTCFullYear()}`;
+}
+
+/**
+ * 진입 창 — 이벤트 당일 06:00 UTC ≤ now < 이벤트 endDate.
+ * 이벤트 날짜는 endDate의 UTC 날짜로 정한다 (실측 endDate는 당일
+ * 12:00 UTC). 창 밖이면 후보를 만들지 않는다.
+ */
+export function tempWindowOpen(nowMs, endMs) {
+  if (!Number.isFinite(nowMs) || !Number.isFinite(endMs)) return false;
+  const d = new Date(endMs);
+  const startMs = Date.UTC(
+    d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), TEMP_NO_ENTRY_HOUR_UTC,
+  );
+  return startMs <= nowMs && nowMs < endMs;
+}
+
+/**
+ * 뷰어 설정(bm_settings) 해석 — { tempNoEnabled, tempNoBandLo }.
+ * 토글은 정확히 true일 때만 켜진 것으로 보고, 밴드 하한은 (0, 0.998]
+ * 범위를 벗어나면 기본값으로 되돌린다 (못 믿는 설정으로 사지 않는다).
+ */
+export function parseTempSettings(raw) {
+  let o = raw;
+  if (typeof raw === "string") {
+    try {
+      o = JSON.parse(raw);
+    } catch {
+      o = null;
+    }
+  }
+  if (!o || typeof o !== "object") {
+    return { enabled: false, bandLo: TEMP_NO_DEFAULT_BAND_LO };
+  }
+  const lo = Number(o.tempNoBandLo);
+  const bandLo = Number.isFinite(lo) && lo > 0 && lo <= TEMP_NO_BAND_HI
+    ? lo
+    : TEMP_NO_DEFAULT_BAND_LO;
+  return { enabled: o.tempNoEnabled === true, bandLo };
+}
+
+// 테이커 수수료율 — feeType 카테고리 매핑(네이티브 ManualSell의
+// feeRateForFeeType와 같은 표)이 1순위, 판정 불가면 시장의
+// feeSchedule rate를 쓴다. 기온은 weather 카테고리라 0.05다.
+function feeRateForFeeType(feeType) {
+  if (feeType == null || feeType === "") return null;
+  const f = String(feeType).toLowerCase();
+  if (f.startsWith("crypto")) return 0.07;
+  if (f.startsWith("politics") || f.startsWith("finance") || f.startsWith("tech")) return 0.04;
+  if (f.startsWith("geopolitics")) return 0.0;
+  return 0.05;
+}
+
+export function resolveTempFeeRate(m) {
+  const byType = feeRateForFeeType(m?.feeType);
+  if (byType != null) return byType;
+  const rate = Number(m?.feeSchedule?.rate);
+  return Number.isFinite(rate) && rate >= 0 ? rate : null;
+}
+
+/**
+ * 기온 이벤트 목록 → No 페이드 후보. 후보는 메인 후보와 같은 선정
+ * 패스(슬롯·검증 캡 공유)를 타며, excludeSlugs(메인 후보 slug)와
+ * 겹치면 메인 쪽이 이긴다. 정렬은 만기 가까운 순, 동률은 No 가격
+ * 높은 순 (백테스트의 평균 진입가 쪽부터 채운다).
+ */
+export function scanTempCandidates(events, heldSlugs, boughtSlugs, settings, nowMs, stats = null, excludeSlugs = null) {
+  const out = [];
+  if (!settings?.enabled) return out;
+  const bandLo = settings.bandLo;
+  const drop = (reason) => {
+    if (stats) stats[reason] = (stats[reason] || 0) + 1;
+  };
+  for (const ev of events || []) {
+    if (!ev || !isTempNoSlug(ev.slug)) continue;
+    const endMs = Date.parse(ev.endDate || "");
+    if (!Number.isFinite(endMs)) { drop("temp_end_bad"); continue; }
+    if (!tempWindowOpen(nowMs, endMs)) { drop("temp_window"); continue; }
+    for (const m of ev.markets || []) {
+      if (!m.active || m.closed) { drop("temp_inactive"); continue; }
+      if (m.acceptingOrders === false || m.archived === true) { drop("temp_not_accepting"); continue; }
+      const slug = m.slug || "";
+      if (heldSlugs.has(slug) || boughtSlugs.has(slug) || (excludeSlugs && excludeSlugs.has(slug))) {
+        drop("temp_owned");
+        continue;
+      }
+      if (!isExactTempTitle(m.groupItemTitle)) { drop("temp_not_exact"); continue; }
+      let prices;
+      try {
+        prices = JSON.parse(m.outcomePrices || "[]").map(Number);
+      } catch {
+        drop("temp_price_bad");
+        continue;
+      }
+      if (prices.length < 2 || !Number.isFinite(prices[0]) || !Number.isFinite(prices[1])) {
+        drop("temp_price_bad");
+        continue;
+      }
+      // No 가격 = Gamma outcomePrices[1] (Yes의 보수와 같은 값).
+      const price = prices[1];
+      if (price < bandLo || price > TEMP_NO_BAND_HI) { drop("temp_band_out"); continue; }
+      out.push({
+        slug,
+        question: m.question || "",
+        side: "no",
+        price,
+        endDate: m.endDate || ev.endDate || "",
+        strategy: "temp_no",
+        bandLo,
+        bandHi: TEMP_NO_BAND_HI,
+        feeRate: resolveTempFeeRate(m),
+      });
+    }
+  }
+  out.sort((a, b) => a.endDate.localeCompare(b.endDate) || b.price - a.price);
+  return out;
+}
+
+// 당일 기온 이벤트 조회 — 도시별 슬러그 직접 조회라 사이클마다 전수
+// 호출하지 않게 15분 캐시를 둔다. 도시별 실패는 그 도시만 건너뛰고,
+// 전부 실패한 조회는 캐시하지 않아 다음 사이클에 다시 시도한다.
+let tempEventsCache = { atMs: 0, events: null };
+async function fetchTempEvents(nowMs) {
+  if (tempEventsCache.events && nowMs - tempEventsCache.atMs < TEMP_NO_CACHE_MS) {
+    return tempEventsCache.events;
+  }
+  const events = [];
+  let failures = 0;
+  for (const city of TEMP_NO_CITIES) {
+    try {
+      const page = await fetchJson(
+        `${GAMMA_EVENTS_URL}?${new URLSearchParams({ slug: tempEventSlugFor(city, nowMs) })}`,
+      );
+      if (Array.isArray(page) && page[0]) events.push(page[0]);
+    } catch {
+      failures += 1;
+    }
+  }
+  if (failures < TEMP_NO_CITIES.length) {
+    tempEventsCache = { atMs: nowMs, events };
+  }
+  return events;
+}
+
 function roundTick(price, tick) {
   const q = Math.floor(price / tick + 0.5);
   return Number((q * tick).toFixed(6));
@@ -636,19 +829,54 @@ export function boughtCorrupted() {
   }
 }
 
-function boughtSlugs() {
+// 매수 기록 항목은 두 형태가 섞인다 — 기존 문자열(slug만)과, 전략 태그를
+// 단 객체({slug, strategy})다. 기온 No 페이드 매수만 객체로 남겨 손절
+// 제외를 슬러그 패턴이 아니라 실제 전략 귀속으로 판정한다.
+function boughtEntries() {
   try {
     const parsed = JSON.parse(durableRead(LS.bought) || "[]");
-    return new Set(Array.isArray(parsed) ? parsed : []);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    return new Set();
+    return [];
   }
 }
 
-function markBought(slug) {
-  const set = boughtSlugs();
-  set.add(slug);
-  durableWrite(LS.bought, JSON.stringify([...set]));
+function boughtEntrySlug(entry) {
+  if (typeof entry === "string") return entry;
+  if (entry && typeof entry === "object" && typeof entry.slug === "string") {
+    return entry.slug;
+  }
+  return null;
+}
+
+function boughtSlugs() {
+  const out = new Set();
+  for (const e of boughtEntries()) {
+    const s = boughtEntrySlug(e);
+    if (s) out.add(s);
+  }
+  return out;
+}
+
+/**
+ * 해당 slug의 매수 기록에 붙은 전략 태그 — 기온 매수면 "temp_no",
+ * 태그가 없거나 기록 자체가 없으면 null (메인 매수로 간주한다).
+ */
+export function boughtStrategyOf(slug) {
+  if (!slug) return null;
+  for (const e of boughtEntries()) {
+    if (boughtEntrySlug(e) !== slug) continue;
+    return e && typeof e === "object" && e.strategy === "temp_no"
+      ? "temp_no"
+      : null;
+  }
+  return null;
+}
+
+export function markBought(slug, strategy) {
+  const entries = boughtEntries().filter((e) => boughtEntrySlug(e) !== slug);
+  entries.push(strategy === "temp_no" ? { slug, strategy: "temp_no" } : slug);
+  durableWrite(LS.bought, JSON.stringify(entries));
   // 쓰기가 조용히 실패하면 잠금·기록이 동시에 없는 상태가 된다 — 다시
   // 읽어 실제로 남았는지 확인하고, 없으면 로그로 드러낸다.
   if (!boughtSlugs().has(slug)) {
@@ -736,7 +964,13 @@ async function reconcileBoughtOnce(snap) {
   if (!cur.size) return;
   const { kept, dropped } = reconcileBought(cur, fetched.slugs, snap.heldSlugs);
   if (!dropped.length) return;
-  durableWrite(LS.bought, JSON.stringify(kept));
+  // 남은 항목은 원본 형태(전략 태그 포함) 그대로 다시 쓴다 — slug 문자열로
+  // 되쓰면 기온 매수의 태그가 정화 한 번에 사라진다.
+  const keptSet = new Set(kept);
+  durableWrite(
+    LS.bought,
+    JSON.stringify(boughtEntries().filter((e) => keptSet.has(boughtEntrySlug(e)))),
+  );
   log(
     `기매수 기록 정화 — 온체인 매수 이력 없는 ${dropped.length}건 제거: ` +
       dropped.slice(0, 5).join(", ") + (dropped.length > 5 ? " 외" : ""),
@@ -1081,7 +1315,19 @@ async function verifyCandidate(cand, bet) {
   // 스캔 후 상태가 바뀐 마켓은 사지 않는다 — 활성·종료·만기를 스캔과
   // 같은 규칙으로 다시 본다.
   if (!m.active || m.closed) return reject("market_inactive");
-  {
+  // 기온 후보는 자기 밴드와 진입 창을 들고 온다 — 메인 밴드(0.60~0.90)와
+  // 45일 만기 창을 적용하면 전건 탈락하므로 전략별로 갈라서 본다.
+  const isTemp = cand.strategy === "temp_no";
+  const bandLo = isTemp ? cand.bandLo : BAND_LO;
+  const bandHi = isTemp ? cand.bandHi : BAND_HI;
+  if (isTemp) {
+    const endMs = Date.parse(m.endDate || "");
+    if (!Number.isFinite(endMs)) return reject("end_out_of_range");
+    const d = new Date(endMs);
+    const startMs = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 6);
+    const nowMs = Date.now();
+    if (!(startMs <= nowMs && nowMs < endMs)) return reject("end_out_of_range");
+  } else {
     const todayIso = new Date().toISOString().slice(0, 10);
     const endMaxIso = new Date(Date.now() + 45 * 86400_000).toISOString().slice(0, 10);
     const end = (m.endDate || "").slice(0, 10);
@@ -1107,14 +1353,14 @@ async function verifyCandidate(cand, bet) {
   if (!bids.length) return reject("no_bids");
   const bestAsk = asks[0].price;
   const bestBid = bids[0].price;
-  if (bestAsk < BAND_LO || bestAsk > BAND_HI) return reject("ask_out_of_band");
+  if (bestAsk < bandLo || bestAsk > bandHi) return reject("ask_out_of_band");
   // 신호가보다 크게 비싸진 호가는 사지 않는다 — 슬리피지 상한이 호가
   // 기준뿐이면 신호 0.75를 0.90에 사는 경로가 정상으로 통과한다.
   if (bestAsk > cand.price + 0.05) return reject("ask_above_signal");
   if (bestAsk - bestBid > SPREAD_MAX + 1e-9) return reject("spread_too_wide");
   if (asks[0].size * bestAsk < Math.max(ASK_DEPTH_MIN_USD, bet)) return reject("ask_depth_low");
   const tick = Number(book.tick_size || (await state.client.getTickSize(tokenId)));
-  const limitPrice = Math.min(roundTick(bestAsk + SLIPPAGE_CAP, tick), BAND_HI);
+  const limitPrice = Math.min(roundTick(bestAsk + SLIPPAGE_CAP, tick), bandHi);
   // 최소 주문 수량 검사용 추정치 — 실제 주식수는 시장가 주문이 금액에서 역산한다
   const estShares = bet / limitPrice;
   const minSize = Number(book.min_order_size || 0);
@@ -1567,6 +1813,11 @@ async function executeStopLossSellLocked(row, current) {
 
 async function checkStopLossPosition(row) {
   const slug = row?.slug;
+  // 기온 No 페이드는 정산까지 보유가 백테스트 전제라 손절 대상이 아니다.
+  // 단, 제외는 매수 기록에 temp_no 태그가 있는 건만 — 메인 전략이 밴드
+  // 겹침으로 산 기온 시장은 태그가 없어 손절이 그대로 적용되고, 기록을
+  // 찾을 수 없는 경우도 메인으로 간주한다 (안전 기본값).
+  if (isTempNoSlug(slug) && boughtStrategyOf(slug) === "temp_no") return false;
   const entry = Number(row?.avg_price);
   const size = Number(row?.current_size);
   if (!slug || !row?.token_id || !Number.isFinite(entry)) return false;
@@ -1747,6 +1998,25 @@ async function runCycle(gen) {
   for (const s of snap.stopLossSlugs || []) boughtAll.add(s);
   for (const s of stopLossAttemptedSlugs()) boughtAll.add(s);
   const candidates = scanCandidates(markets, snap.heldSlugs, boughtAll, scanStats);
+  // 기온 No 페이드 — 설정이 켜졌을 때만 별도 스캔을 붙인다. 후보는 같은
+  // 선정 패스(슬롯·검증 캡 공유)를 타고, 메인 후보와 slug가 겹치면
+  // 메인 쪽이 이긴다 (excludeSlugs). 기온 스캔 통계는 요약에 섞지 않는다.
+  const tempSettings = parseTempSettings(durableRead(LS.settings));
+  if (tempSettings.enabled) {
+    try {
+      const events = await fetchTempEvents(Date.now());
+      const mainSlugs = new Set(candidates.map((c) => c.slug));
+      const tempCands = scanTempCandidates(
+        events, snap.heldSlugs, boughtAll, tempSettings, Date.now(), null, mainSlugs,
+      );
+      if (tempCands.length) {
+        log(`기온 후보 ${tempCands.length}건 (밴드 ${tempSettings.bandLo}–${TEMP_NO_BAND_HI})`);
+        candidates.push(...tempCands);
+      }
+    } catch (e) {
+      log(`기온 스캔 오류: ${String(e?.message ?? e).slice(0, 120)}`);
+    }
+  }
   state.lastScan = { stats: scanStats, fetched: markets.length, ts: Date.now() };
   let slotsLeft = snap.slots;
   let verified = 0;
@@ -1819,10 +2089,10 @@ async function runCycle(gen) {
         // 매수한 것으로 기록하고 슬롯도 소모한 것으로 본다 (체결됐는데
         // 슬롯이 남아 같은 사이클에 추가 매수가 나가면 사이징 상한을 넘는다)
         failedCount += 1;
-        markBought(cand.slug);
+        markBought(cand.slug, cand.strategy);
         slotsLeft -= 1;
         const msg = String(e.message ?? e);
-        log(`주문 결과 불명 ${cand.slug}: ${msg.slice(0, 120)} — 중복 방지 기록`);
+        log(`주문 결과 불명 ${cand.slug}: ${msg.slice(0, 120)} — 중복 방지 기록${cand.strategy === "temp_no" ? " · 전략 temp_no" : ""}`);
         if (isFailsafe(msg)) {
           stop();
           log("failsafe 감지 — 엔진 정지. 정지 사유를 확인한 뒤 다시 실행하세요.");
@@ -1835,9 +2105,9 @@ async function runCycle(gen) {
         // 전송 단계 실패로 응답만 유실된 경우 — throw 경로와 동일하게
         // 체결됐을 수 있는 것으로 취급한다.
         failedCount += 1;
-        markBought(cand.slug);
+        markBought(cand.slug, cand.strategy);
         slotsLeft -= 1;
-        log(`주문 결과 불명 ${cand.slug}: ${String(verdict.error || "").slice(0, 120)} — 중복 방지 기록`);
+        log(`주문 결과 불명 ${cand.slug}: ${String(verdict.error || "").slice(0, 120)} — 중복 방지 기록${cand.strategy === "temp_no" ? " · 전략 temp_no" : ""}`);
         continue;
       }
       if (!verdict.filled && verdict.kind !== "unfilled") {
@@ -1859,22 +2129,22 @@ async function runCycle(gen) {
         // 무산된 것으로 보고 기록하지 않는다.
         unfilledCount += 1;
         if (verdict.status === "delayed") {
-          markBought(cand.slug);
+          markBought(cand.slug, cand.strategy);
           slotsLeft -= 1;
-          log(`미체결(지연 접수) ${cand.slug} — 뒤늦은 체결에 대비해 기록하고 슬롯을 소모합니다`);
+          log(`미체결(지연 접수) ${cand.slug} — 뒤늦은 체결에 대비해 기록하고 슬롯을 소모합니다${cand.strategy === "temp_no" ? " · 전략 temp_no" : ""}`);
         } else {
           log(`미체결 ${cand.slug} · 응답 status: ${resp.status ?? "(없음)"} · 응답 원문: ${JSON.stringify(resp).slice(0, 200)}`);
         }
         continue;
       }
-      markBought(cand.slug);
+      markBought(cand.slug, cand.strategy);
       state.sessionFills += 1;
       filledCount += 1;
       slotsLeft -= 1;
       const fill = resp.makingAmount && resp.takingAmount
         ? ` 체결가 ${round2(Number(resp.makingAmount) / Number(resp.takingAmount))}`
         : "";
-      log(`매수 ${cand.slug} · $${snap.bet} @ ${detail.limitPrice}${fill} · 상태 ${resp.status ?? "matched"}`);
+      log(`매수 ${cand.slug} · $${snap.bet} @ ${detail.limitPrice}${fill} · 상태 ${resp.status ?? "matched"}${cand.strategy === "temp_no" ? " · 전략 temp_no" : ""}${cand.strategy === "temp_no" && cand.feeRate != null ? ` · 수수료율 ${cand.feeRate}` : ""}`);
       notifyMoney(
         "매수 체결",
         `건당 $${snap.bet} · 체결가 ${resp.makingAmount && resp.takingAmount ? round2(Number(resp.makingAmount) / Number(resp.takingAmount)) : detail.limitPrice}`,

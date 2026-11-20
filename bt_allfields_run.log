@@ -1,0 +1,20 @@
+[allfields] 200/861 processed, trades=265
+[allfields] 400/861 processed, trades=536
+Traceback (most recent call last):
+  File "/home/hatch/workspace/boringmech-repo/backtest_touch_allfields.py", line 357, in <module>
+    main()
+  File "/home/hatch/workspace/boringmech-repo/backtest_touch_allfields.py", line 244, in main
+    verdicts[f"{cat}|{role}"] = verdict(ts, fixed_by_cat.get(cat, []))
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/hatch/workspace/boringmech-repo/backtest_touch_allfields.py", line 147, in verdict
+    if not (m["turnover_mean_daily"] > f["turnover_mean_daily"]
+                                       ~^^^^^^^^^^^^^^^^^^^^^^^
+KeyError: 'turnover_mean_daily'
+=== watchdog relaunch manual 2026-11-20T07:27:20+09:00
+=== watchdog relaunch 3 2026-11-20T07:28:55+09:00
+[allfields] 200/861 processed, trades=265
+[allfields] 400/861 processed, trades=536
+=== watchdog relaunch 4 2026-11-20T00:06:48+00:00
+[allfields] resumed from checkpoint: 536 trades
+{"gamma_fetched": 4022, "gamma_pass_default": 2100, "gamma_pass_volume_ordered": 2100, "eligible_all": 2455, "kind_distribution": {"none": 1582, "occurrence": 734, "count": 5, "price_barrier": 122, "price_level": 12}, "occ_candidates": 861, "fetch_targets": 861, "truncated_by_cap": 0, "no_history": 38, "no_entry": 69, "trades": 536, "baseline_trades_total": 215, "baseline_fixed_after_reclassification": 137, "baseline_occurrence_reclassified": 78, "occ_candidate_early_close_share": 0.09872241579558652, "http_calls": 2, "cache_hits": 42, "provider_blocked": null, "stub_scan": {"cache_files_scanned": 3994, "marker_hit_files": 0, "freetext_marker_hits_benign": 129, "trade_anomalies": 0}, "universe_note": "Gamma closed=true, endDate 2025-10-29..2026-10-29; occurrence pool volume>=$10000 all categories, classifier per SPEC; fixed baseline = band060 baseline trades (volume>=$50000) reclassified, band 0.60-0.90 both"}
+verdicts: {"crypto|survival": "채택 불성립 (회전율 우위 없음, 조기 종료가 손실에 몰림)", "other|touch": "채택 불성립 (회전율 우위 없음)", "politics|touch": "채택 불성립 (회전율 우위 없음)", "other|survival": "채택 불성립 (조기 종료가 손실에 몰림)", "politics|survival": "채택 불성립 (회전율 우위 없음, 조기 종료가 손실에 몰림)", "crypto|touch": "채택 불성립 (회전율 우위 없음)", "economy|survival": "판정 불가 (n<10)", "economy|touch": "판정 불가 (n<10)", "ALL|survival": "채택 불성립 (회전율 우위 없음, 조기 종료가 손실에 몰림)", "ALL|touch": "채택 불성립 (회전율 우위 없음)"}

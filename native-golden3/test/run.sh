@@ -26,6 +26,8 @@ javac -encoding UTF-8 -cp "$BC" -d "$OUT" \
   "$SRC/engine/JsonText.java" \
   "$SRC/engine/PositionBook.java" \
   "$SRC/engine/ScanFilter.java" \
+  "$SRC/engine/TempNo.java" \
+  "$SRC/write/ManualSell.java" \
   "$SRC/engine/CandidateVerifier.java" \
   "$SRC/engine/StopLoss.java" \
   "$SRC/engine/RedeemPlan.java" \
