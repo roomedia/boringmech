@@ -68,6 +68,17 @@ public final class TempNo {
     }
 
     /**
+     * 기온 슬롯 예약 판정 — 예약이 켜졌을 때(토글 ON + 기온 후보 존재)
+     * 메인 후보를 뒤로 미룰지 정하는 순수 함수 (JS tempReserveDefersMain과
+     * 같은 규칙). 메인 후보는 슬롯 1개와 검증 1건을 기온 몫으로 남겨 둔
+     * 지점부터 미룬다. 기온 후보 자체는 미루지 않는다 (예약은 하한이지
+     * 상한이 아니다).
+     */
+    public static boolean reserveDefersMain(String strategy, int slotsLeft, int verified, int verifyCap) {
+        return !STRATEGY.equals(strategy) && (slotsLeft <= 1 || verified >= verifyCap - 1);
+    }
+
+    /**
      * 정확한 정수 기온 판정 — groupItemTitle이 정수 기온만으로 된 것만
      * ("3°C"·"72°F"). "6°C or below"·"21°C or higher" 꼬리 버킷과
      * "50-51°F" 구간 버킷은 제외한다.

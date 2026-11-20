@@ -18,6 +18,7 @@ const {
   resolveTempFeeRate,
   markBought,
   boughtStrategyOf,
+  tempReserveDefersMain,
   TEMP_NO_CITIES,
 } = await import("../src/engine.js");
 
@@ -206,6 +207,38 @@ eq(
   eq(boughtStrategyOf("c-mkt"), null, "tag: other strategy untagged");
   eq(boughtStrategyOf("never-bought"), null, "tag: unknown slug null");
   lsStore.clear();
+}
+
+// ── 슬롯 예약 판정 (네이티브 TempNo.reserveDefersMain과 같은 경계) ──
+{
+  const CAP = 60; // VERIFY_CAP
+  eq(tempReserveDefersMain(undefined, 2, 0), false, "reserve: main, slots 2, verified 0 → no defer");
+  eq(tempReserveDefersMain(undefined, 1, 0), true, "reserve: main, slots 1 → defer");
+  eq(tempReserveDefersMain(undefined, 0, 0), true, "reserve: main, slots 0 → defer");
+  eq(tempReserveDefersMain(undefined, 5, CAP - 2), false, "reserve: main, verified cap-2 → no defer");
+  eq(tempReserveDefersMain(undefined, 5, CAP - 1), true, "reserve: main, verified cap-1 → defer");
+  eq(tempReserveDefersMain("temp_no", 1, CAP - 1), false, "reserve: temp is never deferred");
+  eq(tempReserveDefersMain("something_else", 1, 0), true, "reserve: other strategy counts as main");
+
+  // 구조 가드 — runCycle 드라이버가 예약 판정과 미룬 메인 재주행을 실제로 쓴다
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+  const cycleSrc = src.slice(src.indexOf("async function runCycle"));
+  eq(
+    cycleSrc.includes("tempReserveDefersMain(cand.strategy, slotsLeft, verified)"),
+    true,
+    "reserve guard: driver defers via predicate",
+  );
+  eq(
+    cycleSrc.includes("for (const cand of deferredMain)"),
+    true,
+    "reserve guard: deferred main gets a second pass",
+  );
+  eq(
+    cycleSrc.includes('candidates.some((c) => c.strategy === "temp_no")'),
+    true,
+    "reserve guard: reserve activates only with temp candidates present",
+  );
 }
 
 console.log(`temp tests: ${passed} passed, ${failed} failed`);

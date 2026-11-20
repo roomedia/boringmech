@@ -1337,14 +1337,35 @@ public final class NativeCycle {
         int filledCount = 0;
         int unfilledCount = 0;
         int failedCount = 0;
-        for (ScanFilter.Candidate cand : candidates) {
-            if (!env.isRunning(gen)) {
-                return;
-            }
-            if (slotsLeft < 1 || verified >= VERIFY_CAP) {
-                break;
-            }
-            env.beatProgress(cycle);
+        // 선정 드라이버 — 기온 슬롯 예약 (JS runCycle과 같은 규칙). 토글이
+        // 켜졌고 기온 후보가 있을 때만, 메인 후보는 슬롯 1개와 검증 1건을
+        // 기온 몫으로 남겨 둔 지점에서 뒤로 미루고(deferredMain), 기온
+        // 후보를 먼저 처리한 뒤 남은 슬롯·검증 캡으로 미룬 메인을 다시
+        // 탄다. 예약은 하한이라 기온이 남은 슬롯을 더 쓰는 것도, 기온이
+        // 없거나 못 사면 메인이 전부를 쓰는 것도 그대로 된다. 예약이
+        // 없으면 미루는 후보가 없어 기존 단일 패스와 동일하다.
+        boolean tempReserve = tempSettings.enabled
+                && candidates.stream().anyMatch(c -> TempNo.STRATEGY.equals(c.strategy));
+        List<ScanFilter.Candidate> worklist = candidates;
+        List<ScanFilter.Candidate> deferredMain = new ArrayList<>();
+        boolean firstPass = true;
+        boolean budgetOut = false;
+        while (!budgetOut) {
+            for (int wi = 0; wi < worklist.size(); wi++) {
+                ScanFilter.Candidate cand = worklist.get(wi);
+                if (!env.isRunning(gen)) {
+                    return;
+                }
+                if (firstPass && tempReserve
+                        && TempNo.reserveDefersMain(cand.strategy, slotsLeft, verified, VERIFY_CAP)) {
+                    deferredMain.add(cand);
+                    continue;
+                }
+                if (slotsLeft < 1 || verified >= VERIFY_CAP) {
+                    budgetOut = true;
+                    break;
+                }
+                env.beatProgress(cycle);
             verified++;
             CandidateVerifier.Result detail;
             try {
@@ -1483,6 +1504,12 @@ public final class NativeCycle {
             } finally {
                 guard.releaseSubmitLock(cand.slug);
             }
+            }
+            if (budgetOut || !firstPass || deferredMain.isEmpty()) {
+                break;
+            }
+            firstPass = false;
+            worklist = deferredMain;
         }
         log(summarizeCycle(candidates.size(), verified, rejects, filledCount, unfilledCount, failedCount, scanStats));
     }

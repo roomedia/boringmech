@@ -466,6 +466,158 @@ public class NativeCycleTest {
         check("temp off: 후보 로그 없음", !env.logged("기온 후보"));
     }
 
+    /** 매수 가능한 메인 시장 1건을 무대에 올린다 (gamma·북 포함). */
+    private static void mainStage(FakeNet net, String slug, String yesToken, String noToken) {
+        Map<String, Object> gamma = market(slug, "[\"0.75\",\"0.25\"]");
+        gamma.put("outcomes", "[\"Yes\",\"No\"]");
+        gamma.put("clobTokenIds", "[\"" + yesToken + "\",\"" + noToken + "\"]");
+        net.gammaPages.put(slug, new ArrayList<>(List.of(gamma)));
+        net.books.put(yesToken, jmap("{\"tick_size\":\"0.01\",\"neg_risk\":false,\"min_order_size\":\"5\","
+                + "\"asks\":[{\"price\":\"0.75\",\"size\":\"100\"}],"
+                + "\"bids\":[{\"price\":\"0.74\",\"size\":\"100\"}]}"));
+        net.markets.add(market(slug, "[\"0.75\",\"0.25\"]"));
+    }
+
+    /** 기온 이벤트에 정확한 정수 시장 2건(7°C·8°C)을 올린다. */
+    private static void tempStageTwo(FakeNet net) {
+        String eventSlug = "highest-temperature-in-seoul-on-november-15-2026";
+        List<Object> markets = new ArrayList<>();
+        String[][] specs = {
+                {"7°C", eventSlug + "-7c", "511", "512"},
+                {"8°C", eventSlug + "-8c", "513", "514"},
+        };
+        for (String[] sp : specs) {
+            Map<String, Object> tm = new LinkedHashMap<>();
+            tm.put("slug", sp[1]);
+            tm.put("question", "Will the highest temperature in Seoul be " + sp[0] + " on November 15?");
+            tm.put("groupItemTitle", sp[0]);
+            tm.put("active", true);
+            tm.put("closed", false);
+            tm.put("endDate", "2026-11-15T23:59:00Z");
+            tm.put("outcomePrices", "[\"0.03\",\"0.97\"]");
+            tm.put("feeType", "weather_fees");
+            tm.put("feeSchedule", jmap("{\"rate\":0.05}"));
+            markets.add(tm);
+            Map<String, Object> gamma = new LinkedHashMap<>(tm);
+            gamma.put("outcomes", "[\"Yes\",\"No\"]");
+            gamma.put("clobTokenIds", "[\"" + sp[2] + "\",\"" + sp[3] + "\"]");
+            net.gammaPages.put(sp[1], new ArrayList<>(List.of(gamma)));
+            net.books.put(sp[3], jmap("{\"tick_size\":\"0.01\",\"neg_risk\":true,\"min_order_size\":\"5\","
+                    + "\"asks\":[{\"price\":\"0.97\",\"size\":\"100\"}],"
+                    + "\"bids\":[{\"price\":\"0.96\",\"size\":\"100\"}]}"));
+        }
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("slug", eventSlug);
+        ev.put("endDate", "2026-11-15T23:59:00Z");
+        ev.put("markets", markets);
+        net.tempEvents = new ArrayList<>(List.of(ev));
+    }
+
+    /** 예약: 슬롯 1개 + 메인·기온 후보가 있으면 기온이 슬롯을 얻는다. */
+    private static void tempReserveSlotGoesToTemp() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 12; // 자본 $12 · 건당 $5 → 슬롯 1
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        tempStage(net);
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        String tempSlug = "highest-temperature-in-seoul-on-november-15-2026-7c";
+        check("reserve slot: 결과 OK", r == NativeCycle.Result.OK);
+        check("reserve slot: 주문 1회", t.posts == 1);
+        check("reserve slot: 기온이 슬롯 획득",
+                env.durable.getOrDefault("bm_bought", "").contains(tempSlug));
+        check("reserve slot: 메인은 못 삼",
+                !env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+        check("reserve slot: 요약", env.logged("사이클 요약 · 후보 2 · 검증 1 · 조회 1 · 제출 1"));
+    }
+
+    /** 예약: 토글 ON이지만 기온 후보가 없으면 메인이 전 슬롯을 쓴다. */
+    private static void tempReserveMainOnlyUsesAllSlots() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 20; // 자본 $20 · 건당 $5 → 슬롯 2
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "main-market-a", "111", "222");
+        mainStage(net, "main-market-b", "333", "444");
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("reserve mainonly: 결과 OK", r == NativeCycle.Result.OK);
+        check("reserve mainonly: 이벤트 조회는 함", net.tempEventsCalls == 1);
+        check("reserve mainonly: 주문 2회", t.posts == 2);
+        check("reserve mainonly: 메인 둘 다 매수",
+                env.durable.getOrDefault("bm_bought", "").contains("main-market-a")
+                        && env.durable.getOrDefault("bm_bought", "").contains("main-market-b"));
+    }
+
+    /** 예약은 하한이다: 슬롯 여유가 있으면 기온이 예약 1개를 넘어 더 쓴다. */
+    private static void tempReserveTempBeyondOne() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 25; // 자본 $25 · 건당 $5 → 슬롯 3
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        tempStageTwo(net);
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        String bought = env.durable.getOrDefault("bm_bought", "");
+        check("reserve beyond: 결과 OK", r == NativeCycle.Result.OK);
+        check("reserve beyond: 주문 3회", t.posts == 3);
+        check("reserve beyond: 기온 2건 모두 매수",
+                bought.contains("highest-temperature-in-seoul-on-november-15-2026-7c")
+                        && bought.contains("highest-temperature-in-seoul-on-november-15-2026-8c"));
+        check("reserve beyond: 메인도 매수", bought.contains("test-buy-market"));
+    }
+
+    /** 예약: 검증 캡 경계 — 메인 61건이 캡을 다 쓰기 전에 기온이 검증 기회를 얻는다. */
+    private static void tempReserveVerifyCap() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.markets = new ArrayList<>();
+        for (int i = 0; i < 61; i++) {
+            // gamma 페이지가 없어 전부 검증 탈락하는 메인 후보들
+            net.markets.add(market("cap-market-" + i, "[\"0.75\",\"0.25\"]"));
+        }
+        tempStage(net);
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("reserve cap: 결과 OK", r == NativeCycle.Result.OK);
+        check("reserve cap: 기온이 검증·체결", t.posts == 1
+                && env.durable.getOrDefault("bm_bought", "")
+                        .contains("highest-temperature-in-seoul-on-november-15-2026-7c"));
+        check("reserve cap: 검증 60에서 멈춤", env.logged("사이클 요약 · 후보 62 · 검증 60"));
+    }
+
+    /** 예약 OFF: 슬롯 1개면 기존처럼 메인이 먼저 산다 (기온 스캔 자체를 안 한다). */
+    private static void tempReserveOffMainFirst() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 12; // 슬롯 1
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        tempStage(net);
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("reserve off: 결과 OK", r == NativeCycle.Result.OK);
+        check("reserve off: 이벤트 조회 없음", net.tempEventsCalls == 0);
+        check("reserve off: 메인이 슬롯 획득", t.posts == 1
+                && env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+    }
+
     /** 기온 포지션 손절 시나리오 공통 무대 — No 0.9 진입, 현재가 0.25로 발화 상태. */
     private static OrderTransport tempStopLossStage(FakeEnv env, FakeNet net, String slug) {
         Map<String, Object> row = new LinkedHashMap<>();
@@ -1402,6 +1554,11 @@ public class NativeCycleTest {
         tempBuyPath();
         tempFetchAllFailNotCached();
         tempOffByDefault();
+        tempReserveSlotGoesToTemp();
+        tempReserveMainOnlyUsesAllSlots();
+        tempReserveTempBeyondOne();
+        tempReserveVerifyCap();
+        tempReserveOffMainFirst();
         tempStopLossTaggedExempt();
         tempStopLossUntaggedApplies();
         tempStopLossNoRecordApplies();

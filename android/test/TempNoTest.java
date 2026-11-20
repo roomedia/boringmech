@@ -222,6 +222,25 @@ public class TempNoTest {
                     rec2.dropped.size() == 1 && rec2.kept.isEmpty());
         }
 
+        // ── 슬롯 예약 판정 (JS tempReserveDefersMain과 같은 경계) ──────
+        {
+            int cap = 60; // NativeCycle.VERIFY_CAP
+            check("reserve: main, slots 2, verified 0 → no defer",
+                    !TempNo.reserveDefersMain(null, 2, 0, cap));
+            check("reserve: main, slots 1 → defer",
+                    TempNo.reserveDefersMain(null, 1, 0, cap));
+            check("reserve: main, slots 0 → defer",
+                    TempNo.reserveDefersMain(null, 0, 0, cap));
+            check("reserve: main, verified cap-2 → no defer",
+                    !TempNo.reserveDefersMain(null, 5, cap - 2, cap));
+            check("reserve: main, verified cap-1 → defer",
+                    TempNo.reserveDefersMain(null, 5, cap - 1, cap));
+            check("reserve: temp is never deferred",
+                    !TempNo.reserveDefersMain(TempNo.STRATEGY, 1, cap - 1, cap));
+            check("reserve: other strategy counts as main",
+                    TempNo.reserveDefersMain("something_else", 1, 0, cap));
+        }
+
         // ── 검증 분기 (밴드·창) ──
         {
             Object page = jlist("[{\"slug\":\"" + EVENT_SLUG + "-7c\",\"active\":true,"

@@ -647,6 +647,16 @@ export function resolveTempFeeRate(m) {
 }
 
 /**
+ * 기온 슬롯 예약 판정 — 예약이 켜졌을 때(토글 ON + 기온 후보 존재) 메인
+ * 후보를 뒤로 미룰지 정하는 순수 함수. 메인 후보는 슬롯 1개와 검증 1건을
+ * 기온 몫으로 남겨 둔 지점부터 미룬다. 기온 후보 자체는 미루지 않는다
+ * (예약은 하한이지 상한이 아니다).
+ */
+export function tempReserveDefersMain(strategy, slotsLeft, verified) {
+  return strategy !== "temp_no" && (slotsLeft <= 1 || verified >= VERIFY_CAP - 1);
+}
+
+/**
  * 기온 이벤트 목록 → No 페이드 후보. 후보는 메인 후보와 같은 선정
  * 패스(슬롯·검증 캡 공유)를 타며, excludeSlugs(메인 후보 slug)와
  * 겹치면 메인 쪽이 이긴다. 정렬은 만기 가까운 순, 동률은 No 가격
@@ -2027,9 +2037,9 @@ async function runCycle(gen) {
   const tallyReject = (reason) => {
     rejects[reason] = (rejects[reason] || 0) + 1;
   };
-  for (const cand of candidates) {
-    if (!state.running || gen !== state.gen) return;
-    if (slotsLeft < 1 || verified >= VERIFY_CAP) break;
+  // 후보 1건 처리 — true를 돌려주면 사이클을 즉시 중단한다 (아래 본문의
+  // 중단 지점). 호출 순서와 예산 판정은 선정 드라이버가 맡는다.
+  const attemptCandidate = async (cand) => {
     beatProgress();
     verified += 1;
     let detail;
@@ -2038,25 +2048,25 @@ async function runCycle(gen) {
     } catch (e) {
       tallyReject("verify_error");
       log(`검증 오류 ${cand.slug}: ${e.message ?? e}`);
-      continue;
+      return false;
     }
     if (!detail.ok) {
       tallyReject(detail.reason);
-      continue;
+      return false;
     }
-    if (!state.running || gen !== state.gen) return;
+    if (!state.running || gen !== state.gen) return true;
     // 제출 잠금 — 서명 시작부터 결과 확정까지 같은 slug 재진입을 막는다.
     // 세대 가드와 별개로 동작해, 이 지점을 지난 뒤 재시작·재개가 끼어도
     // 두 번째 루프는 잠금에서 걸려 같은 후보를 다시 제출하지 않는다.
     if (!tryAcquireSubmitLock(cand.slug)) {
       log(`제출 잠금 — 중복 제출 차단 ${cand.slug}`);
-      continue;
+      return false;
     }
     try {
     // 제출 직전 bought 재확인 (이중 방어 — 먼저 끝난 제출이 기록했을 수 있다)
     if (boughtSlugs().has(cand.slug)) {
       log(`제출 직전 재확인 — 이미 매수 기록 있음 ${cand.slug}`);
-      continue;
+      return false;
     }
     // 제출 진행 가드 (F1) — 서명부터 체결 기록까지 워치독 재로드를 막는다
     beginSubmit();
@@ -2076,11 +2086,11 @@ async function runCycle(gen) {
       } catch (e) {
         failedCount += 1;
         log(`주문 서명 실패 ${cand.slug}: ${String(e.message ?? e).slice(0, 120)}`);
-        continue;
+        return false;
       }
       // 제출 직전 세대 재검사 — 서명 대기가 긴 사이 정지→재실행이 끼면
       // 구 사이클의 주문이 새 사이클 슬롯 계산 밖에서 체결된다.
-      if (!state.running || gen !== state.gen) return;
+      if (!state.running || gen !== state.gen) return true;
       let resp;
       try {
         resp = await state.client.postOrder(signed, OrderType.FOK);
@@ -2096,9 +2106,9 @@ async function runCycle(gen) {
         if (isFailsafe(msg)) {
           stop();
           log("failsafe 감지 — 엔진 정지. 정지 사유를 확인한 뒤 다시 실행하세요.");
-          return;
+          return true;
         }
-        continue;
+        return false;
       }
       const verdict = judgeFill(resp);
       if (!verdict.filled && verdict.kind === "unknown") {
@@ -2108,7 +2118,7 @@ async function runCycle(gen) {
         markBought(cand.slug, cand.strategy);
         slotsLeft -= 1;
         log(`주문 결과 불명 ${cand.slug}: ${String(verdict.error || "").slice(0, 120)} — 중복 방지 기록${cand.strategy === "temp_no" ? " · 전략 temp_no" : ""}`);
-        continue;
+        return false;
       }
       if (!verdict.filled && verdict.kind !== "unfilled") {
         failedCount += 1;
@@ -2119,9 +2129,9 @@ async function runCycle(gen) {
         if (isFailsafe(String(msg)) || isFailsafe(verdict.status)) {
           stop();
           log("failsafe 감지 — 엔진 정지. 정지 사유를 확인한 뒤 다시 실행하세요.");
-          return;
+          return true;
         }
-        continue;
+        return false;
       }
       if (!verdict.filled) {
         // 미체결 — delayed는 서버가 접수한 주문이라 뒤늦게 체결될 수 있어
@@ -2135,7 +2145,7 @@ async function runCycle(gen) {
         } else {
           log(`미체결 ${cand.slug} · 응답 status: ${resp.status ?? "(없음)"} · 응답 원문: ${JSON.stringify(resp).slice(0, 200)}`);
         }
-        continue;
+        return false;
       }
       markBought(cand.slug, cand.strategy);
       state.sessionFills += 1;
@@ -2155,7 +2165,35 @@ async function runCycle(gen) {
     } finally {
       releaseSubmitLock(cand.slug);
     }
+    return false;
+  };
+  // 선정 드라이버 — 기온 슬롯 예약 (토글 ON이고 기온 후보가 있을 때만).
+  // 메인 후보는 슬롯 1개와 검증 1건을 기온 몫으로 남겨 둔 지점에서 뒤로
+  // 미루고(deferredMain), 기온 후보를 먼저 처리한 뒤 남은 슬롯·검증 캡으로
+  // 미룬 메인을 다시 탄다. 예약은 하한이라 기온이 남은 슬롯을 더 쓰는
+  // 것도, 기온이 없거나 못 사면 메인이 전부를 쓰는 것도 그대로 된다.
+  // 예약이 없으면 미루는 후보가 없어 기존 단일 패스와 동일하다.
+  const tempReserve = tempSettings.enabled
+    && candidates.some((c) => c.strategy === "temp_no");
+  const deferredMain = [];
+  let aborted = false;
+  for (const cand of candidates) {
+    if (!state.running || gen !== state.gen) { aborted = true; break; }
+    if (tempReserve && tempReserveDefersMain(cand.strategy, slotsLeft, verified)) {
+      deferredMain.push(cand);
+      continue;
+    }
+    if (slotsLeft < 1 || verified >= VERIFY_CAP) break;
+    if (await attemptCandidate(cand)) { aborted = true; break; }
   }
+  if (!aborted) {
+    for (const cand of deferredMain) {
+      if (!state.running || gen !== state.gen) { aborted = true; break; }
+      if (slotsLeft < 1 || verified >= VERIFY_CAP) break;
+      if (await attemptCandidate(cand)) { aborted = true; break; }
+    }
+  }
+  if (aborted) return;
   log(summarizeCycle({
     candidates: candidates.length,
     verified,
