@@ -356,6 +356,34 @@ public class TempNoTest {
                     + "\"endDate\":\"not-a-date\",\"markets\":[]}]");
             check("upcoming: bad endDate → false",
                     !TempNo.hasUpcomingWindow(badEnd, beforeWindow, TempNo.ENTRY_HOUR_UTC));
+
+            // v0.3.39 감사 D — 후보 가능 시장이 없으면 upcoming이 아니다
+            String mktSlug = EVENT_SLUG + "-m7°C";
+            check("auditD: all markets held → false",
+                    !TempNo.hasUpcomingWindow(ev, beforeWindow, TempNo.ENTRY_HOUR_UTC,
+                            Set.of(mktSlug), Set.of()));
+            check("auditD: all markets bought → false",
+                    !TempNo.hasUpcomingWindow(ev, beforeWindow, TempNo.ENTRY_HOUR_UTC,
+                            Set.of(), Set.of(mktSlug)));
+            check("auditD: candidate market present → true",
+                    TempNo.hasUpcomingWindow(ev, beforeWindow, TempNo.ENTRY_HOUR_UTC,
+                            Set.of("some-other-market"), Set.of()));
+            List<Object> closedEv = jlist("[{\"slug\":\"" + EVENT_SLUG + "\","
+                    + "\"endDate\":\"2026-11-18T12:00:00Z\",\"markets\":[{"
+                    + "\"slug\":\"" + mktSlug + "\",\"groupItemTitle\":\"7°C\","
+                    + "\"active\":true,\"closed\":true,\"acceptingOrders\":true}]}]");
+            check("auditD: all markets closed → false",
+                    !TempNo.hasUpcomingWindow(closedEv, beforeWindow, TempNo.ENTRY_HOUR_UTC,
+                            Set.of(), Set.of()));
+            List<Object> tailEv = eventOf(marketJson("6°C or below", "0.97"));
+            check("auditD: tail bucket only → false",
+                    !TempNo.hasUpcomingWindow(tailEv, beforeWindow, TempNo.ENTRY_HOUR_UTC,
+                            Set.of(), Set.of()));
+            List<Object> noMarkets = jlist("[{\"slug\":\"" + EVENT_SLUG + "\","
+                    + "\"endDate\":\"2026-11-18T12:00:00Z\"}]");
+            check("auditD: no markets → false",
+                    !TempNo.hasUpcomingWindow(noMarkets, beforeWindow, TempNo.ENTRY_HOUR_UTC,
+                            Set.of(), Set.of()));
         }
 
         // ── 검증 분기 (밴드·창) ──
@@ -418,6 +446,47 @@ public class TempNoTest {
             CandidateVerifier.Result wideRes = CandidateVerifier.verifyCandidate(
                     mainCand, 5, mainGamma, books, AT_7AM, wideCfg, TempNo.ENTRY_HOUR_UTC);
             check("verify main custom bandHi 0.99 accepts 0.97 ask", wideRes.ok);
+        }
+
+        // ── v0.3.39 감사 A — 매수 지정가 틱 유효성 ──────────────────
+        // bandHi 0.998은 틱 0.01·0.005의 배수가 아니라, 종전 식은 0.998을
+        // 그대로 내 priceValid 상한(1 - tick)을 넘어 서명이 전건 실패했다.
+        {
+            double lp1 = CandidateVerifier.buyLimitPrice(0.99, 0.015, 0.01, 0.998);
+            check("auditA: tick 0.01 → 0.99", Math.abs(lp1 - 0.99) < 1e-9);
+            check("auditA: tick 0.01 multiple+valid",
+                    Math.abs(lp1 / 0.01 - Math.round(lp1 / 0.01)) < 1e-9
+                            && lp1 >= 0.01 && lp1 <= 1 - 0.01);
+            double lp2 = CandidateVerifier.buyLimitPrice(0.99, 0.015, 0.005, 0.998);
+            check("auditA: tick 0.005 → 0.995", Math.abs(lp2 - 0.995) < 1e-9);
+            check("auditA: tick 0.005 multiple+valid",
+                    Math.abs(lp2 / 0.005 - Math.round(lp2 / 0.005)) < 1e-9
+                            && lp2 >= 0.005 && lp2 <= 1 - 0.005);
+            check("auditA: fine tick unchanged",
+                    Math.abs(CandidateVerifier.buyLimitPrice(0.97, 0.015, 0.001, 0.998) - 0.985) < 1e-9);
+            check("auditA: main band unchanged",
+                    Math.abs(CandidateVerifier.buyLimitPrice(0.75, 0.015, 0.01, 0.9) - 0.77) < 1e-9);
+
+            // 검증 전 경로 — 틱 0.01 북에서 기온 후보(상한 0.998)의 지정가
+            Object page = jlist("[{\"slug\":\"" + EVENT_SLUG + "-7c\",\"active\":true,"
+                    + "\"closed\":false,\"endDate\":\"2026-11-18T12:00:00Z\","
+                    + "\"outcomePrices\":\"[0.03,0.97]\",\"clobTokenIds\":\"[\\\"t0\\\",\\\"t1\\\"]\"}]");
+            Object book = JsonText.parse("{\"asks\":[{\"price\":0.99,\"size\":100}],"
+                    + "\"bids\":[{\"price\":0.98,\"size\":100}],\"tick_size\":\"0.01\","
+                    + "\"min_order_size\":5,\"neg_risk\":true}");
+            CandidateVerifier.GammaSource gamma = slug -> page;
+            CandidateVerifier.BookSource books = new CandidateVerifier.BookSource() {
+                @Override public Object getOrderBook(String tokenId) { return book; }
+                @Override public double getTickSize(String tokenId) { return 0.01; }
+            };
+            ScanFilter.Candidate cand = new ScanFilter.Candidate(
+                    EVENT_SLUG + "-7c", "q", "no", 0.97, "2026-11-18T12:00:00Z",
+                    TempNo.STRATEGY, 0.80, TempNo.BAND_HI, 0.05);
+            CandidateVerifier.Result res = CandidateVerifier.verifyCandidate(cand, 5, gamma, books, AT_7AM);
+            check("auditA: verify ok at tick 0.01", res.ok);
+            check("auditA: verify limitPrice 0.99 valid",
+                    res.ok && Math.abs(res.limitPrice - 0.99) < 1e-9
+                            && res.limitPrice >= 0.01 && res.limitPrice <= 1 - 0.01);
         }
 
         System.out.println("TempNo tests: " + passed + " passed, " + failed + " failed");

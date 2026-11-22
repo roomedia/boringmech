@@ -29,6 +29,7 @@ const {
   readSecret,
   migrateSecrets,
   planRedeems,
+  collectRedeemPending,
   verifyRecovery,
   buildCtfRedeemCall,
   buildV2RedeemCall,
@@ -643,6 +644,46 @@ eq(pickOutcomeIndex(["Yes", "No"], { outcome_index: -1 }), -1, "index: negative 
   eq(plan.worthless.length, 1, "redeem: loss-only condition is worthless");
   eq(plan.worthless[0].condition_id, cidB, "redeem: worthless condition id");
   eq(plan.errors.length, 1, "redeem: malformed condition id reported");
+
+  // v0.3.39 감사 C — pending status 승격: LOST로 먼저 수집된 토큰이
+  // 나중에 CLOSED 승으로 오면 승자 판정에 잡혀야 한다 (강등은 없음).
+  {
+    const cid = `0x${"cc".repeat(32)}`;
+    const lostRow = { condition_id: cid, token_id: "t1", slug: "s1", current_value: 0 };
+    const c1 = collectRedeemPending([], new Set(), [], [lostRow], []);
+    eq(c1.pending.length, 1, "auditC: cycle1 collects lost row");
+    eq(c1.pending[0].status, "REDEEMABLE_LOST", "auditC: cycle1 status is LOST");
+    eq(planRedeems(c1.pending).targets.length, 0, "auditC: cycle1 no target yet");
+    const closedWin = {
+      condition_id: cid, token_id: "t1", slug: "s1",
+      current_price: 1, current_value: 0, entry_cost_usdc: 10, realized_pnl: 2,
+    };
+    const c2 = collectRedeemPending(c1.pending, new Set(), [], [], [closedWin]);
+    eq(c2.pending[0].status, "REDEEMABLE", "auditC: status promoted LOST → REDEEMABLE");
+    eq(c2.pending[0].current_value, 12, "auditC: value updated to closed estimate");
+    const plan2 = planRedeems(c2.pending);
+    eq(plan2.targets.length, 1, "auditC: promoted entry becomes redeem target");
+    eq(plan2.worthless.length, 0, "auditC: promoted entry not worthless");
+    const c3 = collectRedeemPending(c2.pending, new Set(), [], [lostRow], []);
+    eq(c3.pending[0].status, "REDEEMABLE", "auditC: later lost row does not demote");
+  }
+
+  // v0.3.39 경화 — worthless streak 가드는 runRedeems가 정산 조회 성공
+  // 여부를 보고 결정한다 (네이티브 NativeCycle과 같은 가드).
+  {
+    const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+    const rrSrc = src.slice(src.indexOf("async function runRedeems"));
+    eq(
+      rrSrc.includes("const settlementKnown = state.lastWinRows != null"),
+      true,
+      "hardening: runRedeems computes settlementKnown",
+    );
+    eq(
+      rrSrc.includes("if (plan.worthless.length && settlementKnown)"),
+      true,
+      "hardening: worthless streak gated on settlement evidence",
+    );
+  }
 
   eq(verifyRecovery(100, 105, 5).status, "verified", "redeem: exact recovery verified");
   eq(verifyRecovery(100, 103, 5).status, "mismatch", "redeem: short recovery mismatched");

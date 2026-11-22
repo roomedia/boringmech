@@ -609,6 +609,11 @@ public final class NativeCycle {
      * 제출하지 않는다. 반환값은 매도 성공 건수(0 또는 1).
      */
     public int processManualSell(int gen) {
+        return processManualSell(gen, TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY)));
+    }
+
+    /** processManualSell 본체 — 설정은 runCycle이 사이클당 1회 파싱한 것을 넘겨받는다. */
+    public int processManualSell(int gen, TradeSettings tradeCfg) {
         if (!env.isRunning(gen)) {
             // 요청을 소비하기 전에 세대를 확인한다 — 구 세션이 키만 비우고
             // 실행은 세대 게이트에 막히면 요청이 소실된다. 새 세션이 이어서
@@ -664,9 +669,9 @@ public final class NativeCycle {
             saveManualSellStatus(req.slug, "no_price", "현재가를 확인할 수 없습니다");
             return 0;
         }
-        // 수동 매도도 손절 경로와 같은 slippageCap 설정을 탄다 — 호출
-        // 지점에서 설정을 파싱해 넘긴다 (v0.3.38 감사 축 4).
-        TradeSettings tradeCfg = TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY));
+        // 수동 매도도 손절 경로와 같은 slippageCap 설정을 탄다 — 설정은
+        // runCycle이 파싱한 것을 넘겨받는다 (사이클당 1회 파싱 원칙,
+        // v0.3.39 감사 B).
         boolean done = seller.executeManualSell(row, current, gen, tradeCfg.slippageCap);
         saveManualSellStatus(req.slug, done ? "filled" : "failed",
                 done ? "매도가 체결됐습니다" : "체결되지 않았습니다 — 최근 로그를 확인하세요");
@@ -1290,7 +1295,7 @@ public final class NativeCycle {
         }
         log("사이클 " + cycle + " · 잔고 $" + n(snap.cash) + " · 평가 $" + n(snap.equity)
                 + " · 건당 $" + n(snap.bet) + " · 슬롯 " + snap.slots + " · 보유 " + snap.openCount);
-        int manualSold = processManualSell(gen);
+        int manualSold = processManualSell(gen, tradeCfg);
         if (manualSold > 0) {
             snap = snapshot(tradeCfg);
         }
@@ -1357,7 +1362,10 @@ public final class NativeCycle {
         }
         List<Object> events = net.fetchTempEvents(TempNo.todayEventSlugs(nowMs));
         if (events == null) {
-            return new ArrayList<>();
+            // 전수 실패는 빈 목록으로 바꾸지 않고 null로 전파한다 —
+            // "오늘 이벤트 없음"과 구분해 호출자가 예약을 유지하는 쪽으로
+            // 판정하게 하기 위해서다 (v0.3.39 감사 E).
+            return null;
         }
         tempEventsCache = events;
         tempEventsCacheAtMs = nowMs;
@@ -1382,20 +1390,29 @@ public final class NativeCycle {
         // 겹치면 메인 쪽이 이긴다. 기온 스캔 통계는 요약에 섞지 않는다.
         // 조회한 이벤트 목록은 아래 예약 판정(창 대기)도 함께 쓴다.
         List<Object> tempEventsList = null;
+        // 기온 이벤트 조회 전수 실패 여부 — 실패와 "오늘 이벤트 없음"을
+        // 구분해, 전수 실패 사이클은 예약을 유지하는 쪽으로 판정한다
+        // (안전 방향, v0.3.39 감사 E).
+        boolean tempFetchFailed = false;
         if (tempSettings.enabled) {
             try {
                 List<Object> events = tempEvents(env.nowMs());
-                tempEventsList = events;
-                Set<String> mainSlugs = new HashSet<>();
-                for (ScanFilter.Candidate c : candidates) {
-                    mainSlugs.add(c.slug);
-                }
-                List<ScanFilter.Candidate> tempCands = TempNo.scanTempCandidates(
-                        events, snap.heldSlugs, boughtAll, tempSettings, env.nowMs(), mainSlugs);
-                if (!tempCands.isEmpty()) {
-                    log("기온 후보 " + tempCands.size() + "건 (밴드 " + n(tempSettings.bandLo)
-                            + "–" + n(tempSettings.bandHi) + ")");
-                    candidates.addAll(tempCands);
+                if (events == null) {
+                    tempFetchFailed = true;
+                    log("기온 이벤트 조회 전수 실패 — 이번 사이클은 기온 예약을 유지합니다");
+                } else {
+                    tempEventsList = events;
+                    Set<String> mainSlugs = new HashSet<>();
+                    for (ScanFilter.Candidate c : candidates) {
+                        mainSlugs.add(c.slug);
+                    }
+                    List<ScanFilter.Candidate> tempCands = TempNo.scanTempCandidates(
+                            events, snap.heldSlugs, boughtAll, tempSettings, env.nowMs(), mainSlugs);
+                    if (!tempCands.isEmpty()) {
+                        log("기온 후보 " + tempCands.size() + "건 (밴드 " + n(tempSettings.bandLo)
+                                + "–" + n(tempSettings.bandHi) + ")");
+                        candidates.addAll(tempCands);
+                    }
                 }
             } catch (Exception e) {
                 log("기온 스캔 오류: " + slice(msg(e), 120));
@@ -1424,8 +1441,9 @@ public final class NativeCycle {
                 .anyMatch(c -> TempNo.STRATEGY.equals(c.strategy));
         boolean tempReserve = tempSettings.enabled
                 && (tempHasCandidates
+                    || tempFetchFailed
                     || TempNo.hasUpcomingWindow(tempEventsList, env.nowMs(),
-                            tempSettings.entryHourUtc));
+                            tempSettings.entryHourUtc, snap.heldSlugs, boughtAll));
         List<ScanFilter.Candidate> worklist = candidates;
         List<ScanFilter.Candidate> deferredMain = new ArrayList<>();
         boolean firstPass = true;
@@ -1594,8 +1612,13 @@ public final class NativeCycle {
             worklist = deferredMain;
         }
         if (tempReserve && !tempHasCandidates && !deferredMain.isEmpty()) {
-            log("기온 예약 — 오늘 진입 창이 열릴 이벤트가 있어 메인 " + deferredMain.size()
-                    + "건을 미루고 슬롯을 남깁니다");
+            if (tempFetchFailed) {
+                log("기온 예약 — 조회 전수 실패로 메인 " + deferredMain.size()
+                        + "건을 미루고 슬롯을 남깁니다");
+            } else {
+                log("기온 예약 — 오늘 진입 창이 열릴 이벤트가 있어 메인 " + deferredMain.size()
+                        + "건을 미루고 슬롯을 남깁니다");
+            }
         }
         log(summarizeCycle(candidates.size(), verified, rejects, filledCount, unfilledCount, failedCount, scanStats));
     }

@@ -265,6 +265,17 @@ public final class RedeemPlan {
         return Js.str(Js.field(e, "condition_id")) + "|" + Js.str(Js.field(e, "token_id"));
     }
 
+    /** status 승격 순위 — REDEEMABLE(승자 확인) > REDEEMABLE_LOST(패배 관측). */
+    private static int statusRank(String status) {
+        if ("REDEEMABLE".equals(status)) {
+            return 2;
+        }
+        if ("REDEEMABLE_LOST".equals(status)) {
+            return 1;
+        }
+        return 0;
+    }
+
     private static void addRows(
             List<Object> pending, Map<String, Object> byKey, Set<Object> doneConds,
             List<Object> rows, String status, boolean[] changed) {
@@ -281,13 +292,27 @@ public final class RedeemPlan {
             Object existing = byKey.get(k);
             if (existing != null) {
                 // 이미 수집된 항목도 가치는 최신 행으로 갱신한다.
-                if (Double.isFinite(value)) {
-                    Object cur = Js.field(existing, "current_value");
-                    boolean equal = cur instanceof Double && (Double) cur == value;
-                    if (!equal && existing instanceof Map) {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> em = (Map<String, Object>) existing;
-                        em.put("current_value", value);
+                if (existing instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> em = (Map<String, Object>) existing;
+                    if (Double.isFinite(value)) {
+                        Object cur = Js.field(existing, "current_value");
+                        boolean equal = cur instanceof Double && (Double) cur == value;
+                        if (!equal) {
+                            em.put("current_value", value);
+                            changed[0] = true;
+                        }
+                    }
+                    // status는 승격 방향으로만 갱신한다 — REDEEMABLE_LOST로
+                    // 먼저 수집된 토큰이 나중에 승자 행으로 와도 status가
+                    // 고정돼 있으면 planRedeems의 승자 판정에서 영원히
+                    // 빠진다 (v0.3.39 감사 C). 반대 강등은 없다: 승자로
+                    // 확인된 항목이 패배 행 재수집으로 도로 패자가 되지
+                    // 않는다.
+                    Object curStatus = Js.field(existing, "status");
+                    String curStatusStr = curStatus instanceof String ? (String) curStatus : null;
+                    if (statusRank(status) > statusRank(curStatusStr)) {
+                        em.put("status", status);
                         changed[0] = true;
                     }
                 }

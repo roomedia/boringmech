@@ -169,6 +169,17 @@ public final class TempNo {
      * 있으면 false다.
      */
     public static boolean hasUpcomingWindow(List<Object> events, long nowMs, int entryHourUtc) {
+        return hasUpcomingWindow(events, nowMs, entryHourUtc, Set.of(), Set.of());
+    }
+
+    /**
+     * 보유·매수 정보를 받는 판정 — 이벤트의 markets 중 후보가 될 수 있는
+     * 것(활성이고 아직 보유·매수 기록이 없는 정확한 정수 시장)이 하나라도
+     * 있을 때만 upcoming으로 센다. markets가 전부 보유·종결·꼬리 버킷인
+     * 이벤트는 살 것이 없어 예약할 이유가 없다 (v0.3.39 감사 D).
+     */
+    public static boolean hasUpcomingWindow(List<Object> events, long nowMs, int entryHourUtc,
+                                            Set<String> heldSlugs, Set<String> boughtSlugs) {
         if (events == null) {
             return false;
         }
@@ -181,9 +192,40 @@ public final class TempNo {
             if (endMs == null) {
                 continue;
             }
-            if (windowStartMs(endMs, entryHourUtc) < endMs && nowMs < endMs) {
+            if (windowStartMs(endMs, entryHourUtc) < endMs && nowMs < endMs
+                    && hasCandidateMarket(ev, heldSlugs, boughtSlugs)) {
                 return true;
             }
+        }
+        return false;
+    }
+
+    /** 이벤트 하위 시장 중 후보 가능(활성·미보유·정확한 정수)인 것이 있는지. */
+    private static boolean hasCandidateMarket(Object ev, Set<String> heldSlugs, Set<String> boughtSlugs) {
+        Object marketsRaw = Js.field(ev, "markets");
+        if (!(marketsRaw instanceof List)) {
+            return false;
+        }
+        for (Object m : (List<?>) marketsRaw) {
+            if (!Js.truthy(Js.field(m, "active")) || Js.truthy(Js.field(m, "closed"))) {
+                continue;
+            }
+            if (Boolean.FALSE.equals(Js.field(m, "acceptingOrders"))
+                    || Boolean.TRUE.equals(Js.field(m, "archived"))) {
+                continue;
+            }
+            Object slugRaw = Js.field(m, "slug");
+            String slug = Js.truthy(slugRaw) ? Js.str(slugRaw) : "";
+            if (heldSlugs != null && heldSlugs.contains(slug)) {
+                continue;
+            }
+            if (boughtSlugs != null && boughtSlugs.contains(slug)) {
+                continue;
+            }
+            if (!isExactTempTitle(Js.field(m, "groupItemTitle"))) {
+                continue;
+            }
+            return true;
         }
         return false;
     }

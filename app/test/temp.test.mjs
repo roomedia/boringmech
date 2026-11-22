@@ -20,6 +20,7 @@ const {
   boughtStrategyOf,
   tempReserveDefersMain,
   tempHasUpcomingWindow,
+  buyLimitPrice,
   effectiveTempReserveSlots,
   TEMP_NO_CITIES,
 } = await import("../src/engine.js");
@@ -330,8 +331,17 @@ eq(
   eq(tempReserveDefersMain("temp_no", 3, CAP - 3, 3), false, "reserve 3: temp is never deferred");
 
   // 창 대기 판정 (네이티브 TempNo.hasUpcomingWindow와 같은 경계) —
-  // 이벤트 endDate 2026-11-15T12:00Z, 진입 창은 당일 06:00~12:00 UTC
-  const evUpcoming = [{ slug: "highest-temperature-in-seoul-on-november-15-2026", endDate: "2026-11-15T12:00:00Z" }];
+  // 이벤트 endDate 2026-11-15T12:00Z, 진입 창은 당일 06:00~12:00 UTC.
+  // v0.3.39 감사 D부터는 markets 중 후보 가능 시장이 있을 때만 센다.
+  const MKT7 = {
+    slug: "highest-temperature-in-seoul-on-november-15-2026-7c",
+    groupItemTitle: "7°C", active: true, closed: false, acceptingOrders: true,
+  };
+  const evUpcoming = [{
+    slug: "highest-temperature-in-seoul-on-november-15-2026",
+    endDate: "2026-11-15T12:00:00Z",
+    markets: [MKT7],
+  }];
   const T_PRE = Date.parse("2026-11-15T03:00:00Z");
   const T_OPEN = Date.parse("2026-11-15T08:00:00Z");
   const T_PAST = Date.parse("2026-11-15T13:00:00Z");
@@ -341,14 +351,49 @@ eq(
   eq(tempHasUpcomingWindow([], T_PRE), false, "upcoming: empty events → false");
   eq(tempHasUpcomingWindow(null, T_PRE), false, "upcoming: null events → false");
   eq(
-    tempHasUpcomingWindow([{ slug: "some-other-event", endDate: "2026-11-15T12:00:00Z" }], T_PRE),
+    tempHasUpcomingWindow([{ slug: "some-other-event", endDate: "2026-11-15T12:00:00Z", markets: [MKT7] }], T_PRE),
     false,
     "upcoming: non-temp slug → false",
   );
   eq(
-    tempHasUpcomingWindow([{ slug: "highest-temperature-in-seoul-on-november-15-2026", endDate: "not-a-date" }], T_PRE),
+    tempHasUpcomingWindow([{ slug: "highest-temperature-in-seoul-on-november-15-2026", endDate: "not-a-date", markets: [MKT7] }], T_PRE),
     false,
     "upcoming: bad endDate → false",
+  );
+  // 감사 D — 후보 가능 시장이 없으면 창이 남아 있어도 upcoming이 아니다
+  eq(
+    tempHasUpcomingWindow(evUpcoming, T_PRE, 6, new Set([MKT7.slug]), new Set()),
+    false,
+    "auditD: all markets held → false",
+  );
+  eq(
+    tempHasUpcomingWindow(evUpcoming, T_PRE, 6, new Set(), new Set([MKT7.slug])),
+    false,
+    "auditD: all markets bought → false",
+  );
+  eq(
+    tempHasUpcomingWindow(
+      [{ ...evUpcoming[0], markets: [{ ...MKT7, closed: true }] }], T_PRE),
+    false,
+    "auditD: all markets closed → false",
+  );
+  eq(
+    tempHasUpcomingWindow(
+      [{ ...evUpcoming[0], markets: [{ ...MKT7, groupItemTitle: "6°C or below" }] }], T_PRE),
+    false,
+    "auditD: tail bucket only → false",
+  );
+  eq(
+    tempHasUpcomingWindow([{ ...evUpcoming[0], markets: [] }], T_PRE),
+    false,
+    "auditD: no markets → false",
+  );
+  eq(
+    tempHasUpcomingWindow(
+      [{ ...evUpcoming[0], markets: [{ ...MKT7, slug: "m-held" }, { ...MKT7, slug: "m-free" }] }],
+      T_PRE, 6, new Set(["m-held"]), new Set()),
+    true,
+    "auditD: one candidate market among held → true",
   );
 
   // 구조 가드 — runCycle 드라이버가 예약 판정과 미룬 메인 재주행을 실제로 쓴다
@@ -376,9 +421,9 @@ eq(
     "reserve guard: driver tracks temp candidate presence",
   );
   eq(
-    cycleSrc.includes("|| tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc))"),
+    cycleSrc.includes("|| tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc, snap.heldSlugs, boughtAll))"),
     true,
-    "reserve guard: reserve also activates on upcoming window",
+    "reserve guard: reserve also activates on upcoming window (markets-aware)",
   );
   eq(
     cycleSrc.includes("if (!aborted && !budgetOut && tempHasCandidates)"),
@@ -454,6 +499,60 @@ eq(effectiveTempReserveSlots(0, 70), 0, "audit6: zero reserve kept");
   lsStore.set("bm_bought", JSON.stringify(["dup-mkt", { slug: "dup-mkt", strategy: "other" }]));
   eq(boughtStrategyOf("dup-mkt"), null, "audit9: duplicates without tag stay main");
   lsStore.clear();
+}
+
+// ── v0.3.39 감사 A — 매수 지정가 틱 유효성 ───────────────────
+// bandHi 0.998은 틱 0.01·0.005의 배수가 아니라, 종전 식은 0.998을
+// 그대로 내 priceValid 상한(1 - tick)을 넘어 서명이 전건 실패했다.
+{
+  const priceValid = (p, tick) => p >= tick && p <= 1 - tick;
+  const isTickMultiple = (p, tick) => Math.abs(p / tick - Math.round(p / tick)) < 1e-9;
+  const lp1 = buyLimitPrice(0.99, 0.015, 0.01, 0.998);
+  eq(lp1, 0.99, "auditA: tick 0.01 bandHi 0.998 ask 0.99 → 0.99");
+  eq(isTickMultiple(lp1, 0.01), true, "auditA: tick 0.01 result is tick multiple");
+  eq(priceValid(lp1, 0.01), true, "auditA: tick 0.01 result passes priceValid");
+  const lp2 = buyLimitPrice(0.99, 0.015, 0.005, 0.998);
+  eq(lp2, 0.995, "auditA: tick 0.005 bandHi 0.998 ask 0.99 → 0.995");
+  eq(isTickMultiple(lp2, 0.005), true, "auditA: tick 0.005 result is tick multiple");
+  eq(priceValid(lp2, 0.005), true, "auditA: tick 0.005 result passes priceValid");
+  eq(buyLimitPrice(0.97, 0.015, 0.001, 0.998), 0.985, "auditA: fine tick unchanged");
+  eq(buyLimitPrice(0.75, 0.015, 0.01, 0.9), 0.77, "auditA: main band unchanged");
+  eq(buyLimitPrice(0.895, 0.015, 0.01, 0.9), 0.9, "auditA: capped at tick-multiple bandHi");
+}
+
+// ── v0.3.39 감사 E — 기온 조회 전수 실패 시 예약 fail-open 차단 ──
+// fetchTempEvents·runCycle은 비공개라 배선을 소스 구조로 확인한다
+// (네이티브 쪽은 NativeCycleTest가 동작으로 검증한다).
+{
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+  const fetchSrc = src.slice(src.indexOf("async function fetchTempEvents"), src.indexOf("function roundTick"));
+  eq(
+    fetchSrc.includes("if (failures >= TEMP_NO_CITIES.length)"),
+    true,
+    "auditE: fetchTempEvents distinguishes total failure",
+  );
+  eq(
+    fetchSrc.includes("return null;"),
+    true,
+    "auditE: total failure returns null, not empty list",
+  );
+  const cycleSrc = src.slice(src.indexOf("async function runCycle"));
+  eq(
+    cycleSrc.includes("tempFetchFailed = true;"),
+    true,
+    "auditE: driver flags total failure",
+  );
+  eq(
+    cycleSrc.includes("기온 이벤트 조회 전수 실패 — 이번 사이클은 기온 예약을 유지합니다"),
+    true,
+    "auditE: total failure is logged",
+  );
+  eq(
+    cycleSrc.includes("|| tempFetchFailed"),
+    true,
+    "auditE: total failure keeps the reserve",
+  );
 }
 
 console.log(`temp tests: ${passed} passed, ${failed} failed`);

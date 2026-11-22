@@ -728,6 +728,70 @@ public class NativeCycleTest {
                 && env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
     }
 
+    /** v0.3.39 감사 D (사이클) — 창이 남아 있어도 이벤트 markets가 전부
+     *  기매수면 후보가 될 수 없어 예약을 걸지 않고 메인이 산다. */
+    private static void tempUpcomingAllBoughtNoDefer() {
+        FakeEnv env = new FakeEnv();
+        env.nowMsOverride = Instant.parse("2026-11-15T03:00:00Z").toEpochMilli();
+        FakeNet net = new FakeNet();
+        net.cash = 12; // 슬롯 1
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        tempStageEndOnly(net, "2026-11-15T12:00:00Z");
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        env.durable.put("bm_bought",
+                "[\"highest-temperature-in-seoul-on-november-15-2026-7c\"]");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("auditD cycle: 결과 OK", r == NativeCycle.Result.OK);
+        check("auditD cycle: 메인이 슬롯 획득", t.posts == 1
+                && env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+        check("auditD cycle: 예약 로그 없음", !env.logged("기온 예약 — 오늘 진입 창"));
+    }
+
+    /** v0.3.39 감사 E — 기온 이벤트 조회 전수 실패(null)면 예약을 유지해
+     *  메인이 마지막 슬롯을 먹지 않고, 실패 로그가 남는다. */
+    private static void tempFetchAllFailKeepsReserve() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 12; // 슬롯 1
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        net.tempEvents = null; // Net 구현의 전수 실패 신호
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("auditE: 결과 OK", r == NativeCycle.Result.OK);
+        check("auditE: 전수 실패 로그", env.logged("기온 이벤트 조회 전수 실패"));
+        check("auditE: 예약 유지로 주문 없음", t.posts == 0);
+        check("auditE: 메인은 못 삼",
+                !env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+    }
+
+    /** v0.3.39 감사 E (대조군) — 조회 성공·이벤트 없음(빈 목록)이면
+     *  예약 없이 메인이 산다. */
+    private static void tempFetchEmptyNoReserve() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 12; // 슬롯 1
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        net.tempEvents = new ArrayList<>(); // 성공적 무이벤트
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("auditE empty: 결과 OK", r == NativeCycle.Result.OK);
+        check("auditE empty: 전수 실패 로그 없음", !env.logged("전수 실패"));
+        check("auditE empty: 메인이 슬롯 획득", t.posts == 1
+                && env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+    }
+
     /** 손절 판정 경계 — 폭 파라미터와 결정 구간 설정값 (JS book 테스트와 같은 케이스). */
     private static void stopLossVerdictDrops() {
         check("verdict temp boundary", "triggered".equals(StopLoss.verdict(0.90, 0.75, 0.15)));
@@ -1312,6 +1376,42 @@ public class NativeCycleTest {
         check("ingest: 제외는 변경으로 표시", ing.changed);
     }
 
+    /** v0.3.39 감사 C — pending status 승격: LOST로 먼저 수집된 토큰이
+     *  나중에 CLOSED 승으로 오면 승자 판정에 잡혀야 한다 (강등은 없음). */
+    private static void redeemStatusPromotion() {
+        String cid = "0x" + "cc".repeat(32);
+        Map<String, Object> lostRow = new LinkedHashMap<>();
+        lostRow.put("condition_id", cid);
+        lostRow.put("token_id", "t1");
+        lostRow.put("slug", "s1");
+        lostRow.put("current_value", 0.0);
+        RedeemPlan.Ingest c1 = RedeemPlan.ingest(new ArrayList<>(), new HashSet<>(),
+                null, new ArrayList<>(List.of(lostRow)), null);
+        check("auditC: cycle1 collects lost row", c1.pending.size() == 1);
+        check("auditC: cycle1 status is LOST",
+                "REDEEMABLE_LOST".equals(com.roomedia.boringmech.engine.Js.field(c1.pending.get(0), "status")));
+        check("auditC: cycle1 no target yet", RedeemPlan.planRedeems(c1.pending).targets.isEmpty());
+        Map<String, Object> closedWin = new LinkedHashMap<>();
+        closedWin.put("condition_id", cid);
+        closedWin.put("token_id", "t1");
+        closedWin.put("slug", "s1");
+        closedWin.put("current_price", 1.0);
+        closedWin.put("current_value", 0.0);
+        closedWin.put("entry_cost_usdc", 10.0);
+        closedWin.put("realized_pnl", 2.0);
+        RedeemPlan.Ingest c2 = RedeemPlan.ingest(c1.pending, new HashSet<>(),
+                null, null, new ArrayList<>(List.of(closedWin)));
+        check("auditC: status promoted LOST → REDEEMABLE",
+                "REDEEMABLE".equals(com.roomedia.boringmech.engine.Js.field(c2.pending.get(0), "status")));
+        RedeemPlan.Plan plan2 = RedeemPlan.planRedeems(c2.pending);
+        check("auditC: promoted entry becomes redeem target",
+                plan2.targets.size() == 1 && plan2.worthless.isEmpty());
+        RedeemPlan.Ingest c3 = RedeemPlan.ingest(c2.pending, new HashSet<>(),
+                null, new ArrayList<>(List.of(lostRow)), null);
+        check("auditC: later lost row does not demote",
+                "REDEEMABLE".equals(com.roomedia.boringmech.engine.Js.field(c3.pending.get(0), "status")));
+    }
+
     /** 감사 F4 — CTF 토큰 ID가 없으면 잔고 게이트 없이 제출하지 않는다. */
     private static void redeemCtfNoGateNoSubmit() {
         FakeEnv env = new FakeEnv();
@@ -1862,6 +1962,44 @@ public class NativeCycleTest {
                 captured[0] != null && captured[0].contains("\"takerAmount\":\"4500000\""));
     }
 
+    /** v0.3.39 감사 B — 수동 매도는 넘겨받은 설정을 쓰고 durable을 다시
+     *  파싱하지 않는다. durable에 설정이 없는데(기본 캡 0.015) 넘겨받은
+     *  캡 0.1이 적용되면 하한가 0.45가 된다. */
+    private static void manualSellUsesPassedSettings() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        manualStage(net);
+        final String[] captured = new String[1];
+        RawHttp.Transport t = new RawHttp.Transport() {
+            @Override
+            public RawHttp.Raw post(String url, Map<String, String> h, String body) {
+                captured[0] = body;
+                return new RawHttp.Raw(200, "{\"success\":true,\"status\":\"matched\","
+                        + "\"makingAmount\":\"10\",\"takingAmount\":\"4.5\","
+                        + "\"transactionHashes\":[\"0x123\"]}", null);
+            }
+
+            @Override
+            public RawHttp.Raw get(String url, Map<String, String> h) {
+                throw new AssertionError("GET 금지: " + url);
+            }
+        };
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        try {
+            c.snapshot(); // lastOpenRows 채우기 (수동 매도 대상 행)
+        } catch (Exception e) {
+            check("auditB: snapshot for manual stage", false);
+            return;
+        }
+        env.durable.put("bm_manual_sell_req",
+                "{\"token_id\":\"123456789\",\"slug\":\"test-ms-market\",\"ts\":" + NOW + "}");
+        int sold = c.processManualSell(1,
+                com.roomedia.boringmech.engine.TradeSettings.parse("{\"slippageCap\":0.1}"));
+        check("auditB: manual sell sold with passed cfg", sold == 1);
+        check("auditB: floor price uses passed slippageCap, not re-parsed durable",
+                captured[0] != null && captured[0].contains("\"takerAmount\":\"4500000\""));
+    }
+
     /** 감사 7 — 리딤 pending이 300건 캡으로 잘릴 때 잘린 항목은 아카이브에
      *  보존되고, 다음 사이클이 아카이브를 다시 회수해 재평가한다. 해소된
      *  id는 아카이브에서도 제거된다. */
@@ -1928,6 +2066,9 @@ public class NativeCycleTest {
         tempReserveUpcomingWindowDefersMain();
         tempReservePastWindowNoDefer();
         tempReserveZeroUpcomingNoDefer();
+        tempUpcomingAllBoughtNoDefer();
+        tempFetchAllFailKeepsReserve();
+        tempFetchEmptyNoReserve();
         tradeSettingsParse();
         stopLossVerdictDrops();
         stopLossPath();
@@ -1948,6 +2089,7 @@ public class NativeCycleTest {
         stopLossBoundary();
         ledgerArchiveKeepsSlug();
         redeemIngestDropsDone();
+        redeemStatusPromotion();
         redeemCtfNoGateNoSubmit();
         redeemStreakNeedsEvidence();
         buySlugsIncompleteCursor();
@@ -1969,6 +2111,7 @@ public class NativeCycleTest {
         auditSettingsGuards();
         cycleSettingsParsedOnce();
         manualSellSlippageCapFromSettings();
+        manualSellUsesPassedSettings();
         redeemPendingArchiveSurvives();
         pureLogic();
         System.out.println("NativeCycleTest: " + passed + " passed, " + failed + " failed");

@@ -628,7 +628,7 @@ export function tempWindowOpen(nowMs, endMs, entryHourUtc = TEMP_NO_ENTRY_HOUR_U
  * 메인이 마지막 슬롯까지 먹어 버리므로, 드라이버는 이 판정으로도
  * 예약을 건다 (네이티브 TempNo.hasUpcomingWindow와 같은 규칙).
  */
-export function tempHasUpcomingWindow(events, nowMs, entryHourUtc = TEMP_NO_ENTRY_HOUR_UTC) {
+export function tempHasUpcomingWindow(events, nowMs, entryHourUtc = TEMP_NO_ENTRY_HOUR_UTC, heldSlugs = new Set(), boughtSlugs = new Set()) {
   if (!Number.isFinite(nowMs)) return false;
   for (const ev of events || []) {
     if (!ev || !isTempNoSlug(ev.slug)) continue;
@@ -638,9 +638,26 @@ export function tempHasUpcomingWindow(events, nowMs, entryHourUtc = TEMP_NO_ENTR
     const startMs = Date.UTC(
       d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), entryHourUtc,
     );
-    if (startMs < endMs && nowMs < endMs) return true;
+    if (startMs < endMs && nowMs < endMs && tempEventHasCandidateMarket(ev, heldSlugs, boughtSlugs)) return true;
   }
   return false;
+}
+
+/**
+ * 이벤트 하위 시장 중 후보 가능(활성이고 아직 보유·매수 기록이 없는
+ * 정확한 정수 시장)인 것이 있는지 — markets가 전부 보유·종결·꼬리
+ * 버킷인 이벤트는 살 것이 없어 예약할 이유가 없다 (v0.3.39 감사 D,
+ * 네이티브 TempNo.hasUpcomingWindow와 같은 규칙).
+ */
+function tempEventHasCandidateMarket(ev, heldSlugs, boughtSlugs) {
+  if (!Array.isArray(ev?.markets)) return false;
+  return ev.markets.some((m) => {
+    if (!m?.active || m.closed) return false;
+    if (m.acceptingOrders === false || m.archived === true) return false;
+    const slug = m.slug || "";
+    if (heldSlugs?.has(slug) || boughtSlugs?.has(slug)) return false;
+    return isExactTempTitle(m.groupItemTitle);
+  });
 }
 
 // ── 매매 설정 (bm_settings) ──────────────────────────────────
@@ -925,15 +942,35 @@ async function fetchTempEvents(nowMs) {
       failures += 1;
     }
   }
-  if (failures < TEMP_NO_CITIES.length) {
-    tempEventsCache = { atMs: nowMs, events };
+  if (failures >= TEMP_NO_CITIES.length) {
+    // 전수 실패는 "오늘 이벤트 없음"(빈 목록)과 구분해 null로 알린다 —
+    // 호출자가 예약을 안전 방향(유지)으로 판정하게 하기 위해서다
+    // (v0.3.39 감사 E). 부분 실패(일부 도시 성공)는 성공으로 취급한다.
+    return null;
   }
+  tempEventsCache = { atMs: nowMs, events };
   return events;
 }
 
 function roundTick(price, tick) {
   const q = Math.floor(price / tick + 0.5);
   return Number((q * tick).toFixed(6));
+}
+
+/**
+ * 매수 지정가 — 슬리피지 캡과 밴드 상한을 건 뒤 틱 배수로 정렬하고
+ * [tick, 1 - tick]로 절단한다 (매도 floorPrice와 같은 방식). 밴드 상한
+ * (기온 기본 0.998)이 틱 배수가 아니면 종전 식 min(roundTick(...),
+ * bandHi)가 0.998 같은 비배수·priceValid 상한(1 - tick) 초과 가격을
+ * 만들어 서명이 전건 실패했다 (v0.3.39 감사 축 1).
+ */
+export function buyLimitPrice(bestAsk, slippageCap, tick, bandHi) {
+  let limit = roundTick(Math.min(bestAsk + slippageCap, bandHi), tick);
+  if (limit > bandHi) {
+    // 반올림이 밴드 상한을 넘었으면 상한 아래 가장 큰 틱 배수로 내린다
+    limit = Number((Math.floor(bandHi / tick + 1e-9) * tick).toFixed(6));
+  }
+  return Math.min(Math.max(tick, limit), 1 - tick);
 }
 
 const state = {
@@ -1562,7 +1599,7 @@ async function verifyCandidate(cand, bet, cfg = DEFAULT_TRADE_SETTINGS, entryHou
   if (bestAsk - bestBid > cfg.spreadMax + 1e-9) return reject("spread_too_wide");
   if (asks[0].size * bestAsk < Math.max(cfg.askDepthMinUsd, bet)) return reject("ask_depth_low");
   const tick = Number(book.tick_size || (await state.client.getTickSize(tokenId)));
-  const limitPrice = Math.min(roundTick(bestAsk + cfg.slippageCap, tick), bandHi);
+  const limitPrice = buyLimitPrice(bestAsk, cfg.slippageCap, tick, bandHi);
   // 최소 주문 수량 검사용 추정치 — 실제 주식수는 시장가 주문이 금액에서 역산한다
   const estShares = bet / limitPrice;
   const minSize = Number(book.min_order_size || 0);
@@ -2209,17 +2246,26 @@ async function runCycle(gen) {
   // 메인 쪽이 이긴다 (excludeSlugs). 기온 스캔 통계는 요약에 섞지 않는다.
   const tempSettings = parseTempSettings(durableRead(LS.settings));
   let tempEventsList = null;
+  // 기온 이벤트 조회 전수 실패 여부 — 실패와 "오늘 이벤트 없음"을
+  // 구분해, 전수 실패 사이클은 예약을 유지하는 쪽으로 판정한다
+  // (안전 방향, v0.3.39 감사 E).
+  let tempFetchFailed = false;
   if (tempSettings.enabled) {
     try {
       const events = await fetchTempEvents(Date.now());
-      tempEventsList = events;
-      const mainSlugs = new Set(candidates.map((c) => c.slug));
-      const tempCands = scanTempCandidates(
-        events, snap.heldSlugs, boughtAll, tempSettings, Date.now(), null, mainSlugs,
-      );
-      if (tempCands.length) {
-        log(`기온 후보 ${tempCands.length}건 (밴드 ${tempSettings.bandLo}–${tempSettings.bandHi})`);
-        candidates.push(...tempCands);
+      if (events == null) {
+        tempFetchFailed = true;
+        log("기온 이벤트 조회 전수 실패 — 이번 사이클은 기온 예약을 유지합니다");
+      } else {
+        tempEventsList = events;
+        const mainSlugs = new Set(candidates.map((c) => c.slug));
+        const tempCands = scanTempCandidates(
+          events, snap.heldSlugs, boughtAll, tempSettings, Date.now(), null, mainSlugs,
+        );
+        if (tempCands.length) {
+          log(`기온 후보 ${tempCands.length}건 (밴드 ${tempSettings.bandLo}–${tempSettings.bandHi})`);
+          candidates.push(...tempCands);
+        }
       }
     } catch (e) {
       log(`기온 스캔 오류: ${String(e?.message ?? e).slice(0, 120)}`);
@@ -2380,7 +2426,8 @@ async function runCycle(gen) {
   const tempHasCandidates = candidates.some((c) => c.strategy === "temp_no");
   const tempReserve = tempSettings.enabled
     && (tempHasCandidates
-      || tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc));
+      || tempFetchFailed
+      || tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc, snap.heldSlugs, boughtAll));
   // 예약 실효값은 전체 포지션 상한으로 제한한다 (감사 축 3).
   const tempReserveSlots = effectiveTempReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions);
   const deferredMain = [];
@@ -2401,7 +2448,11 @@ async function runCycle(gen) {
   // 창 대기 예약(기온 후보 없음)도 다시 타지 않는다 — 예약 슬롯을
   // 이 사이클에 메인이 먹지 않게 남겨 두는 것이 그 예약의 목적이다.
   if (tempReserve && !tempHasCandidates && deferredMain.length) {
-    log(`기온 예약 — 오늘 진입 창이 열릴 이벤트가 있어 메인 ${deferredMain.length}건을 미루고 슬롯을 남깁니다`);
+    if (tempFetchFailed) {
+      log(`기온 예약 — 조회 전수 실패로 메인 ${deferredMain.length}건을 미루고 슬롯을 남깁니다`);
+    } else {
+      log(`기온 예약 — 오늘 진입 창이 열릴 이벤트가 있어 메인 ${deferredMain.length}건을 미루고 슬롯을 남깁니다`);
+    }
   }
   if (!aborted && !budgetOut && tempHasCandidates) {
     for (const cand of deferredMain) {
@@ -2823,16 +2874,24 @@ export function saveRedeemPending(list) {
   durableWrite(LS.redeemPending, JSON.stringify(list.slice(-REDEEM_PENDING_CAP)));
 }
 
-// 스냅샷의 정산 행(REDEEMABLE/REDEEMABLE_LOST)을 pending에 수집한다.
-// 이미 회수했거나 worthless로 종결한 condition은 다시 넣지 않는다.
-function ingestRedeemPending() {
-  const done = new Set([
-    ...loadDurableJsonList(LS.redeemHistory).map((h) => h.condition_id),
-    ...loadDurableJsonList(LS.redeemClosed),
-    // 캡에서 밀려나 아카이브된 done 근거도 같은 무게로 본다 (v0.3.35 감사 축 3).
-    ...loadDurableJsonList(LS.redeemDoneArchive),
-  ]);
-  const pending = loadRedeemPending();
+// status 승격 순위 — REDEEMABLE(승자 확인) > REDEEMABLE_LOST(패배 관측).
+// 기존 항목의 status는 이 순위 상승 방향으로만 갱신한다 (강등 없음).
+function redeemStatusRank(status) {
+  if (status === "REDEEMABLE") return 2;
+  if (status === "REDEEMABLE_LOST") return 1;
+  return 0;
+}
+
+/**
+ * 정산 행 수집 순수 로직 (네이티브 RedeemPlan.ingest와 같은 규칙) —
+ * pending 목록에 승자·패배·CLOSED 승 행을 합치고 { pending, changed }를
+ * 돌려준다. 이미 수집된 항목은 가치와 status를 갱신하되, status는
+ * 승격 방향으로만 바꾼다 — REDEEMABLE_LOST로 먼저 수집된 토큰이 나중에
+ * 승자로 와도 status가 고정돼 있으면 planRedeems의 승자 판정에서
+ * 영원히 빠진다 (v0.3.39 감사 C).
+ */
+export function collectRedeemPending(pendingIn, done, winRows, lostRows, closedRows) {
+  const pending = [...(pendingIn || [])];
   const byKey = new Map(pending.map((e) => [`${e.condition_id}|${e.token_id}`, e]));
   let changed = false;
   const addRows = (rows, status) => {
@@ -2849,6 +2908,10 @@ function ingestRedeemPending() {
           existing.current_value = value;
           changed = true;
         }
+        if (redeemStatusRank(status) > redeemStatusRank(existing.status)) {
+          existing.status = status;
+          changed = true;
+        }
         continue;
       }
       const entry = {
@@ -2863,14 +2926,14 @@ function ingestRedeemPending() {
       changed = true;
     }
   };
-  addRows(state.lastWinRows, "REDEEMABLE");
-  addRows(state.lastLostRows, "REDEEMABLE_LOST");
+  addRows(winRows, "REDEEMABLE");
+  addRows(lostRows, "REDEEMABLE_LOST");
   // REDEEMABLE 구간을 관측하지 못한 채 CLOSED로 전이한 승자도 수집한다 —
   // 수집원이 REDEEMABLE 두 목록뿐이면 앱이 꺼진 사이의 전이를 영영
   // 놓친다. CLOSED 승 행은 current_value가 0으로 오므로 회수 예정액을
   // 진입원가 + 실현손익으로 추정해 넣는다 (잔고 게이트가 실회수를 막는
   // 이중 회수는 온체인에서 차단된다).
-  const closedWins = (state.lastClosedRows || []).filter((r) => {
+  const closedWins = (closedRows || []).filter((r) => {
     if (Number(r?.current_price) >= 1) return true;
     return false;
   }).map((r) => {
@@ -2878,6 +2941,22 @@ function ingestRedeemPending() {
     return { ...r, current_value: Number(r.current_value) > 0 ? r.current_value : est };
   }).filter((r) => Number(r.current_value) > 0);
   addRows(closedWins, "REDEEMABLE");
+  return { pending, changed };
+}
+
+// 스냅샷의 정산 행(REDEEMABLE/REDEEMABLE_LOST)을 pending에 수집한다.
+// 이미 회수했거나 worthless로 종결한 condition은 다시 넣지 않는다.
+function ingestRedeemPending() {
+  const done = new Set([
+    ...loadDurableJsonList(LS.redeemHistory).map((h) => h.condition_id),
+    ...loadDurableJsonList(LS.redeemClosed),
+    // 캡에서 밀려나 아카이브된 done 근거도 같은 무게로 본다 (v0.3.35 감사 축 3).
+    ...loadDurableJsonList(LS.redeemDoneArchive),
+  ]);
+  const { pending, changed } = collectRedeemPending(
+    loadRedeemPending(), done,
+    state.lastWinRows, state.lastLostRows, state.lastClosedRows,
+  );
   if (changed) saveRedeemPending(pending);
 }
 
@@ -3121,7 +3200,13 @@ async function runRedeems(gen) {
     saveRedeemPending(loadRedeemPending().filter((e) => !bad.has(e)));
     log(`리딤 계획 제외 ${plan.errors.length}건 — condition_id 형식 오류로 대기 목록에서 제거`);
   }
-  if (plan.worthless.length) {
+  // worthless streak는 이번 사이클에 정산 조회가 성공해 새 증거가 있을
+  // 때만 올린다 — 조회 실패로 win/lost/closed가 전부 null인 사이클에서
+  // 저장된 항목만으로 streak가 올라 종결까지 가면, 가치 갱신이 늦은
+  // 승자 건이 영구 누락된다 (네이티브 NativeCycle과 같은 가드, v0.3.39 경화).
+  const settlementKnown = state.lastWinRows != null
+    || state.lastLostRows != null || state.lastClosedRows != null;
+  if (plan.worthless.length && settlementKnown) {
     // 전액 손실 종결은 3사이클 연속 확인 후에만 — 정산 직후 과도기에
     // 가치가 0으로 보이는 승자를 한 번의 관측으로 영구 종결하면 회수금이
     // 동결된다. 사이클마다 pending 항목에 연속 0 확인 횟수를 쌓는다.

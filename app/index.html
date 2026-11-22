@@ -241,7 +241,7 @@
       </div>
       <div class="set">
         <div class="set-head"><span class="lab">최소 거래량</span>
-          <span><span class="unit">$</span><input class="numin" type="number" id="ts_volumeMin" value="10000" inputmode="numeric"></span>
+          <span><span class="unit">$</span><input class="numin" type="number" id="ts_volumeMin" value="10000" min="0" inputmode="numeric"></span>
         </div>
       </div>
       <div class="set">
@@ -312,7 +312,7 @@
       </div>
       <div class="set">
         <div class="set-head"><span class="lab">현금 하한 하한값</span>
-          <span><span class="unit">$</span><input class="numin" type="number" id="ts_reserveUsd" value="2.87" step="0.01" inputmode="decimal"></span>
+          <span><span class="unit">$</span><input class="numin" type="number" id="ts_reserveUsd" value="2.87" min="0" step="0.01" inputmode="decimal"></span>
         </div>
       </div>
       <div class="set">
@@ -847,8 +847,9 @@
       var vals = {};
       for (var i = 0; i < g.fields.length; i++) {
         var f = g.fields[i];
-        var v = Number($(f.id).value);
-        if (!fieldValid(f, v)) {
+        var raw = $(f.id).value;
+        var v = Number(raw);
+        if ((f.ctrl === 'num' && raw === '') || !fieldValid(f, v)) {
           err.textContent = f.label + ' 값이 범위를 벗어났습니다.';
           return;
         }

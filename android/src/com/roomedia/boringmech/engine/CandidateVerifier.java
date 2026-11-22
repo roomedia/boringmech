@@ -178,7 +178,7 @@ public final class CandidateVerifier {
         }
         Object tickRaw = Js.field(book, "tick_size");
         double tick = Js.truthy(tickRaw) ? Js.num(tickRaw) : books.getTickSize(tokenId);
-        double limitPrice = Math.min(Js.roundTick(bestAsk + cfg.slippageCap, tick), bandHi);
+        double limitPrice = buyLimitPrice(bestAsk, cfg.slippageCap, tick, bandHi);
         // 최소 주문 수량 검사용 추정치 — 실제 주식수는 시장가 주문이 금액에서 역산한다
         double estShares = bet / limitPrice;
         double minSize = Js.numOrZero(Js.field(book, "min_order_size"));
@@ -191,6 +191,22 @@ public final class CandidateVerifier {
                 estShares,
                 Js.str(tick),
                 Js.truthy(Js.field(book, "neg_risk")));
+    }
+
+    /**
+     * 매수 지정가 — engine.js buyLimitPrice와 같은 규칙. 슬리피지 캡과
+     * 밴드 상한을 건 뒤 틱 배수로 정렬하고 [tick, 1 - tick]로 절단한다
+     * (매도 write/StopLoss.floorPrice와 같은 방식). 밴드 상한(기온 기본
+     * 0.998)이 틱 배수가 아니면 종전 식이 비배수·priceValid 상한 초과
+     * 가격을 만들어 서명이 전건 실패했다 (v0.3.39 감사 축 1).
+     */
+    public static double buyLimitPrice(double bestAsk, double slippageCap, double tick, double bandHi) {
+        double limit = Js.roundTick(Math.min(bestAsk + slippageCap, bandHi), tick);
+        if (limit > bandHi) {
+            // 반올림이 밴드 상한을 넘었으면 상한 아래 가장 큰 틱 배수로 내린다
+            limit = Js.toFixed(Math.floor(bandHi / tick + 1e-9) * tick, 6);
+        }
+        return Math.min(Math.max(tick, limit), 1 - tick);
     }
 
     /** 오더북 한쪽(asks/bids) — {price, size} 숫자 쌍으로 변환하고 비유한 값을 버린다. */
