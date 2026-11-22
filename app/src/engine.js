@@ -83,6 +83,7 @@ const LS = {
   settledBase: "bm_settled_base",
   relayer: "bm_relayer",
   redeemPending: "bm_redeem_pending",
+  redeemPendingArchive: "bm_redeem_pending_archive",
   redeemHistory: "bm_redeem_history",
   redeemClosed: "bm_redeem_closed",
   redeemDoneArchive: "bm_redeem_done_archive",
@@ -153,7 +154,9 @@ export function sizing(cash, equity, openCount, cfg = DEFAULT_TRADE_SETTINGS) {
   const cashFloor = round2(Math.max(cfg.reserveUsd, equity * cfg.cashFloorPct));
   const available = round2(Math.max(0, cash - cashFloor));
   const bet = betUsdFor(equity, cfg);
-  const cashSlots = Math.floor((available + 1e-9) / bet);
+  // bet이 0 이하면 나눗셈이 무한대로 터져 슬롯이 상한까지 차는 사고가
+  // 난다 (betMinUsd=0 + 작은 betPct 조합) — 베팅액이 없으면 슬롯도 없다.
+  const cashSlots = bet > 0 ? Math.floor((available + 1e-9) / bet) : 0;
   const slots = Math.max(0, Math.min(cashSlots, cfg.maxPositions - openCount));
   return { cashFloor, available, bet, slots };
 }
@@ -658,8 +661,21 @@ function settingsObject(raw) {
   return o && typeof o === "object" ? o : null;
 }
 
+/**
+ * 설정 숫자 필드의 엄격 해석 — 실제 숫자(유한)와 숫자 문자열(공백 제거
+ * 후 비어 있지 않고 완전히 숫자로 파싱되는 것)만 숫자로 인정한다.
+ * null·빈 문자열·불리언·배열·객체는 Number() 강제변환( null→0, true→1,
+ * ""→0, []→0 )으로 위험한 값이 되는 대신 NaN으로 떨어져 필드 기본값을
+ * 쓰게 한다 (v0.3.38 감사 축 4).
+ */
+export function strictNum(v) {
+  if (typeof v === "number") return v;
+  if (typeof v === "string" && v.trim() !== "") return Number(v);
+  return NaN;
+}
+
 function numField(o, key, def, ok) {
-  const v = Number(o?.[key]);
+  const v = strictNum(o?.[key]);
   return Number.isFinite(v) && ok(v) ? v : def;
 }
 
@@ -710,6 +726,13 @@ export function parseTradeSettings(raw) {
     out.decidedLow = d.decidedLow;
     out.decidedHigh = d.decidedHigh;
   }
+  // decided 쌍이 0.5를 사이에 두지 않으면(둘 다 한쪽) 모든 가격이
+  // decided 판정이 돼 손절이 영구히 발화하지 않는다 — 순서가 맞아도
+  // 쌍째로 기본값으로 되돌린다 (v0.3.38 감사 축 2).
+  if (out.decidedLow >= 0.5 || out.decidedHigh <= 0.5) {
+    out.decidedLow = d.decidedLow;
+    out.decidedHigh = d.decidedHigh;
+  }
   return out;
 }
 
@@ -732,9 +755,9 @@ export function parseTempSettings(raw) {
       reserveSlots: TEMP_NO_DEFAULT_RESERVE_SLOTS,
     };
   }
-  const hi = Number(o.tempNoBandHi);
+  const hi = strictNum(o.tempNoBandHi);
   let bandHi = Number.isFinite(hi) && hi > 0 && hi <= 1 ? hi : TEMP_NO_BAND_HI;
-  const lo = Number(o.tempNoBandLo);
+  const lo = strictNum(o.tempNoBandLo);
   let bandLo = Number.isFinite(lo) && lo > 0 && lo <= TEMP_NO_BAND_HI
     ? lo
     : TEMP_NO_DEFAULT_BAND_LO;
@@ -742,11 +765,11 @@ export function parseTempSettings(raw) {
     bandLo = TEMP_NO_DEFAULT_BAND_LO;
     bandHi = TEMP_NO_BAND_HI;
   }
-  const hour = Number(o.tempEntryHourUtc);
+  const hour = strictNum(o.tempEntryHourUtc);
   const entryHourUtc = Number.isInteger(hour) && hour >= 0 && hour <= 23
     ? hour
     : TEMP_NO_ENTRY_HOUR_UTC;
-  const rs = Number(o.tempNoReserveSlots);
+  const rs = strictNum(o.tempNoReserveSlots);
   const reserveSlots = Number.isInteger(rs)
     && rs >= 0 && rs <= TEMP_NO_MAX_RESERVE_SLOTS
     ? rs
@@ -771,6 +794,17 @@ export function resolveTempFeeRate(m) {
   if (byType != null) return byType;
   const rate = Number(m?.feeSchedule?.rate);
   return Number.isFinite(rate) && rate >= 0 ? rate : null;
+}
+
+/**
+ * 기온 예약 슬롯의 실효값 — 예약이 전체 포지션 상한을 넘으면 메인이
+ * 사이클마다 전량 미뤄지므로, 실효 예약은 maxPositions로 제한한다
+ * (v0.3.38 감사 축 3). 두 설정이 모두 있는 판정 지점에서만 계산한다.
+ */
+export function effectiveTempReserveSlots(reserveSlots, maxPositions) {
+  const r = Number.isFinite(reserveSlots) ? reserveSlots : TEMP_NO_DEFAULT_RESERVE_SLOTS;
+  const m = Number.isFinite(maxPositions) ? maxPositions : MAX_POSITIONS;
+  return Math.max(0, Math.min(r, m));
 }
 
 /**
@@ -1006,11 +1040,12 @@ function boughtSlugs() {
  */
 export function boughtStrategyOf(slug) {
   if (!slug) return null;
+  // 첫 일치 항목만 보면 중복 항목 뒤에 숨은 temp_no 태그를 놓친다 —
+  // 일치 항목을 전부 스캔해 temp_no가 하나라도 있으면 temp_no다
+  // (v0.3.38 감사 경화).
   for (const e of boughtEntries()) {
     if (boughtEntrySlug(e) !== slug) continue;
-    return e && typeof e === "object" && e.strategy === "temp_no"
-      ? "temp_no"
-      : null;
+    if (e && typeof e === "object" && e.strategy === "temp_no") return "temp_no";
   }
   return null;
 }
@@ -1368,7 +1403,7 @@ async function clobCash() {
   return round2(Number(BigInt(bal.balance || "0")) / 1e6);
 }
 
-async function snapshot() {
+async function snapshot(cfg) {
   const cash = await clobCash();
   const positions = await fetchPositions(state.funder);
   const positionsValue = round2(await fetchPositionsValue(state.funder));
@@ -1391,7 +1426,10 @@ async function snapshot() {
     manualSellRecords(),
   );
   state.lastClosedRows = closedRows;
-  const s = sizing(cash, equity, book.openCount, parseTradeSettings(durableRead(LS.settings)));
+  // 설정은 사이클당 1회만 파싱한다 — runCycle이 파싱한 cfg를 그대로 쓰고,
+  // 사이클 밖 호출자(연동·복원)는 인자가 없어 이 진입점에서 새로 파싱한다
+  // (v0.3.38 감사 축 1/4).
+  const s = sizing(cash, equity, book.openCount, cfg ?? parseTradeSettings(durableRead(LS.settings)));
   // 종목 목록·손절 대상은 장부와 같은 단일 기준으로 추린다 — status 없는
   // 보유 행이 목록에서도 손절에서도 빠지지 않게 한다 (네이티브 패리티).
   const openRows = positions.filter(isOpenRow);
@@ -2052,7 +2090,7 @@ async function runCycle(gen) {
   setStage("snapshot");
   let snap;
   try {
-    snap = await snapshot();
+    snap = await snapshot(tradeCfg);
   } catch (e) {
     // 스냅샷 실패가 손절까지 막지 않게 한다 — 손절은 포지션 목록만으로
     // 돌 수 있는데, 스냅샷 전체 성공에 결합돼 있으면 Data API 하나만
@@ -2088,7 +2126,7 @@ async function runCycle(gen) {
   const soldCount = await runStopLoss(gen, tradeCfg);
   beatProgress();
   if (soldCount > 0) {
-    snap = await snapshot();
+    snap = await snapshot(tradeCfg);
     state.onState(snap);
   }
   // 리딤은 손절 다음·신규 매수 이전 — 회수액이 생기면 잔고를 다시 읽는다
@@ -2096,7 +2134,7 @@ async function runCycle(gen) {
   const recovered = await runRedeems(gen);
   beatProgress();
   if (recovered > 0) {
-    snap = await snapshot();
+    snap = await snapshot(tradeCfg);
     state.onState(snap);
   }
   if (settleNotice) {
@@ -2309,12 +2347,14 @@ async function runCycle(gen) {
   // 패스와 동일하다.
   const tempReserve = tempSettings.enabled
     && candidates.some((c) => c.strategy === "temp_no");
+  // 예약 실효값은 전체 포지션 상한으로 제한한다 (감사 축 3).
+  const tempReserveSlots = effectiveTempReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions);
   const deferredMain = [];
   let aborted = false;
   let budgetOut = false;
   for (const cand of candidates) {
     if (!state.running || gen !== state.gen) { aborted = true; break; }
-    if (tempReserve && tempReserveDefersMain(cand.strategy, slotsLeft, verified, tempSettings.reserveSlots, tradeCfg.verifyCap)) {
+    if (tempReserve && tempReserveDefersMain(cand.strategy, slotsLeft, verified, tempReserveSlots, tradeCfg.verifyCap)) {
       deferredMain.push(cand);
       continue;
     }
@@ -2711,12 +2751,37 @@ export function verifyRecovery(beforeCash, afterCash, expectedUsd) {
   };
 }
 
-function loadRedeemPending() {
-  return loadDurableJsonList(LS.redeemPending);
+const REDEEM_PENDING_CAP = 300;
+
+function redeemPendingKey(e) {
+  return `${e?.condition_id}|${e?.token_id}`;
 }
 
-function saveRedeemPending(list) {
-  durableWrite(LS.redeemPending, JSON.stringify(list.slice(-300)));
+/**
+ * 리딤 pending 로드 — 본 목록과 절단 아카이브를 병합해 돌려준다.
+ * 아카이브된 항목도 리딤 사이클이 다시 회수해 재평가한다 (중복은
+ * condition_id|token_id 키로 제거하고, 본 목록 쪽 항목이 우선한다).
+ */
+export function loadRedeemPending() {
+  const pending = loadDurableJsonList(LS.redeemPending);
+  const archive = loadDurableJsonList(LS.redeemPendingArchive);
+  if (!archive.length) return pending;
+  const pendingKeys = new Set(pending.map(redeemPendingKey));
+  return [...archive.filter((e) => !pendingKeys.has(redeemPendingKey(e))), ...pending];
+}
+
+/**
+ * 리딤 pending 저장 — 인자는 전체 목록이다. 300건을 넘는 앞부분은
+ * 버리지 않고 아카이브 키에 보존하고(load가 다시 병합한다), 전체
+ * 목록에서 빠진(해소된) 항목은 아카이브에서도 함께 사라진다
+ * (v0.3.38 감사 축 3 — 절단으로 인한 영구 리딤 누락 방지).
+ */
+export function saveRedeemPending(list) {
+  const overflow = list.length > REDEEM_PENDING_CAP
+    ? list.slice(0, list.length - REDEEM_PENDING_CAP)
+    : [];
+  durableWrite(LS.redeemPendingArchive, JSON.stringify(overflow));
+  durableWrite(LS.redeemPending, JSON.stringify(list.slice(-REDEEM_PENDING_CAP)));
 }
 
 // 스냅샷의 정산 행(REDEEMABLE/REDEEMABLE_LOST)을 pending에 수집한다.

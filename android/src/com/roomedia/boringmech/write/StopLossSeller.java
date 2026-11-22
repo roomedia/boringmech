@@ -165,12 +165,18 @@ public final class StopLossSeller {
      * 기록 장치가 없으면 제출 자체를 하지 않는다 (기록 없는 매도 방지).
      */
     public boolean executeManualSell(Map<String, Object> row, double current, int gen) {
+        return executeManualSell(row, current, gen, StopLoss.SLIPPAGE_CAP);
+    }
+
+    /** 수동 매도 — 매도 하한가의 슬리피지 캡을 설정값으로 받는 실행 (손절 경로와 같은 설정 적용). */
+    public boolean executeManualSell(Map<String, Object> row, double current, int gen,
+                                     double slippageCap) {
         if (manualRecorder == null) {
             logger.log("수동 매도 실행 불가 — 기록 장치가 없어 제출하지 않습니다 "
                     + Js.str(Js.field(row, "slug")));
             return false;
         }
-        return execute(row, current, gen, true, StopLoss.SLIPPAGE_CAP);
+        return execute(row, current, gen, true, slippageCap);
     }
 
     private boolean execute(Map<String, Object> row, double current, int gen, boolean manual,

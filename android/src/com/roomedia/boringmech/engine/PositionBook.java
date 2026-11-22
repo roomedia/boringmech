@@ -123,7 +123,9 @@ public final class PositionBook {
         double cashFloor = Js.round2(Math.max(cfg.reserveUsd, equity * cfg.cashFloorPct));
         double available = Js.round2(Math.max(0, cash - cashFloor));
         double bet = betUsdFor(equity, cfg);
-        double cashSlots = Math.floor((available + 1e-9) / bet);
+        // bet이 0 이하면 나눗셈이 무한대로 터져 슬롯이 상한까지 찬다
+        // (betMinUsd=0 + 작은 betPct 조합) — 베팅액이 없으면 슬롯도 없다.
+        double cashSlots = bet > 0 ? Math.floor((available + 1e-9) / bet) : 0;
         double slots = Math.max(0, Math.min(cashSlots, cfg.maxPositions - openCount));
         return new Sizing(cashFloor, available, bet, slots);
     }

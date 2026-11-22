@@ -65,12 +65,17 @@ public final class BoughtReconcile {
         if (slug == null || boughtEntries == null) {
             return null;
         }
+        // 첫 일치 항목만 보면 중복 항목 뒤에 숨은 temp_no 태그를 놓친다 —
+        // 일치 항목을 전부 스캔해 temp_no가 하나라도 있으면 temp_no다
+        // (v0.3.38 감사 경화).
         for (Object e : boughtEntries) {
             if (!slug.equals(slugOfEntry(e))) {
                 continue;
             }
             Object st = Js.field(e, "strategy");
-            return TempNo.STRATEGY.equals(st) ? TempNo.STRATEGY : null;
+            if (TempNo.STRATEGY.equals(st)) {
+                return TempNo.STRATEGY;
+            }
         }
         return null;
     }

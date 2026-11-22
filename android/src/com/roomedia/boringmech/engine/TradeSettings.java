@@ -45,8 +45,28 @@ public final class TradeSettings {
         boolean test(double v);
     }
 
+    /**
+     * 설정 숫자 필드의 엄격 해석 — 실제 숫자(Double)와 숫자 문자열(공백
+     * 제거 후 비어 있지 않고 완전히 숫자로 파싱되는 것)만 인정한다.
+     * null·불리언·배열·객체는 Js.num 강제변환(null→0, true→1, []→0)으로
+     * 위험한 값이 되는 대신 NaN으로 떨어져 필드 기본값을 쓰게 한다
+     * (v0.3.38 감사 축 4). Js.num 자체는 다른 사용처가 있어 건드리지 않고
+     * 이 필드 추출 지점에서만 거른다.
+     */
+    static double strictFieldNum(Object o, String key) {
+        Object v = Js.field(o, key);
+        if (v instanceof Double) {
+            return (Double) v;
+        }
+        if (v instanceof String) {
+            String t = Js.trimJs((String) v);
+            return t.isEmpty() ? Double.NaN : Js.parseNumber(t);
+        }
+        return Double.NaN;
+    }
+
     private static double numField(Object o, String key, double def, Ok ok) {
-        double v = Js.fieldNum(o, key);
+        double v = strictFieldNum(o, key);
         return Double.isFinite(v) && ok.test(v) ? v : def;
     }
 
@@ -98,6 +118,13 @@ public final class TradeSettings {
             out.priorityBandHi = d.priorityBandHi;
         }
         if (!(out.decidedLow < out.decidedHigh)) {
+            out.decidedLow = d.decidedLow;
+            out.decidedHigh = d.decidedHigh;
+        }
+        // decided 쌍이 0.5를 사이에 두지 않으면 모든 가격이 decided
+        // 판정이 돼 손절이 영구히 발화하지 않는다 — 순서가 맞아도 쌍째로
+        // 기본값으로 되돌린다 (v0.3.38 감사 축 2).
+        if (out.decidedLow >= 0.5 || out.decidedHigh <= 0.5) {
             out.decidedLow = d.decidedLow;
             out.decidedHigh = d.decidedHigh;
         }

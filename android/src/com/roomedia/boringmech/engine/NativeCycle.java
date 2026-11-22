@@ -331,8 +331,18 @@ public final class NativeCycle {
 
     // ── 스냅샷 ──────────────────────────────────────────────────────────────
 
-    /** snapshot() 이식. 복원 단계의 선행 스냅샷 시도에서도 쓴다. */
+    /**
+     * snapshot() 이식. 복원 단계의 선행 스냅샷 시도에서도 쓴다.
+     * 사이클 밖 진입점이라 여기서 설정을 새로 파싱한다 — 사이클 안에서는
+     * runCycle이 파싱한 설정을 snapshot(TradeSettings)로 넘긴다
+     * (사이클당 설정 1회 파싱, v0.3.38 감사).
+     */
     public Snap snapshot() throws Exception {
+        return snapshot(TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY)));
+    }
+
+    /** snapshot 본체 — 사이징은 넘겨받은 설정으로만 계산한다. */
+    public Snap snapshot(TradeSettings tradeCfg) throws Exception {
         double cash = net.clobCash();
         List<Object> positions = net.fetchPositions(null);
         double positionsValue = Js.round2(net.fetchPositionsValue());
@@ -354,8 +364,7 @@ public final class NativeCycle {
                 ManualSell.combineRecords(loadDurableJsonList(ManualSell.ARCHIVE_KEY),
                         loadDurableJsonList(ManualSell.LEDGER_KEY)), attemptedObjects());
         lastClosedRows = closedRows;
-        PositionBook.Sizing sizing = PositionBook.sizing(cash, equity, book.openCount,
-                TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY)));
+        PositionBook.Sizing sizing = PositionBook.sizing(cash, equity, book.openCount, tradeCfg);
         Snap snap = new Snap();
         snap.cash = cash;
         snap.positionsValue = positionsValue;
@@ -542,7 +551,7 @@ public final class NativeCycle {
         }
     }
 
-    private boolean checkStopLossPosition(Map<String, Object> row, int gen) throws Exception {
+    private boolean checkStopLossPosition(Map<String, Object> row, int gen, TradeSettings tradeCfg) throws Exception {
         Object slugRaw = Js.field(row, "slug");
         String slug = slugRaw instanceof String ? (String) slugRaw : null;
         Object page1 = slug == null ? null : fetchGammaPageQuiet(slug);
@@ -557,7 +566,6 @@ public final class NativeCycle {
         // 손절한다 — 단, 기온 폭은 매수 기록에 temp_no 태그가 있는 건만
         // (메인 매수·기록 없음은 메인 폭 적용). 판정 폭은 evaluate에도
         // 같은 기준으로 들어간다.
-        TradeSettings tradeCfg = TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY));
         boolean tempTagged = slug != null
                 && TempNo.isTempTagged(loadDurableJsonList("bm_bought"), slug);
         double stopDrop = tempTagged ? tradeCfg.tempStopDrop : tradeCfg.stopDrop;
@@ -656,7 +664,10 @@ public final class NativeCycle {
             saveManualSellStatus(req.slug, "no_price", "현재가를 확인할 수 없습니다");
             return 0;
         }
-        boolean done = seller.executeManualSell(row, current, gen);
+        // 수동 매도도 손절 경로와 같은 slippageCap 설정을 탄다 — 호출
+        // 지점에서 설정을 파싱해 넘긴다 (v0.3.38 감사 축 4).
+        TradeSettings tradeCfg = TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY));
+        boolean done = seller.executeManualSell(row, current, gen, tradeCfg.slippageCap);
         saveManualSellStatus(req.slug, done ? "filled" : "failed",
                 done ? "매도가 체결됐습니다" : "체결되지 않았습니다 — 최근 로그를 확인하세요");
         return done ? 1 : 0;
@@ -677,6 +688,11 @@ public final class NativeCycle {
 
     /** runStopLoss 이식 — 보유 행마다 예외를 격리한다. 반환값은 매도 성공 건수. */
     public int runStopLoss(int gen) {
+        return runStopLoss(gen, TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY)));
+    }
+
+    /** runStopLoss — 사이클이 파싱한 설정을 그대로 쓰는 본체. */
+    public int runStopLoss(int gen, TradeSettings tradeCfg) {
         int sold = 0;
         for (Object rowObj : lastOpenRows) {
             if (!env.isRunning(gen)) {
@@ -687,7 +703,7 @@ public final class NativeCycle {
                 if (rowObj instanceof Map) {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> row = (Map<String, Object>) rowObj;
-                    if (checkStopLossPosition(row, gen)) {
+                    if (checkStopLossPosition(row, gen, tradeCfg)) {
                         sold++;
                     }
                 }
@@ -701,9 +717,53 @@ public final class NativeCycle {
 
     // ── 리딤 ────────────────────────────────────────────────────────────────
 
+    private static final int REDEEM_PENDING_CAP = 300;
+    private static final String REDEEM_PENDING_KEY = "bm_redeem_pending";
+    private static final String REDEEM_PENDING_ARCHIVE_KEY = "bm_redeem_pending_archive";
+
+    private static String redeemPendingKeyOf(Object e) {
+        return Js.str(Js.field(e, "condition_id")) + "|" + Js.str(Js.field(e, "token_id"));
+    }
+
+    /**
+     * 리딤 pending 로드 — 본 목록과 절단 아카이브를 병합한다. 아카이브된
+     * 항목도 리딤 사이클이 다시 회수해 재평가하고, 중복은
+     * condition_id|token_id 키로 제거한다 (본 목록 쪽 항목이 우선).
+     */
+    private List<Object> loadRedeemPending() {
+        List<Object> pending = loadDurableJsonList(REDEEM_PENDING_KEY);
+        List<Object> archive = loadDurableJsonList(REDEEM_PENDING_ARCHIVE_KEY);
+        if (archive.isEmpty()) {
+            return pending;
+        }
+        Set<String> pendingKeys = new HashSet<>();
+        for (Object e : pending) {
+            pendingKeys.add(redeemPendingKeyOf(e));
+        }
+        List<Object> merged = new ArrayList<>();
+        for (Object e : archive) {
+            if (!pendingKeys.contains(redeemPendingKeyOf(e))) {
+                merged.add(e);
+            }
+        }
+        merged.addAll(pending);
+        return merged;
+    }
+
+    /**
+     * 리딤 pending 저장 — 인자는 전체 목록이다. 캡(300건)을 넘는 앞부분은
+     * 버리지 않고 아카이브 키에 보존하고(load가 다시 병합한다), 전체
+     * 목록에서 빠진(해소된) 항목은 아카이브에서도 함께 사라진다
+     * (v0.3.38 감사 축 3 — 절단으로 인한 영구 리딤 누락 방지).
+     */
     private void saveRedeemPending(List<Object> list) {
-        List<Object> tail = list.size() > 300 ? new ArrayList<>(list.subList(list.size() - 300, list.size())) : list;
-        env.durableWrite("bm_redeem_pending", ModelJson.stringify(tail));
+        List<Object> overflow = list.size() > REDEEM_PENDING_CAP
+                ? new ArrayList<>(list.subList(0, list.size() - REDEEM_PENDING_CAP))
+                : new ArrayList<>();
+        env.durableWrite(REDEEM_PENDING_ARCHIVE_KEY, ModelJson.stringify(overflow));
+        List<Object> tail = list.size() > REDEEM_PENDING_CAP
+                ? new ArrayList<>(list.subList(list.size() - REDEEM_PENDING_CAP, list.size())) : list;
+        env.durableWrite(REDEEM_PENDING_KEY, ModelJson.stringify(tail));
     }
 
     private void recordRedeemHistory(Map<String, Object> rec) {
@@ -744,7 +804,7 @@ public final class NativeCycle {
     }
 
     private void removeRedeemPending(String cid) {
-        List<Object> list = loadDurableJsonList("bm_redeem_pending");
+        List<Object> list = loadRedeemPending();
         List<Object> kept = new ArrayList<>();
         for (Object e : list) {
             if (!cid.equals(Js.field(e, "condition_id"))) {
@@ -771,7 +831,7 @@ public final class NativeCycle {
             arr = new ArrayList<>(arr.subList(arr.size() - 500, arr.size()));
         }
         env.durableWrite("bm_redeem_closed", ModelJson.stringify(arr));
-        List<Object> pendingNow = loadDurableJsonList("bm_redeem_pending");
+        List<Object> pendingNow = loadRedeemPending();
         List<Object> kept = new ArrayList<>();
         for (Object e : pendingNow) {
             if (!ripeIds.contains(Js.field(e, "condition_id"))) {
@@ -868,7 +928,7 @@ public final class NativeCycle {
 
     /** runRedeems 이식 — 회수액 합계(달러)를 돌려준다. */
     public double runRedeems(int gen) throws Exception {
-        List<Object> pending = loadDurableJsonList("bm_redeem_pending");
+        List<Object> pending = loadRedeemPending();
         List<Object> history = loadDurableJsonList("bm_redeem_history");
         List<Object> closedList = loadDurableJsonList("bm_redeem_closed");
         Set<Object> done = new HashSet<>();
@@ -1207,16 +1267,21 @@ public final class NativeCycle {
 
     /** runCycle 이식. 예외는 호출자(runIteration)가 "사이클 오류"로 기록한다. */
     public void runCycle(int gen) throws Exception {
+        // 매매·기온 설정은 사이클당 1회만 파싱해 스냅샷·손절·스캔 전부에
+        // 같은 객체를 넘긴다 — 지점마다 재파싱하면 사이클 도중 설정이
+        // 바뀌었을 때 구·신 설정이 섞인다 (v0.3.38 감사).
+        TradeSettings tradeCfg = TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY));
+        TempNo.Settings tempSettings = TempNo.parseSettings(env.durableRead(TempNo.SETTINGS_KEY));
         env.setStage("snapshot", cycle);
         Snap snap;
         try {
-            snap = snapshot();
+            snap = snapshot(tradeCfg);
         } catch (Exception e) {
             try {
                 List<Object> rows = net.fetchPositions(null);
                 lastOpenRows = PositionBook.openRows(rows);
                 env.setStage("stoploss", cycle);
-                runStopLoss(gen);
+                runStopLoss(gen, tradeCfg);
                 log("스냅샷 실패로 손절만 단독 실행함 — 원래 오류: " + slice(msg(e), 100));
             } catch (Exception e2) {
                 log("스냅샷 실패 + 손절 단독 실행도 실패: " + slice(msg(e2), 100));
@@ -1227,7 +1292,7 @@ public final class NativeCycle {
                 + " · 건당 $" + n(snap.bet) + " · 슬롯 " + snap.slots + " · 보유 " + snap.openCount);
         int manualSold = processManualSell(gen);
         if (manualSold > 0) {
-            snap = snapshot();
+            snap = snapshot(tradeCfg);
         }
         if (!settledBaselineLoaded) {
             settledBaseline = SettledBaseline.parse(env.durableRead("bm_settled_base"));
@@ -1239,16 +1304,16 @@ public final class NativeCycle {
         SettledBaseline.Notice settleNotice = SettledBaseline.noticeFor(settledBaseline, snapModel);
         env.beatProgress(cycle);
         env.setStage("stoploss", cycle);
-        int sold = runStopLoss(gen);
+        int sold = runStopLoss(gen, tradeCfg);
         env.beatProgress(cycle);
         if (sold > 0) {
-            snap = snapshot();
+            snap = snapshot(tradeCfg);
         }
         env.setStage("redeem", cycle);
         double recovered = runRedeems(gen);
         env.beatProgress(cycle);
         if (recovered > 0) {
-            snap = snapshot();
+            snap = snapshot(tradeCfg);
         }
         if (settleNotice != null) {
             moneyNotify("정산 확정", "실현 " + com.roomedia.boringmech.write.StopLoss.signedUsd(settleNotice.realizedDelta)
@@ -1277,7 +1342,7 @@ public final class NativeCycle {
             reconcileBoughtOnce(snap);
         }
         env.setStage("scan", cycle);
-        runScanAndBuy(gen, snap);
+        runScanAndBuy(gen, snap, tradeCfg, tempSettings);
     }
 
     /**
@@ -1299,7 +1364,8 @@ public final class NativeCycle {
         return events;
     }
 
-    private void runScanAndBuy(int gen, Snap snap) throws Exception {
+    private void runScanAndBuy(int gen, Snap snap, TradeSettings tradeCfg,
+                               TempNo.Settings tempSettings) throws Exception {
         List<Object> markets = net.fetchMarkets();
         Map<String, Integer> scanStats = new LinkedHashMap<>();
         Set<String> boughtAll = boughtSlugStrings();
@@ -1308,14 +1374,12 @@ public final class NativeCycle {
         // 체결됐는데 bm_bought에 없는 포지션이면 체결 기록도 보유도
         // 사라져 차단이 뚫리는 경로가 있었다 (v0.3.35 감사 축 2).
         boughtAll.addAll(StopLossLedger.attemptedSlugs(ledgerStore));
-        // 매매 설정은 스캔 패스마다 새로 읽는다 — 설정 변경은 다음 패스부터 적용.
-        TradeSettings tradeCfg = TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY));
+        // 매매 설정은 runCycle이 사이클 시작에 파싱한 것을 그대로 쓴다.
         List<ScanFilter.Candidate> candidates = ScanFilter.scanCandidates(
                 markets, snap.heldSlugs, boughtAll, scanStats, env.nowMs(), tradeCfg);
         // 기온 No 페이드 — 설정이 켜졌을 때만 별도 스캔을 붙인다. 후보는
         // 같은 선정 패스(슬롯·검증 캡 공유)를 타고, 메인 후보와 slug가
         // 겹치면 메인 쪽이 이긴다. 기온 스캔 통계는 요약에 섞지 않는다.
-        TempNo.Settings tempSettings = TempNo.parseSettings(env.durableRead(TempNo.SETTINGS_KEY));
         if (tempSettings.enabled) {
             try {
                 List<Object> events = tempEvents(env.nowMs());
@@ -1362,7 +1426,7 @@ public final class NativeCycle {
                 }
                 if (firstPass && tempReserve
                         && TempNo.reserveDefersMain(cand.strategy, slotsLeft, verified, tradeCfg.verifyCap,
-                                tempSettings.reserveSlots)) {
+                                TempNo.effectiveReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions))) {
                     deferredMain.add(cand);
                     continue;
                 }

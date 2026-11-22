@@ -8,6 +8,8 @@ import com.roomedia.boringmech.engine.Js;
 import com.roomedia.boringmech.engine.JsonModel;
 import com.roomedia.boringmech.engine.PositionBook;
 import com.roomedia.boringmech.engine.PositionsFetcher;
+import com.roomedia.boringmech.engine.TempNo;
+import com.roomedia.boringmech.engine.TradeSettings;
 
 import org.json.JSONObject;
 
@@ -91,7 +93,10 @@ final class ShadowSnapshot {
                 positions, winRows, lostRows, closedRows,
                 stopLossRecords(ctx), manualSellRecords(ctx),
                 mergedAttemptedTokens(ctx));
-        PositionBook.Sizing sizing = PositionBook.sizing(cash, equity, book.openCount);
+        // 실운용 스냅샷과 같은 설정으로 사이징한다 — 기본값 오버로드를
+        // 쓰면 설정 변경 시 대조가 상시 거짓 불일치가 된다 (v0.3.38 감사 축 3).
+        PositionBook.Sizing sizing = PositionBook.sizing(cash, equity, book.openCount,
+                TradeSettings.parse(durable(ctx, TempNo.SETTINGS_KEY)));
 
         JSONObject diff = compare(ctx, cash, positionsValue, equity, book, sizing);
         EngineService.recordShadowRun(ctx, diff.length() == 0,

@@ -19,6 +19,7 @@ const {
   markBought,
   boughtStrategyOf,
   tempReserveDefersMain,
+  effectiveTempReserveSlots,
   TEMP_NO_CITIES,
 } = await import("../src/engine.js");
 
@@ -332,9 +333,14 @@ eq(
   const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
   const cycleSrc = src.slice(src.indexOf("async function runCycle"));
   eq(
-    cycleSrc.includes("tempReserveDefersMain(cand.strategy, slotsLeft, verified, tempSettings.reserveSlots, tradeCfg.verifyCap)"),
+    cycleSrc.includes("tempReserveDefersMain(cand.strategy, slotsLeft, verified, tempReserveSlots, tradeCfg.verifyCap)"),
     true,
-    "reserve guard: driver defers via predicate with settings reserve",
+    "reserve guard: driver defers via predicate with clamped reserve",
+  );
+  eq(
+    cycleSrc.includes("effectiveTempReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions)"),
+    true,
+    "reserve guard: driver clamps reserve by maxPositions",
   );
   eq(
     cycleSrc.includes("for (const cand of deferredMain)"),
@@ -378,6 +384,48 @@ eq(
     true,
     "temp stoploss guard: recheck verdict uses picked drop",
   );
+}
+
+// ── v0.3.38 감사 수리 가드 ────────────────────────────────────
+// 설정 숫자 필드의 타입 엄격화 — null·불리언은 강제변환 대신 기본값으로
+eq(
+  parseTempSettings('{"tempNoReserveSlots":null}').reserveSlots,
+  1,
+  "audit1: reserve null falls back",
+);
+eq(
+  parseTempSettings('{"tempNoReserveSlots":true}').reserveSlots,
+  1,
+  "audit1: reserve true falls back",
+);
+eq(
+  parseTempSettings('{"tempNoBandLo":true}').bandLo,
+  0.8,
+  "audit1: bandLo true falls back",
+);
+eq(
+  parseTempSettings('{"tempEntryHourUtc":null}').entryHourUtc,
+  6,
+  "audit1: entry hour null falls back",
+);
+eq(
+  parseTempSettings('{"tempNoReserveSlots":""}').reserveSlots,
+  1,
+  "audit1: reserve empty string falls back",
+);
+// 예약 슬롯 교차 클램프 — 실효 예약은 maxPositions를 넘지 않는다
+eq(effectiveTempReserveSlots(70, 2), 2, "audit6: reserve clamped to maxPositions");
+eq(effectiveTempReserveSlots(1, 70), 1, "audit6: small reserve kept");
+eq(effectiveTempReserveSlots(0, 70), 0, "audit6: zero reserve kept");
+// strategyOf 경화 — 중복 항목 뒤에 숨은 temp_no 태그도 찾는다
+{
+  lsStore.set("bm_bought", JSON.stringify(["dup-mkt", { slug: "dup-mkt", strategy: "temp_no" }]));
+  eq(boughtStrategyOf("dup-mkt"), "temp_no", "audit9: tag behind plain entry found");
+  lsStore.set("bm_bought", JSON.stringify([{ slug: "dup-mkt", strategy: "temp_no" }, "dup-mkt"]));
+  eq(boughtStrategyOf("dup-mkt"), "temp_no", "audit9: tag ahead of plain entry found");
+  lsStore.set("bm_bought", JSON.stringify(["dup-mkt", { slug: "dup-mkt", strategy: "other" }]));
+  eq(boughtStrategyOf("dup-mkt"), null, "audit9: duplicates without tag stay main");
+  lsStore.clear();
 }
 
 console.log(`temp tests: ${passed} passed, ${failed} failed`);

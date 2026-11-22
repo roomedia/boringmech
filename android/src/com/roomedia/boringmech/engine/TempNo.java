@@ -79,6 +79,15 @@ public final class TempNo {
      * (예약은 하한이지 상한이 아니다). reserveSlots가 0이면 예약이 없어
      * 아무것도 미루지 않는다.
      */
+    /**
+     * 기온 예약 슬롯의 실효값 — 예약이 전체 포지션 상한을 넘으면 메인이
+     * 사이클마다 전량 미뤄지므로, 실효 예약은 maxPositions로 제한한다
+     * (v0.3.38 감사 축 3). 두 설정이 모두 있는 판정 지점에서만 계산한다.
+     */
+    public static int effectiveReserveSlots(int reserveSlots, int maxPositions) {
+        return Math.max(0, Math.min(reserveSlots, maxPositions));
+    }
+
     public static boolean reserveDefersMain(String strategy, int slotsLeft, int verified,
                                             int verifyCap, int reserveSlots) {
         if (STRATEGY.equals(strategy)) {
@@ -185,19 +194,19 @@ public final class TempNo {
             return new Settings(false, DEFAULT_BAND_LO, BAND_HI, ENTRY_HOUR_UTC,
                     DEFAULT_RESERVE_SLOTS);
         }
-        double hi = Js.fieldNum(o, "tempNoBandHi");
+        double hi = TradeSettings.strictFieldNum(o, "tempNoBandHi");
         double bandHi = Double.isFinite(hi) && hi > 0 && hi <= 1 ? hi : BAND_HI;
-        double lo = Js.fieldNum(o, "tempNoBandLo");
+        double lo = TradeSettings.strictFieldNum(o, "tempNoBandLo");
         double bandLo = Double.isFinite(lo) && lo > 0 && lo <= BAND_HI ? lo : DEFAULT_BAND_LO;
         if (!(bandLo < bandHi)) {
             bandLo = DEFAULT_BAND_LO;
             bandHi = BAND_HI;
         }
-        double hour = Js.fieldNum(o, "tempEntryHourUtc");
+        double hour = TradeSettings.strictFieldNum(o, "tempEntryHourUtc");
         int entryHourUtc = Double.isFinite(hour) && hour == Math.floor(hour)
                 && hour >= 0 && hour <= 23
                 ? (int) hour : ENTRY_HOUR_UTC;
-        double rs = Js.fieldNum(o, "tempNoReserveSlots");
+        double rs = TradeSettings.strictFieldNum(o, "tempNoReserveSlots");
         int reserveSlots = Double.isFinite(rs) && rs == Math.floor(rs)
                 && rs >= 0 && rs <= MAX_RESERVE_SLOTS
                 ? (int) rs : DEFAULT_RESERVE_SLOTS;

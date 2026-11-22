@@ -155,6 +155,21 @@ public class TempNoTest {
                 TempNo.parseSettings("{\"tempNoReserveSlots\":71}").reserveSlots == 1
                         && TempNo.parseSettings("{\"tempNoReserveSlots\":-1}").reserveSlots == 1
                         && TempNo.parseSettings("{\"tempNoReserveSlots\":2.5}").reserveSlots == 1);
+        // v0.3.38 감사 1 — 손상 타입은 강제변환(null→0, true→1)이 아니라 기본값
+        check("audit1: reserve null falls back",
+                TempNo.parseSettings("{\"tempNoReserveSlots\":null}").reserveSlots == 1);
+        check("audit1: reserve true falls back",
+                TempNo.parseSettings("{\"tempNoReserveSlots\":true}").reserveSlots == 1);
+        check("audit1: reserve empty string falls back",
+                TempNo.parseSettings("{\"tempNoReserveSlots\":\"\"}").reserveSlots == 1);
+        check("audit1: bandLo true falls back",
+                TempNo.parseSettings("{\"tempNoBandLo\":true}").bandLo == TempNo.DEFAULT_BAND_LO);
+        check("audit1: entry hour null falls back",
+                TempNo.parseSettings("{\"tempEntryHourUtc\":null}").entryHourUtc == TempNo.ENTRY_HOUR_UTC);
+        // v0.3.38 감사 6 — 예약 슬롯 교차 클램프
+        check("audit6: reserve clamped to maxPositions", TempNo.effectiveReserveSlots(70, 2) == 2);
+        check("audit6: small reserve kept", TempNo.effectiveReserveSlots(1, 70) == 1);
+        check("audit6: zero reserve kept", TempNo.effectiveReserveSlots(0, 70) == 0);
 
         // ── 수수료 해석 ──
         Object weather = JsonText.parse("{\"feeType\":\"weather_fees\"}");

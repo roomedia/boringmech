@@ -1680,6 +1680,148 @@ public class NativeCycleTest {
                 !env2.durable.getOrDefault("bm_redeem_pending", "").contains(firstCid));
     }
 
+    // ── v0.3.38 감사 수리 가드 ──────────────────────────────────────
+
+    /** 감사 1·4·3·9 — 설정 파서 타입 엄격화, decided 쌍 교차 가드,
+     *  bet<=0 슬롯 차단, strategyOf 전 항목 스캔 경화. */
+    private static void auditSettingsGuards() {
+        check("audit1: cashFloorPct null falls back",
+                TradeSettings.parse("{\"cashFloorPct\":null}").cashFloorPct == 0.3);
+        check("audit1: betPct true falls back",
+                TradeSettings.parse("{\"betPct\":true}").betPct == 0.01);
+        check("audit1: volumeMin true falls back",
+                TradeSettings.parse("{\"volumeMin\":true}").volumeMin == 10000);
+        check("audit1: askDepthMinUsd null falls back",
+                TradeSettings.parse("{\"askDepthMinUsd\":null}").askDepthMinUsd == 10);
+        check("audit1: bandLo empty string falls back",
+                TradeSettings.parse("{\"bandLo\":\"\"}").bandLo == 0.6);
+        check("audit1: bandLo array falls back",
+                TradeSettings.parse("{\"bandLo\":[0.5]}").bandLo == 0.6);
+        check("audit1: bandLo object falls back",
+                TradeSettings.parse("{\"bandLo\":{\"x\":1}}").bandLo == 0.6);
+        check("audit1: numeric string with spaces kept",
+                TradeSettings.parse("{\"betPct\":\" 0.02 \"}").betPct == 0.02);
+        TradeSettings cross = TradeSettings.parse("{\"decidedLow\":0.90,\"decidedHigh\":0.95}");
+        check("audit4: decided pair above 0.5 resets", cross.decidedLow == 0.03 && cross.decidedHigh == 0.97);
+        TradeSettings below = TradeSettings.parse("{\"decidedLow\":0.4,\"decidedHigh\":0.45}");
+        check("audit4: decided pair below 0.5 resets", below.decidedLow == 0.03 && below.decidedHigh == 0.97);
+        TradeSettings straddle = TradeSettings.parse("{\"decidedLow\":0.2,\"decidedHigh\":0.8}");
+        check("audit4: decided pair straddling 0.5 kept",
+                straddle.decidedLow == 0.2 && straddle.decidedHigh == 0.8);
+        PositionBook.Sizing zs = PositionBook.sizing(100000, 1, 0,
+                TradeSettings.parse("{\"betMinUsd\":0,\"betPct\":0.001}"));
+        check("audit3: bet rounds to 0 and slots closed", zs.bet == 0 && zs.slots == 0);
+        Map<String, Object> tagged = new LinkedHashMap<>();
+        tagged.put("slug", "dup-mkt");
+        tagged.put("strategy", "temp_no");
+        List<Object> dupPlainFirst = new ArrayList<>(List.of("dup-mkt", tagged));
+        check("audit9: tag behind plain entry found",
+                "temp_no".equals(BoughtReconcile.strategyOf(dupPlainFirst, "dup-mkt")));
+        List<Object> dupTaggedFirst = new ArrayList<>(List.of(tagged, "dup-mkt"));
+        check("audit9: tag ahead of plain entry found",
+                "temp_no".equals(BoughtReconcile.strategyOf(dupTaggedFirst, "dup-mkt")));
+        check("audit9: duplicates without tag stay main",
+                BoughtReconcile.strategyOf(new ArrayList<>(List.of("dup-mkt", "dup-mkt")), "dup-mkt") == null);
+    }
+
+    /** 감사 2 — 설정은 사이클 시작에 1회 파싱된다. 스캔 단계에서 설정을
+     *  바꿔도 이번 사이클의 스캔은 시작 시점 설정을 그대로 쓴다. */
+    private static void cycleSettingsParsedOnce() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.markets = new ArrayList<>(List.of(market("test-buy-market", "[\"0.75\",\"0.25\"]")));
+        Map<String, Object> gamma = market("test-buy-market", "[\"0.75\",\"0.25\"]");
+        gamma.put("outcomes", "[\"Yes\",\"No\"]");
+        gamma.put("clobTokenIds", "[\"111\",\"222\"]");
+        net.gammaPages.put("test-buy-market", new ArrayList<>(List.of(gamma)));
+        net.books.put("111", jmap("{\"tick_size\":\"0.01\",\"neg_risk\":false,\"min_order_size\":\"5\","
+                + "\"asks\":[{\"price\":\"0.75\",\"size\":\"100\"}],"
+                + "\"bids\":[{\"price\":\"0.74\",\"size\":\"100\"}]}"));
+        net.onFetchMarkets = () -> env.durable.put("bm_settings", "{\"bandLo\":0.99,\"bandHi\":1.0}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("audit2: cycle ok despite mid-cycle settings change", r == NativeCycle.Result.OK);
+        check("audit2: scan used cycle-start settings", t.posts == 1);
+    }
+
+    /** 감사 5 — 수동 매도가 상수가 아니라 slippageCap 설정을 탄다.
+     *  현재가 0.55, 캡 0.1이면 하한가 0.45 → takerAmount는 10주×0.45. */
+    private static void manualSellSlippageCapFromSettings() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        manualStage(net);
+        env.durable.put("bm_settings", "{\"slippageCap\":0.1}");
+        final String[] captured = new String[1];
+        RawHttp.Transport t = new RawHttp.Transport() {
+            @Override
+            public RawHttp.Raw post(String url, Map<String, String> h, String body) {
+                captured[0] = body;
+                return new RawHttp.Raw(200, "{\"success\":true,\"status\":\"matched\","
+                        + "\"makingAmount\":\"10\",\"takingAmount\":\"4.5\","
+                        + "\"transactionHashes\":[\"0x123\"]}", null);
+            }
+
+            @Override
+            public RawHttp.Raw get(String url, Map<String, String> h) {
+                throw new AssertionError("GET 금지: " + url);
+            }
+        };
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        env.durable.put("bm_manual_sell_req",
+                "{\"token_id\":\"123456789\",\"slug\":\"test-ms-market\",\"ts\":" + NOW + "}");
+        c.runIteration(1);
+        check("audit5: manual sell submitted", captured[0] != null);
+        check("audit5: floor price uses settings slippageCap",
+                captured[0] != null && captured[0].contains("\"takerAmount\":\"4500000\""));
+    }
+
+    /** 감사 7 — 리딤 pending이 300건 캡으로 잘릴 때 잘린 항목은 아카이브에
+     *  보존되고, 다음 사이클이 아카이브를 다시 회수해 재평가한다. 해소된
+     *  id는 아카이브에서도 제거된다. */
+    private static void redeemPendingArchiveSurvives() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < 300; i++) {
+            if (i > 0) sb.append(",");
+            sb.append("{\"condition_id\":\"").append(String.format("0x%064x", i + 1))
+                    .append("\",\"token_id\":\"t").append(i)
+                    .append("\",\"status\":\"REDEEMABLE\",\"current_value\":5}");
+        }
+        sb.append("]");
+        env.durable.put("bm_redeem_pending", sb.toString());
+        String firstCid = String.format("0x%064x", 1);
+        String newCid = String.format("0x%064x", 9999);
+        Map<String, Object> winRow = new LinkedHashMap<>();
+        winRow.put("condition_id", newCid);
+        winRow.put("token_id", "tnew");
+        winRow.put("slug", "new-win");
+        winRow.put("current_value", 5.0);
+        net.winRows = new ArrayList<>(List.of(winRow));
+        NativeCycle c = newCycle(env, net, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        c.runIteration(1);
+        String pending = env.durable.getOrDefault("bm_redeem_pending", "");
+        String archive = env.durable.getOrDefault("bm_redeem_pending_archive", "");
+        check("audit7: pending body capped at 300", !pending.contains(firstCid) && pending.contains(newCid));
+        check("audit7: truncated entry archived, not dropped", archive.contains(firstCid));
+
+        // 아카이브에 있는 worthless 항목은 다음 사이클에 다시 회수돼
+        // streak 종결까지 재평가되고, 해소되면 아카이브에서도 빠진다.
+        FakeEnv env2 = new FakeEnv();
+        FakeNet net2 = new FakeNet();
+        String worthlessCid = String.format("0x%064x", 777);
+        env2.durable.put("bm_redeem_pending_archive",
+                "[{\"condition_id\":\"" + worthlessCid + "\",\"token_id\":\"tw\","
+                        + "\"status\":\"REDEEMABLE\",\"current_value\":0,\"zero_streak\":2}]");
+        NativeCycle c2 = newCycle(env2, net2, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        c2.runIteration(1);
+        check("audit7: archived entry re-evaluated to closure",
+                env2.durable.getOrDefault("bm_redeem_closed", "").contains(worthlessCid));
+        check("audit7: resolved id removed from archive",
+                !env2.durable.getOrDefault("bm_redeem_pending_archive", "").contains(worthlessCid));
+    }
+
     public static void main(String[] args) {
         happyPath();
         buyPath();
@@ -1735,6 +1877,10 @@ public class NativeCycleTest {
         stopLossUnknownRecordsSlug();
         manualLedgerArchiveSurvives();
         redeemDoneArchiveSurvives();
+        auditSettingsGuards();
+        cycleSettingsParsedOnce();
+        manualSellSlippageCapFromSettings();
+        redeemPendingArchiveSurvives();
         pureLogic();
         System.out.println("NativeCycleTest: " + passed + " passed, " + failed + " failed");
         if (failed > 0) {

@@ -57,6 +57,8 @@ const {
   redeemBalanceGate,
   durableWrite,
   durableRead,
+  loadRedeemPending,
+  saveRedeemPending,
   stopLossRecords,
   recordStopLoss,
   manualSellRecords,
@@ -1194,7 +1196,7 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   eq(src.includes("positions.filter(isOpenRow)"), true, "open: snapshot uses single criterion");
   eq(src.includes("rows.filter(isOpenRow)"), true, "open: fallback uses single criterion");
   eq(src.includes('filter((p) => p.status === "OPEN")'), false, "open: legacy filter gone");
-  const snapSrc = src.slice(src.indexOf("async function snapshot()"), src.indexOf("async function verifyCandidate"));
+  const snapSrc = src.slice(src.indexOf("async function snapshot("), src.indexOf("async function verifyCandidate"));
   eq(snapSrc.includes("positions: openRows.map"), true, "open: snapshot fills snap.positions");
 }
 
@@ -1328,6 +1330,73 @@ eq(parseTradeSettings({ tempStopDrop: 0.2 }).tempStopDrop, 0.2, "trade settings:
     "trade settings: scan uses custom band+volume");
   eq(scanCandidates([mkt("a", 0.55, 600)], new Set(), new Set()).length, 0,
     "trade settings: default scan still excludes 0.55/low volume");
+}
+
+// 45. v0.3.38 감사 수리 가드 — 설정 파서 타입 엄격화, decided 쌍 교차
+// 가드, bet<=0 슬롯 차단, 사이클당 설정 1회 파싱, 리딤 pending 아카이브.
+{
+  // 손상 타입은 Number() 강제변환(null→0, true→1)이 아니라 기본값으로 떨어진다
+  eq(parseTradeSettings({ cashFloorPct: null }).cashFloorPct, CASH_FLOOR_PCT,
+    "audit1: cashFloorPct null falls back");
+  eq(parseTradeSettings({ betPct: true }).betPct, BET_PCT,
+    "audit1: betPct true falls back");
+  eq(parseTradeSettings({ volumeMin: true }).volumeMin, VOLUME_MIN,
+    "audit1: volumeMin true falls back");
+  eq(parseTradeSettings({ askDepthMinUsd: null }).askDepthMinUsd, ASK_DEPTH_MIN_USD,
+    "audit1: askDepthMinUsd null falls back");
+  eq(parseTradeSettings({ bandLo: "" }).bandLo, BAND_LO,
+    "audit1: bandLo empty string falls back");
+  eq(parseTradeSettings({ bandLo: [] }).bandLo, BAND_LO,
+    "audit1: bandLo array falls back");
+  eq(parseTradeSettings({ bandLo: {} }).bandLo, BAND_LO,
+    "audit1: bandLo object falls back");
+  eq(parseTradeSettings({ betPct: " 0.02 " }).betPct, 0.02,
+    "audit1: numeric string with spaces kept");
+  // decided 쌍이 0.5를 사이에 두지 않으면 순서가 맞아도 쌍째로 기본값
+  eq(parseTradeSettings({ decidedLow: 0.90, decidedHigh: 0.95 }).decidedLow, DECIDED_LOW,
+    "audit4: decided pair above 0.5 resets (low)");
+  eq(parseTradeSettings({ decidedLow: 0.90, decidedHigh: 0.95 }).decidedHigh, DECIDED_HIGH,
+    "audit4: decided pair above 0.5 resets (high)");
+  eq(parseTradeSettings({ decidedLow: 0.4, decidedHigh: 0.45 }).decidedHigh, DECIDED_HIGH,
+    "audit4: decided pair below 0.5 resets");
+  eq(parseTradeSettings({ decidedLow: 0.2, decidedHigh: 0.8 }).decidedLow, 0.2,
+    "audit4: decided pair straddling 0.5 kept");
+  // bet이 0으로 반올림되면 슬롯은 0 — 무한대 나눗셈으로 상한까지 차지 않는다
+  const zeroBetCfg = parseTradeSettings({ betMinUsd: 0, betPct: 0.001 });
+  const zs = sizing(100000, 1, 0, zeroBetCfg);
+  eq(zs.bet, 0, "audit3: bet rounds to 0");
+  eq(zs.slots, 0, "audit3: bet 0 gives slots 0");
+  // 사이클당 설정 1회 파싱 — runCycle이 파싱한 설정을 snapshot 전부에 넘긴다
+  const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+  eq(src.split("await snapshot(tradeCfg)").length - 1, 3,
+    "audit2: runCycle passes cycle settings to every snapshot");
+  eq(src.includes("cfg ?? parseTradeSettings(durableRead(LS.settings))"), true,
+    "audit2: snapshot parses only when called outside a cycle");
+  // 리딤 pending 절단 아카이브 — 300건을 넘겨도 id가 사라지지 않고,
+  // 해소된 id는 아카이브에서도 제거된다
+  const ls = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (ls.has(k) ? ls.get(k) : null),
+    setItem: (k, v) => ls.set(k, String(v)),
+    removeItem: (k) => ls.delete(k),
+  };
+  if (globalThis.window) delete globalThis.window.AndroidBridge;
+  const entries = [];
+  for (let i = 0; i < 305; i += 1) {
+    entries.push({ condition_id: `c${i}`, token_id: `t${i}`, current_value: 1 });
+  }
+  saveRedeemPending(entries);
+  eq(JSON.parse(ls.get("bm_redeem_pending")).length, 300,
+    "audit7: pending body capped at 300");
+  eq(JSON.parse(ls.get("bm_redeem_pending_archive")).length, 5,
+    "audit7: overflow archived, not dropped");
+  const merged = loadRedeemPending();
+  eq(merged.length, 305, "audit7: load merges archive back");
+  eq(merged[0].condition_id, "c0", "audit7: oldest entry recovered first");
+  saveRedeemPending(merged.filter((e) => e.condition_id !== "c0"));
+  eq(loadRedeemPending().length, 304, "audit7: resolved entry removed everywhere");
+  eq(JSON.parse(ls.get("bm_redeem_pending_archive")).some((e) => e.condition_id === "c0"), false,
+    "audit7: resolved id removed from archive");
 }
 
 console.log(`book tests: ${passed} passed, ${failed} failed`);
