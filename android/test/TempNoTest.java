@@ -101,6 +101,15 @@ public class TempNoTest {
         checkEq("slug seoul", TempNo.eventSlugFor("seoul", AT_7AM), EVENT_SLUG);
         checkEq("cities 40", TempNo.CITIES.size(), 40);
         checkEq("today slugs 40", TempNo.todayEventSlugs(AT_7AM).size(), 40);
+        // 조회 범위는 오늘+내일 이틀치 — 내일 이벤트가 전날부터 보인다
+        checkEq("fetch slugs 80", TempNo.eventSlugsForFetch(AT_7AM).size(), 80);
+        check("fetch slugs include tomorrow seoul",
+                TempNo.eventSlugsForFetch(AT_7AM)
+                        .contains("highest-temperature-in-seoul-on-november-19-2026"));
+        check("fetch slugs include today seoul",
+                TempNo.eventSlugsForFetch(AT_7AM).contains(EVENT_SLUG));
+        check("fetch slugs no duplicates",
+                new HashSet<>(TempNo.eventSlugsForFetch(AT_7AM)).size() == 80);
 
         // ── 진입 창 경계 ──
         check("window 05:59 closed", !TempNo.windowOpen(
@@ -300,35 +309,35 @@ public class TempNoTest {
                     rec2.dropped.size() == 1 && rec2.kept.isEmpty());
         }
 
-        // ── 슬롯 예약 판정 (JS tempReserveDefersMain과 같은 경계) ──────
+        // ── 슬롯 예약 판정 (JS tempReserveBlocksMain과 같은 경계) ──────
         {
             int cap = 60; // NativeCycle.VERIFY_CAP
-            check("reserve: main, slots 2, verified 0 → no defer",
-                    !TempNo.reserveDefersMain(null, 2, 0, cap, 1));
-            check("reserve: main, slots 1 → defer",
-                    TempNo.reserveDefersMain(null, 1, 0, cap, 1));
-            check("reserve: main, slots 0 → defer",
-                    TempNo.reserveDefersMain(null, 0, 0, cap, 1));
-            check("reserve: main, verified cap-2 → no defer",
-                    !TempNo.reserveDefersMain(null, 5, cap - 2, cap, 1));
-            check("reserve: main, verified cap-1 → defer",
-                    TempNo.reserveDefersMain(null, 5, cap - 1, cap, 1));
-            check("reserve: temp is never deferred",
-                    !TempNo.reserveDefersMain(TempNo.STRATEGY, 1, cap - 1, cap, 1));
+            check("reserve: main, slots 2, verified 0 → no block",
+                    !TempNo.reserveBlocksMain(null, 2, 0, cap, 1));
+            check("reserve: main, slots 1 → block",
+                    TempNo.reserveBlocksMain(null, 1, 0, cap, 1));
+            check("reserve: main, slots 0 → block",
+                    TempNo.reserveBlocksMain(null, 0, 0, cap, 1));
+            check("reserve: main, verified cap-2 → no block",
+                    !TempNo.reserveBlocksMain(null, 5, cap - 2, cap, 1));
+            check("reserve: main, verified cap-1 → block",
+                    TempNo.reserveBlocksMain(null, 5, cap - 1, cap, 1));
+            check("reserve: temp is never blocked",
+                    !TempNo.reserveBlocksMain(TempNo.STRATEGY, 1, cap - 1, cap, 1));
             check("reserve: other strategy counts as main",
-                    TempNo.reserveDefersMain("something_else", 1, 0, cap, 1));
-            // 예약 0 — 슬롯·검증이 바닥이어도 미루지 않는다
-            check("reserve 0: nothing deferred",
-                    !TempNo.reserveDefersMain(null, 0, cap, cap, 0));
+                    TempNo.reserveBlocksMain("something_else", 1, 0, cap, 1));
+            // 예약 0 — 슬롯·검증이 바닥이어도 차단하지 않는다
+            check("reserve 0: nothing blocked",
+                    !TempNo.reserveBlocksMain(null, 0, cap, cap, 0));
             // 예약 3 — 경계가 3으로 넓어진다
-            check("reserve 3: slots 3 → defer",
-                    TempNo.reserveDefersMain(null, 3, 0, cap, 3));
-            check("reserve 3: slots 4 → no defer",
-                    !TempNo.reserveDefersMain(null, 4, 0, cap, 3));
-            check("reserve 3: verified cap-3 → defer",
-                    TempNo.reserveDefersMain(null, 9, cap - 3, cap, 3));
-            check("reserve 3: verified cap-4 → no defer",
-                    !TempNo.reserveDefersMain(null, 9, cap - 4, cap, 3));
+            check("reserve 3: slots 3 → block",
+                    TempNo.reserveBlocksMain(null, 3, 0, cap, 3));
+            check("reserve 3: slots 4 → no block",
+                    !TempNo.reserveBlocksMain(null, 4, 0, cap, 3));
+            check("reserve 3: verified cap-3 → block",
+                    TempNo.reserveBlocksMain(null, 9, cap - 3, cap, 3));
+            check("reserve 3: verified cap-4 → no block",
+                    !TempNo.reserveBlocksMain(null, 9, cap - 4, cap, 3));
         }
 
         // ── 창 대기 판정 (JS tempHasUpcomingWindow와 같은 경계) ──────
@@ -343,6 +352,21 @@ public class TempNoTest {
                     TempNo.hasUpcomingWindow(ev, AT_7AM, TempNo.ENTRY_HOUR_UTC));
             check("upcoming: past event only → false",
                     !TempNo.hasUpcomingWindow(ev, afterWindow, TempNo.ENTRY_HOUR_UTC));
+            // 내일 이벤트는 전날 저녁부터 보인다 — 홀드 구간이 전날
+            // 저녁까지 닿는다 (JS tempHasUpcomingWindow와 같은 경계)
+            List<Object> evTomorrow = jlist("[{\"slug\":\"highest-temperature-in-seoul-on-november-19-2026\","
+                    + "\"endDate\":\"2026-11-19T12:00:00Z\",\"markets\":[{"
+                    + "\"slug\":\"highest-temperature-in-seoul-on-november-19-2026-7c\","
+                    + "\"groupItemTitle\":\"7°C\",\"active\":true,\"closed\":false,"
+                    + "\"acceptingOrders\":true}]}]");
+            check("upcoming: tomorrow event seen the evening before → true",
+                    TempNo.hasUpcomingWindow(evTomorrow,
+                            Instant.parse("2026-11-18T20:00:00Z").toEpochMilli(),
+                            TempNo.ENTRY_HOUR_UTC));
+            check("upcoming: tomorrow event after its endDate → false",
+                    !TempNo.hasUpcomingWindow(evTomorrow,
+                            Instant.parse("2026-11-19T13:00:00Z").toEpochMilli(),
+                            TempNo.ENTRY_HOUR_UTC));
             check("upcoming: empty events → false",
                     !TempNo.hasUpcomingWindow(new ArrayList<>(), beforeWindow,
                             TempNo.ENTRY_HOUR_UTC));

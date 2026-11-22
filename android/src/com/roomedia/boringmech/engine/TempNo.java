@@ -72,25 +72,26 @@ public final class TempNo {
     }
 
     /**
-     * 기온 슬롯 예약 판정 — 예약이 켜졌을 때(토글 ON + 기온 후보 존재,
-     * 또는 오늘 진입 창이 열릴 이벤트 존재) 메인 후보를 뒤로 미룰지
-     * 정하는 순수 함수 (JS tempReserveDefersMain과 같은 규칙). 예약
-     * 활성 자체는 드라이버(NativeCycle)가 정한다. 메인 후보는 슬롯
-     * reserveSlots개와 검증 reserveSlots건을 기온 몫으로 남겨 둔
-     * 지점부터 미룬다. 기온 후보 자체는 미루지 않는다 (예약은 하한이지
-     * 상한이 아니다). reserveSlots가 0이면 예약이 없어 아무것도
-     * 미루지 않는다.
+     * 기온 슬롯 홀드 판정 — 홀드가 켜졌을 때 메인 후보를 이 사이클에서
+     * 차단할지 정하는 순수 함수 (JS tempReserveBlocksMain과 같은 규칙).
+     * 홀드 활성 자체는 드라이버(NativeCycle)가 정한다. 메인 후보는 슬롯
+     * reserveSlots개와 검증 reserveSlots건을 기온 몫으로 비워 둔
+     * 지점부터 차단한다. slots는 건수 상한과 현금 기준 슬롯 수의
+     * 최소값이라, 슬롯 차단은 건당 베팅액 × reserveSlots만큼의 현금도
+     * 함께 비운다. 기온 후보 자체는 차단하지 않는다 (예약은 하한이지
+     * 상한이 아니다). reserveSlots가 0이면 홀드가 없어 아무것도
+     * 차단하지 않는다. 차단된 메인은 같은 사이클에 다시 타지 않는다.
      */
     /**
      * 기온 예약 슬롯의 실효값 — 예약이 전체 포지션 상한을 넘으면 메인이
-     * 사이클마다 전량 미뤄지므로, 실효 예약은 maxPositions로 제한한다
+     * 사이클마다 전량 차단되므로, 실효 예약은 maxPositions로 제한한다
      * (v0.3.38 감사 축 3). 두 설정이 모두 있는 판정 지점에서만 계산한다.
      */
     public static int effectiveReserveSlots(int reserveSlots, int maxPositions) {
         return Math.max(0, Math.min(reserveSlots, maxPositions));
     }
 
-    public static boolean reserveDefersMain(String strategy, int slotsLeft, int verified,
+    public static boolean reserveBlocksMain(String strategy, int slotsLeft, int verified,
                                             int verifyCap, int reserveSlots) {
         if (STRATEGY.equals(strategy)) {
             return false;
@@ -114,6 +115,11 @@ public final class TempNo {
     /** 오늘(UTC) 날짜의 도시 이벤트 슬러그. */
     public static String eventSlugFor(String city, long nowMs) {
         LocalDate d = Instant.ofEpochMilli(nowMs).atZone(ZoneOffset.UTC).toLocalDate();
+        return eventSlugForDate(city, d);
+    }
+
+    /** 지정 날짜(UTC)의 도시 이벤트 슬러그. */
+    public static String eventSlugForDate(String city, LocalDate d) {
         return SLUG_PREFIX + city + "-on-" + MONTHS[d.getMonthValue() - 1]
                 + "-" + d.getDayOfMonth() + "-" + d.getYear();
     }
@@ -123,6 +129,24 @@ public final class TempNo {
         List<String> out = new ArrayList<>();
         for (String city : CITIES) {
             out.add(eventSlugFor(city, nowMs));
+        }
+        return out;
+    }
+
+    /**
+     * 조회 범위 슬러그 — 오늘과 내일(UTC) 날짜의 전체 도시 이벤트
+     * 슬러그. 후보 생성은 창 안(당일)에서만 일어나지만, 예약 홀드는
+     * 내일 이벤트가 전날 저녁부터 보여야 걸리므로 조회 범위만 이틀치로
+     * 넓힌다 (JS tempEventSlugsForFetch와 같은 규칙).
+     */
+    public static List<String> eventSlugsForFetch(long nowMs) {
+        LocalDate today = Instant.ofEpochMilli(nowMs).atZone(ZoneOffset.UTC).toLocalDate();
+        List<String> out = new ArrayList<>();
+        for (int dayOffset = 0; dayOffset <= 1; dayOffset++) {
+            LocalDate d = today.plusDays(dayOffset);
+            for (String city : CITIES) {
+                out.add(eventSlugForDate(city, d));
+            }
         }
         return out;
     }
@@ -160,13 +184,14 @@ public final class TempNo {
     }
 
     /**
-     * 오늘 진입 창이 열리는 기온 이벤트 존재 판정 — 이벤트의 창
-     * 시작이 endDate보다 먼저이고 아직 endDate가 지나지 않았으면 그
-     * 이벤트의 창은 오늘 열리거나 열려 있다 (JS tempHasUpcomingWindow와
-     * 같은 규칙). 예약 연기를 기온 후보 존재에만 걸면 창이 열리기
+     * 진입 창이 남은 기온 이벤트 존재 판정 — 이벤트의 창 시작이
+     * endDate보다 먼저이고 아직 endDate가 지나지 않았으면 그 이벤트의
+     * 창은 열리거나 열릴 예정이다 (JS tempHasUpcomingWindow와 같은
+     * 규칙). 조회 목록은 오늘+내일 이틀치라 내일 이벤트도 전날 저녁부터
+     * 이 판정에 걸린다. 예약 홀드를 기온 후보 존재에만 걸면 창이 열리기
      * 전에는 후보가 없어 메인이 마지막 슬롯까지 먹어 버리므로,
-     * 드라이버는 이 판정으로도 예약을 건다. 창이 지난 이벤트만
-     * 있으면 false다.
+     * 드라이버는 이 판정으로 홀드를 건다. 창이 지난 이벤트만 있으면
+     * false다.
      */
     public static boolean hasUpcomingWindow(List<Object> events, long nowMs, int entryHourUtc) {
         return hasUpcomingWindow(events, nowMs, entryHourUtc, Set.of(), Set.of());

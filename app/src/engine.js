@@ -607,6 +607,20 @@ export function tempEventSlugFor(city, nowMs) {
 }
 
 /**
+ * 조회 범위 슬러그 — 오늘과 내일(UTC) 날짜의 도시별 슬러그 전부.
+ * 후보 생성은 창 안(당일)에서만 일어나지만, 예약 홀드는 내일 이벤트가
+ * 전날 저녁부터 보여야 걸리므로 조회 범위만 이틀치로 넓힌다.
+ */
+export function tempEventSlugsForFetch(nowMs) {
+  const out = [];
+  for (const dayOffset of [0, 1]) {
+    const t = nowMs + dayOffset * 86_400_000;
+    for (const city of TEMP_NO_CITIES) out.push(tempEventSlugFor(city, t));
+  }
+  return out;
+}
+
+/**
  * 진입 창 — 이벤트 당일 entryHourUtc:00 UTC ≤ now < 이벤트 endDate.
  * 이벤트 날짜는 endDate의 UTC 날짜로 정한다 (실측 endDate는 당일
  * 12:00 UTC). 창 밖이면 후보를 만들지 않는다.
@@ -621,12 +635,13 @@ export function tempWindowOpen(nowMs, endMs, entryHourUtc = TEMP_NO_ENTRY_HOUR_U
 }
 
 /**
- * 오늘 진입 창이 열리는 기온 이벤트 존재 판정 — 이벤트의 창 시작
+ * 진입 창이 남은 기온 이벤트 존재 판정 — 이벤트의 창 시작
  * (endDate 날짜의 entryHourUtc)이 endDate보다 먼저이고, 아직 endDate가
- * 지나지 않았으면 그 이벤트의 창은 오늘 열리거나 열려 있다. 예약
- * 연기를 기온 후보 존재에만 걸면 창이 열리기 전에는 후보가 없어
- * 메인이 마지막 슬롯까지 먹어 버리므로, 드라이버는 이 판정으로도
- * 예약을 건다 (네이티브 TempNo.hasUpcomingWindow와 같은 규칙).
+ * 지나지 않았으면 그 이벤트의 창은 열리거나 열릴 예정이다. 조회 목록은
+ * 오늘+내일 이틀치라 내일 이벤트도 전날 저녁부터 이 판정에 걸린다.
+ * 예약 홀드를 기온 후보 존재에만 걸면 창이 열리기 전에는 후보가 없어
+ * 메인이 마지막 슬롯까지 먹어 버리므로, 드라이버는 이 판정으로 홀드를
+ * 건다 (네이티브 TempNo.hasUpcomingWindow와 같은 규칙).
  */
 export function tempHasUpcomingWindow(events, nowMs, entryHourUtc = TEMP_NO_ENTRY_HOUR_UTC, heldSlugs = new Set(), boughtSlugs = new Set()) {
   if (!Number.isFinite(nowMs)) return false;
@@ -848,15 +863,17 @@ export function effectiveTempReserveSlots(reserveSlots, maxPositions) {
 }
 
 /**
- * 기온 슬롯 예약 판정 — 예약이 켜졌을 때(토글 ON + 기온 후보 존재,
- * 또는 오늘 진입 창이 열릴 이벤트 존재) 메인 후보를 뒤로 미룰지
- * 정하는 순수 함수. 예약 활성 자체는 드라이버가 정한다. 메인 후보는
- * 슬롯 reserveSlots개와 검증 reserveSlots건을 기온 몫으로 남겨 둔
- * 지점부터 미룬다. 기온 후보 자체는 미루지 않는다 (예약은 하한이지
- * 상한이 아니다). reserveSlots가 0이면 예약이 없어 아무것도 미루지
- * 않는다.
+ * 기온 슬롯 홀드 판정 — 홀드가 켜졌을 때 메인 후보를 이 사이클에서
+ * 차단할지 정하는 순수 함수. 홀드 활성 자체는 드라이버가 정한다.
+ * 메인 후보는 슬롯 reserveSlots개와 검증 reserveSlots건을 기온 몫으로
+ * 비워 둔 지점부터 차단한다. slots는 건수 상한과 현금 기준 슬롯 수의
+ * 최소값이라, 슬롯 차단은 건당 베팅액 × reserveSlots만큼의 현금도
+ * 함께 비운다. 기온 후보 자체는 차단하지 않는다 (예약은 하한이지
+ * 상한이 아니다). reserveSlots가 0이면 홀드가 없어 아무것도 차단하지
+ * 않는다. 차단된 메인은 같은 사이클에 다시 타지 않는다 — 다시 태우면
+ * 비워 둔 슬롯이 그 사이클 안에서 사라진다.
  */
-export function tempReserveDefersMain(strategy, slotsLeft, verified, reserveSlots = TEMP_NO_DEFAULT_RESERVE_SLOTS, verifyCap = VERIFY_CAP) {
+export function tempReserveBlocksMain(strategy, slotsLeft, verified, reserveSlots = TEMP_NO_DEFAULT_RESERVE_SLOTS, verifyCap = VERIFY_CAP) {
   if (strategy === "temp_no") return false;
   if (!(reserveSlots > 0)) return false;
   return slotsLeft <= reserveSlots || verified >= verifyCap - reserveSlots;
@@ -922,27 +939,30 @@ export function scanTempCandidates(events, heldSlugs, boughtSlugs, settings, now
   return out;
 }
 
-// 당일 기온 이벤트 조회 — 도시별 슬러그 직접 조회라 사이클마다 전수
-// 호출하지 않게 15분 캐시를 둔다. 도시별 실패는 그 도시만 건너뛰고,
-// 전부 실패한 조회는 캐시하지 않아 다음 사이클에 다시 시도한다.
+// 오늘+내일 기온 이벤트 조회 — 도시별 슬러그 직접 조회라 사이클마다
+// 전수 호출하지 않게 15분 캐시를 둔다. 도시별 실패는 그 도시만
+// 건너뛰고, 전부 실패한 조회는 캐시하지 않아 다음 사이클에 다시
+// 시도한다. 후보 생성(scanTempCandidates)은 창 판정으로 당일 이벤트만
+// 쓰므로, 내일 이벤트는 예약 홀드 판정에만 쓰인다.
 let tempEventsCache = { atMs: 0, events: null };
 async function fetchTempEvents(nowMs) {
   if (tempEventsCache.events && nowMs - tempEventsCache.atMs < TEMP_NO_CACHE_MS) {
     return tempEventsCache.events;
   }
+  const slugs = tempEventSlugsForFetch(nowMs);
   const events = [];
   let failures = 0;
-  for (const city of TEMP_NO_CITIES) {
+  for (const slug of slugs) {
     try {
       const page = await fetchJson(
-        `${GAMMA_EVENTS_URL}?${new URLSearchParams({ slug: tempEventSlugFor(city, nowMs) })}`,
+        `${GAMMA_EVENTS_URL}?${new URLSearchParams({ slug })}`,
       );
       if (Array.isArray(page) && page[0]) events.push(page[0]);
     } catch {
       failures += 1;
     }
   }
-  if (failures >= TEMP_NO_CITIES.length) {
+  if (failures >= slugs.length) {
     // 전수 실패는 "오늘 이벤트 없음"(빈 목록)과 구분해 null로 알린다 —
     // 호출자가 예약을 안전 방향(유지)으로 판정하게 하기 위해서다
     // (v0.3.39 감사 E). 부분 실패(일부 도시 성공)는 성공으로 취급한다.
@@ -2411,54 +2431,41 @@ async function runCycle(gen) {
     }
     return false;
   };
-  // 선정 드라이버 — 기온 슬롯 예약 (토글 ON이고 기온 후보가 있거나,
-  // 오늘 진입 창이 열릴 기온 이벤트가 있을 때). 창은 이벤트 당일
-  // entryHourUtc에 열리므로, 후보 존재에만 예약을 걸면 창이 열리기
-  // 전에 메인이 마지막 슬롯까지 먹어 예약이 지킬 자리가 없어진다.
-  // 메인 후보는 슬롯 reserveSlots개와 검증 reserveSlots건을 기온
-  // 몫으로 남겨 둔 지점에서 뒤로 미루고(deferredMain), 기온 후보를
-  // 먼저 처리한 뒤 남은 슬롯·검증 캡으로 미룬 메인을 다시 탄다.
-  // 예약은 하한이라 기온이 남은 슬롯을 더 쓰는 것도, 기온이 못 사면
-  // 메인이 전부를 쓰는 것도 그대로 된다. 단, 창 대기 예약(후보 없이
-  // 창만 남은 경우)은 미룬 메인을 다시 타지 않는다 — 다시 태우면
-  // 같은 사이클에 예약 슬롯까지 먹어 창이 열릴 때 남는 자리가 없다.
-  // 예약이 없으면 미루는 후보가 없어 기존 단일 패스와 동일하다.
-  const tempHasCandidates = candidates.some((c) => c.strategy === "temp_no");
-  const tempReserve = tempSettings.enabled
-    && (tempHasCandidates
-      || tempFetchFailed
-      || tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc, snap.heldSlugs, boughtAll));
-  // 예약 실효값은 전체 포지션 상한으로 제한한다 (감사 축 3).
+  // 선정 드라이버 — 기온 슬롯 홀드. 토글 ON + 예약 슬롯 N>0이고,
+  // 오늘·내일 기온 이벤트 중 진입 창이 남은 것이 있거나(후보가 있으면
+  // 그 이벤트가 여기에 걸린다) 조회가 전수 실패했을 때 홀드가 켜진다.
+  // 홀드가 켜지면 메인의 유효 용량을 전체에서 N슬롯 줄여 실제로 비워
+  // 둔다: 메인 후보는 남은 슬롯이 N개 이하이거나 검증이 캡−N에 닿으면
+  // 그 사이클에서 건너뛰고, 다시 태우지 않는다 — 다시 태우면 비워 둔
+  // 슬롯이 같은 사이클에 사라져 창이 열릴 때 남는 자리가 없다. slots는
+  // 건수 상한과 현금 기준 슬롯 수의 최소값이라, 이 차단은 건당 베팅액
+  // × N만큼의 현금도 함께 비운다. 기온 후보는 홀드와 무관하게 전
+  // 용량을 쓴다 (예약은 하한이라 기온이 N개를 넘어 사는 것도 막지
+  // 않는다). 홀드 조건이 없으면 차단되는 후보가 없어 기존 단일 패스와
+  // 동일하다. 해당하는 이벤트가 없거나 전부 종료됐으면 홀드가 풀려
+  // 메인이 전 용량을 쓴다.
+  // 홀드 실효값은 전체 포지션 상한으로 제한한다 (감사 축 3).
   const tempReserveSlots = effectiveTempReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions);
-  const deferredMain = [];
+  const tempHold = tempSettings.enabled
+    && tempReserveSlots > 0
+    && (tempFetchFailed
+      || tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc, snap.heldSlugs, boughtAll));
+  const heldMain = [];
   let aborted = false;
-  let budgetOut = false;
   for (const cand of candidates) {
     if (!state.running || gen !== state.gen) { aborted = true; break; }
-    if (tempReserve && tempReserveDefersMain(cand.strategy, slotsLeft, verified, tempReserveSlots, tradeCfg.verifyCap)) {
-      deferredMain.push(cand);
+    if (tempHold && tempReserveBlocksMain(cand.strategy, slotsLeft, verified, tempReserveSlots, tradeCfg.verifyCap)) {
+      heldMain.push(cand);
       continue;
     }
-    if (slotsLeft < 1 || verified >= tradeCfg.verifyCap) { budgetOut = true; break; }
+    if (slotsLeft < 1 || verified >= tradeCfg.verifyCap) break;
     if (await attemptCandidate(cand)) { aborted = true; break; }
   }
-  // 예산 소진으로 끊긴 패스는 미룬 메인을 다시 타지 않는다 — 예산은
-  // 단조라 재주행이 즉시 같은 지점에서 끊기고, 네이티브 드라이버와
-  // 동일하게 요약 로그까지 그대로 진행한다 (감사 패리티 수리).
-  // 창 대기 예약(기온 후보 없음)도 다시 타지 않는다 — 예약 슬롯을
-  // 이 사이클에 메인이 먹지 않게 남겨 두는 것이 그 예약의 목적이다.
-  if (tempReserve && !tempHasCandidates && deferredMain.length) {
+  if (tempHold && heldMain.length) {
     if (tempFetchFailed) {
-      log(`기온 예약 — 조회 전수 실패로 메인 ${deferredMain.length}건을 미루고 슬롯을 남깁니다`);
+      log(`기온 예약 — 조회 전수 실패로 메인 ${heldMain.length}건을 미루고 슬롯을 남깁니다`);
     } else {
-      log(`기온 예약 — 오늘 진입 창이 열릴 이벤트가 있어 메인 ${deferredMain.length}건을 미루고 슬롯을 남깁니다`);
-    }
-  }
-  if (!aborted && !budgetOut && tempHasCandidates) {
-    for (const cand of deferredMain) {
-      if (!state.running || gen !== state.gen) { aborted = true; break; }
-      if (slotsLeft < 1 || verified >= tradeCfg.verifyCap) break;
-      if (await attemptCandidate(cand)) { aborted = true; break; }
+      log(`기온 예약 — 진입 창이 남은 이벤트가 있어 메인 ${heldMain.length}건을 미루고 슬롯을 남깁니다`);
     }
   }
   if (aborted) return;

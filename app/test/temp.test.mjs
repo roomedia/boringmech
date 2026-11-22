@@ -18,8 +18,9 @@ const {
   resolveTempFeeRate,
   markBought,
   boughtStrategyOf,
-  tempReserveDefersMain,
+  tempReserveBlocksMain,
   tempHasUpcomingWindow,
+  tempEventSlugsForFetch,
   buyLimitPrice,
   effectiveTempReserveSlots,
   TEMP_NO_CITIES,
@@ -61,6 +62,24 @@ eq(
 );
 eq(TEMP_NO_CITIES.length, 40, "cities: 40 harvested");
 eq(TEMP_NO_CITIES.includes("seoul") && TEMP_NO_CITIES.includes("nyc"), true, "cities: seoul+nyc");
+
+// ── 조회 범위 슬러그 (오늘+내일) ─────────────────────────────
+{
+  const slugs = tempEventSlugsForFetch(Date.UTC(2026, 10, 18, 20));
+  eq(slugs.length, 80, "fetch slugs: 40 cities x 2 days");
+  eq(slugs[0], "highest-temperature-in-amsterdam-on-november-18-2026", "fetch slugs: today first");
+  eq(
+    slugs.includes("highest-temperature-in-seoul-on-november-18-2026"),
+    true,
+    "fetch slugs: today seoul included",
+  );
+  eq(
+    slugs.includes("highest-temperature-in-seoul-on-november-19-2026"),
+    true,
+    "fetch slugs: tomorrow seoul included",
+  );
+  eq(new Set(slugs).size, 80, "fetch slugs: no duplicates");
+}
 
 // ── 진입 창 경계 (endDate 2026-11-18T12:00:00Z) ─────────────
 const END_MS = Date.parse("2026-11-18T12:00:00Z");
@@ -310,25 +329,25 @@ eq(
   lsStore.clear();
 }
 
-// ── 슬롯 예약 판정 (네이티브 TempNo.reserveDefersMain과 같은 경계) ──
+// ── 슬롯 예약 판정 (네이티브 TempNo.reserveBlocksMain과 같은 경계) ──
 {
   const CAP = 60; // VERIFY_CAP
-  eq(tempReserveDefersMain(undefined, 2, 0), false, "reserve: main, slots 2, verified 0 → no defer");
-  eq(tempReserveDefersMain(undefined, 1, 0), true, "reserve: main, slots 1 → defer");
-  eq(tempReserveDefersMain(undefined, 0, 0), true, "reserve: main, slots 0 → defer");
-  eq(tempReserveDefersMain(undefined, 5, CAP - 2), false, "reserve: main, verified cap-2 → no defer");
-  eq(tempReserveDefersMain(undefined, 5, CAP - 1), true, "reserve: main, verified cap-1 → defer");
-  eq(tempReserveDefersMain("temp_no", 1, CAP - 1), false, "reserve: temp is never deferred");
-  eq(tempReserveDefersMain("something_else", 1, 0), true, "reserve: other strategy counts as main");
-  // 예약 0개 — 아무것도 미루지 않는다
-  eq(tempReserveDefersMain(undefined, 0, 0, 0), false, "reserve 0: slots 0 → no defer");
-  eq(tempReserveDefersMain(undefined, 1, CAP - 1, 0), false, "reserve 0: at cap → no defer");
-  // 예약 3개 — 슬롯·검증 모두 3개 지점부터 미룬다
-  eq(tempReserveDefersMain(undefined, 4, 0, 3), false, "reserve 3: slots 4 → no defer");
-  eq(tempReserveDefersMain(undefined, 3, 0, 3), true, "reserve 3: slots 3 → defer");
-  eq(tempReserveDefersMain(undefined, 9, CAP - 4, 3), false, "reserve 3: verified cap-4 → no defer");
-  eq(tempReserveDefersMain(undefined, 9, CAP - 3, 3), true, "reserve 3: verified cap-3 → defer");
-  eq(tempReserveDefersMain("temp_no", 3, CAP - 3, 3), false, "reserve 3: temp is never deferred");
+  eq(tempReserveBlocksMain(undefined, 2, 0), false, "reserve: main, slots 2, verified 0 → no block");
+  eq(tempReserveBlocksMain(undefined, 1, 0), true, "reserve: main, slots 1 → block");
+  eq(tempReserveBlocksMain(undefined, 0, 0), true, "reserve: main, slots 0 → block");
+  eq(tempReserveBlocksMain(undefined, 5, CAP - 2), false, "reserve: main, verified cap-2 → no block");
+  eq(tempReserveBlocksMain(undefined, 5, CAP - 1), true, "reserve: main, verified cap-1 → block");
+  eq(tempReserveBlocksMain("temp_no", 1, CAP - 1), false, "reserve: temp is never blocked");
+  eq(tempReserveBlocksMain("something_else", 1, 0), true, "reserve: other strategy counts as main");
+  // 예약 0개 — 아무것도 차단하지 않는다
+  eq(tempReserveBlocksMain(undefined, 0, 0, 0), false, "reserve 0: slots 0 → no block");
+  eq(tempReserveBlocksMain(undefined, 1, CAP - 1, 0), false, "reserve 0: at cap → no block");
+  // 예약 3개 — 슬롯·검증 모두 3개 지점부터 차단한다
+  eq(tempReserveBlocksMain(undefined, 4, 0, 3), false, "reserve 3: slots 4 → no block");
+  eq(tempReserveBlocksMain(undefined, 3, 0, 3), true, "reserve 3: slots 3 → block");
+  eq(tempReserveBlocksMain(undefined, 9, CAP - 4, 3), false, "reserve 3: verified cap-4 → no block");
+  eq(tempReserveBlocksMain(undefined, 9, CAP - 3, 3), true, "reserve 3: verified cap-3 → block");
+  eq(tempReserveBlocksMain("temp_no", 3, CAP - 3, 3), false, "reserve 3: temp is never blocked");
 
   // 창 대기 판정 (네이티브 TempNo.hasUpcomingWindow와 같은 경계) —
   // 이벤트 endDate 2026-11-15T12:00Z, 진입 창은 당일 06:00~12:00 UTC.
@@ -348,6 +367,22 @@ eq(
   eq(tempHasUpcomingWindow(evUpcoming, T_PRE), true, "upcoming: pre-window event → true");
   eq(tempHasUpcomingWindow(evUpcoming, T_OPEN), true, "upcoming: window open → true");
   eq(tempHasUpcomingWindow(evUpcoming, T_PAST), false, "upcoming: past event only → false");
+  // 내일 이벤트는 전날 저녁부터 보인다 — 홀드 구간이 전날 저녁까지 닿는다
+  const evTomorrow = [{
+    slug: "highest-temperature-in-seoul-on-november-16-2026",
+    endDate: "2026-11-16T12:00:00Z",
+    markets: [{ ...MKT7, slug: "highest-temperature-in-seoul-on-november-16-2026-7c" }],
+  }];
+  eq(
+    tempHasUpcomingWindow(evTomorrow, Date.parse("2026-11-15T20:00:00Z")),
+    true,
+    "upcoming: tomorrow event seen the evening before → true",
+  );
+  eq(
+    tempHasUpcomingWindow(evTomorrow, Date.parse("2026-11-16T13:00:00Z")),
+    false,
+    "upcoming: tomorrow event after its endDate → false",
+  );
   eq(tempHasUpcomingWindow([], T_PRE), false, "upcoming: empty events → false");
   eq(tempHasUpcomingWindow(null, T_PRE), false, "upcoming: null events → false");
   eq(
@@ -396,39 +431,40 @@ eq(
     "auditD: one candidate market among held → true",
   );
 
-  // 구조 가드 — runCycle 드라이버가 예약 판정과 미룬 메인 재주행을 실제로 쓴다
+  // 구조 가드 — runCycle 드라이버가 홀드 판정으로 메인을 차단하고
+  // 차단한 메인을 다시 태우지 않는지(재주행이 있으면 빈 슬롯이 사라진다)
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
   const cycleSrc = src.slice(src.indexOf("async function runCycle"));
   eq(
-    cycleSrc.includes("tempReserveDefersMain(cand.strategy, slotsLeft, verified, tempReserveSlots, tradeCfg.verifyCap)"),
+    cycleSrc.includes("tempReserveBlocksMain(cand.strategy, slotsLeft, verified, tempReserveSlots, tradeCfg.verifyCap)"),
     true,
-    "reserve guard: driver defers via predicate with clamped reserve",
+    "hold guard: driver blocks via predicate with clamped reserve",
   );
   eq(
     cycleSrc.includes("effectiveTempReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions)"),
     true,
-    "reserve guard: driver clamps reserve by maxPositions",
+    "hold guard: driver clamps reserve by maxPositions",
   );
   eq(
-    cycleSrc.includes("for (const cand of deferredMain)"),
+    cycleSrc.includes("const tempHold = tempSettings.enabled"),
     true,
-    "reserve guard: deferred main gets a second pass",
+    "hold guard: driver computes hold activation",
   );
   eq(
-    cycleSrc.includes('const tempHasCandidates = candidates.some((c) => c.strategy === "temp_no")'),
+    cycleSrc.includes("&& tempReserveSlots > 0"),
     true,
-    "reserve guard: driver tracks temp candidate presence",
+    "hold guard: reserve 0 means no hold",
+  );
+  eq(
+    cycleSrc.includes("deferredMain"),
+    false,
+    "hold guard: no deferred-main second pass (held slots stay empty)",
   );
   eq(
     cycleSrc.includes("|| tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc, snap.heldSlugs, boughtAll))"),
     true,
-    "reserve guard: reserve also activates on upcoming window (markets-aware)",
-  );
-  eq(
-    cycleSrc.includes("if (!aborted && !budgetOut && tempHasCandidates)"),
-    true,
-    "reserve guard: deferred pass runs only with temp candidates (upcoming-window reserve keeps slots)",
+    "hold guard: hold also activates on upcoming window (markets-aware)",
   );
 }
 
@@ -528,9 +564,14 @@ eq(effectiveTempReserveSlots(0, 70), 0, "audit6: zero reserve kept");
   const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
   const fetchSrc = src.slice(src.indexOf("async function fetchTempEvents"), src.indexOf("function roundTick"));
   eq(
-    fetchSrc.includes("if (failures >= TEMP_NO_CITIES.length)"),
+    fetchSrc.includes("if (failures >= slugs.length)"),
     true,
     "auditE: fetchTempEvents distinguishes total failure",
+  );
+  eq(
+    fetchSrc.includes("tempEventSlugsForFetch(nowMs)"),
+    true,
+    "hold guard: fetch range covers today and tomorrow slugs",
   );
   eq(
     fetchSrc.includes("return null;"),
@@ -549,7 +590,7 @@ eq(effectiveTempReserveSlots(0, 70), 0, "audit6: zero reserve kept");
     "auditE: total failure is logged",
   );
   eq(
-    cycleSrc.includes("|| tempFetchFailed"),
+    cycleSrc.includes("&& (tempFetchFailed"),
     true,
     "auditE: total failure keeps the reserve",
   );

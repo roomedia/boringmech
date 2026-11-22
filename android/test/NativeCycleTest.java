@@ -191,10 +191,12 @@ public class NativeCycleTest {
 
         List<Object> tempEvents = new ArrayList<>();
         int tempEventsCalls = 0;
+        List<String> lastTempSlugs;
 
         @Override
         public List<Object> fetchTempEvents(List<String> eventSlugs) {
             tempEventsCalls++;
+            lastTempSlugs = eventSlugs;
             return tempEvents;
         }
 
@@ -669,7 +671,7 @@ public class NativeCycleTest {
      * 슬롯을 먹지 않는다 — 미룬 메인을 같은 사이클에 다시 태우지도
      * 않는다.
      */
-    private static void tempReserveUpcomingWindowDefersMain() {
+    private static void tempReserveUpcomingWindowHoldsMain() {
         FakeEnv env = new FakeEnv();
         env.nowMsOverride = Instant.parse("2026-11-15T03:00:00Z").toEpochMilli();
         FakeNet net = new FakeNet();
@@ -686,11 +688,11 @@ public class NativeCycleTest {
         check("reserve upcoming: 주문 없음", t.posts == 0);
         check("reserve upcoming: 메인은 못 삼",
                 !env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
-        check("reserve upcoming: 예약 로그", env.logged("기온 예약 — 오늘 진입 창이 열릴 이벤트"));
+        check("reserve upcoming: 예약 로그", env.logged("기온 예약 — 진입 창이 남은 이벤트가 있어"));
     }
 
     /** 창 대기 예약: 창이 지난 이벤트만 있으면 연기하지 않고 메인이 산다. */
-    private static void tempReservePastWindowNoDefer() {
+    private static void tempReservePastWindowNoHold() {
         FakeEnv env = new FakeEnv(); // NOW = 12:00Z, 이벤트 창은 06:00~11:00로 지났다
         FakeNet net = new FakeNet();
         net.cash = 12; // 슬롯 1
@@ -705,11 +707,11 @@ public class NativeCycleTest {
         check("reserve past: 결과 OK", r == NativeCycle.Result.OK);
         check("reserve past: 메인이 슬롯 획득", t.posts == 1
                 && env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
-        check("reserve past: 예약 로그 없음", !env.logged("기온 예약 — 오늘 진입 창"));
+        check("reserve past: 예약 로그 없음", !env.logged("기온 예약 — 진입 창이 남은"));
     }
 
     /** 창 대기 예약: 예약 슬롯 0이면 창이 남아 있어도 메인이 산다. */
-    private static void tempReserveZeroUpcomingNoDefer() {
+    private static void tempReserveZeroUpcomingNoHold() {
         FakeEnv env = new FakeEnv();
         env.nowMsOverride = Instant.parse("2026-11-15T03:00:00Z").toEpochMilli();
         FakeNet net = new FakeNet();
@@ -730,7 +732,7 @@ public class NativeCycleTest {
 
     /** v0.3.39 감사 D (사이클) — 창이 남아 있어도 이벤트 markets가 전부
      *  기매수면 후보가 될 수 없어 예약을 걸지 않고 메인이 산다. */
-    private static void tempUpcomingAllBoughtNoDefer() {
+    private static void tempUpcomingAllBoughtNoHold() {
         FakeEnv env = new FakeEnv();
         env.nowMsOverride = Instant.parse("2026-11-15T03:00:00Z").toEpochMilli();
         FakeNet net = new FakeNet();
@@ -748,7 +750,7 @@ public class NativeCycleTest {
         check("auditD cycle: 결과 OK", r == NativeCycle.Result.OK);
         check("auditD cycle: 메인이 슬롯 획득", t.posts == 1
                 && env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
-        check("auditD cycle: 예약 로그 없음", !env.logged("기온 예약 — 오늘 진입 창"));
+        check("auditD cycle: 예약 로그 없음", !env.logged("기온 예약 — 진입 창이 남은"));
     }
 
     /** v0.3.39 감사 E — 기온 이벤트 조회 전수 실패(null)면 예약을 유지해
@@ -790,6 +792,112 @@ public class NativeCycleTest {
         check("auditE empty: 전수 실패 로그 없음", !env.logged("전수 실패"));
         check("auditE empty: 메인이 슬롯 획득", t.posts == 1
                 && env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+    }
+
+    /** 기온 이벤트 무대 — 이벤트 슬러그와 endDate를 지정한다 (후보 검증 무대는 걸지 않는다). */
+    private static void tempStageEndOnlyDated(FakeNet net, String eventSlug, String endDate) {
+        Map<String, Object> tm = new LinkedHashMap<>();
+        tm.put("slug", eventSlug + "-7c");
+        tm.put("question", "Will the highest temperature in Seoul be 7°C?");
+        tm.put("groupItemTitle", "7°C");
+        tm.put("active", true);
+        tm.put("closed", false);
+        tm.put("endDate", endDate);
+        tm.put("outcomePrices", "[\"0.03\",\"0.97\"]");
+        tm.put("feeType", "weather_fees");
+        tm.put("feeSchedule", jmap("{\"rate\":0.05}"));
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("slug", eventSlug);
+        ev.put("endDate", endDate);
+        ev.put("markets", new ArrayList<>(List.of(tm)));
+        net.tempEvents = new ArrayList<>(List.of(ev));
+    }
+
+    /**
+     * 홀드: 전날 저녁(20:00Z)에는 오늘 창이 지났어도 내일 이벤트가
+     * 조회 범위에 들어와 홀드가 걸리고, 메인이 마지막 슬롯을 먹지
+     * 않는다. 조회 슬러그가 내일 날짜까지 넓어졌는지도 함께 본다.
+     */
+    private static void tempHoldTomorrowEventEveningBefore() {
+        FakeEnv env = new FakeEnv();
+        env.nowMsOverride = Instant.parse("2026-11-15T20:00:00Z").toEpochMilli();
+        FakeNet net = new FakeNet();
+        net.cash = 12; // 슬롯 1
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        tempStageEndOnlyDated(net,
+                "highest-temperature-in-seoul-on-november-16-2026", "2026-11-16T12:00:00Z");
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("hold tomorrow: 결과 OK", r == NativeCycle.Result.OK);
+        check("hold tomorrow: 조회 슬러그 80개 (오늘+내일)", net.lastTempSlugs != null
+                && net.lastTempSlugs.size() == 80);
+        check("hold tomorrow: 내일 슬러그 포함", net.lastTempSlugs != null
+                && net.lastTempSlugs.contains("highest-temperature-in-seoul-on-november-16-2026"));
+        check("hold tomorrow: 주문 없음", t.posts == 0);
+        check("hold tomorrow: 메인은 못 삼",
+                !env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+        check("hold tomorrow: 홀드 로그", env.logged("기온 예약 — 진입 창이 남은 이벤트가 있어"));
+    }
+
+    /**
+     * 홀드: 슬롯이 현금이 정한 값(자본 $20 → 슬롯 2, 건수 상한 70은
+     * 닿지 않는다)이어도 메인은 예약 1개만큼 덜 쓴다 — 건당 베팅액만큼의
+     * 현금이 그대로 남는다. 기온 후보는 없고 내일 이벤트만으로 걸리는
+     * 홀드다.
+     */
+    private static void tempHoldAppliesToCashSlots() {
+        FakeEnv env = new FakeEnv(); // NOW = 2026-11-15T12:00Z
+        FakeNet net = new FakeNet();
+        net.cash = 20; // 현금 기준 슬롯 2
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "main-market-a", "111", "222");
+        mainStage(net, "main-market-b", "333", "444");
+        tempStageEndOnlyDated(net,
+                "highest-temperature-in-seoul-on-november-16-2026", "2026-11-16T12:00:00Z");
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        String bought = env.durable.getOrDefault("bm_bought", "");
+        check("hold cash: 결과 OK", r == NativeCycle.Result.OK);
+        check("hold cash: 주문 1회만", t.posts == 1);
+        check("hold cash: 메인 1건만 매수",
+                bought.contains("main-market-a") != bought.contains("main-market-b"));
+        check("hold cash: 홀드 로그", env.logged("기온 예약 — 진입 창이 남은 이벤트가 있어"));
+    }
+
+    /**
+     * 홀드와 연기의 차이: 기온 후보가 검증에서 탈락해 슬롯을 못 써도
+     * 차단된 메인은 같은 사이클에 다시 타지 않는다 — 빈 슬롯은 빈
+     * 채로 남는다 (연기 방식이면 두 번째 패스에서 메인이 먹었다).
+     */
+    private static void tempHoldMainNotRetriedAfterTempFails() {
+        FakeEnv env = new FakeEnv(); // NOW = 2026-11-15T12:00Z, 기온 창 안
+        FakeNet net = new FakeNet();
+        net.cash = 20; // 슬롯 2
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "main-market-a", "111", "222");
+        mainStage(net, "main-market-b", "333", "444");
+        // 이벤트·시장은 올리되 gamma 무대를 걸지 않아 기온 후보가 검증 탈락한다
+        tempStageEndOnly(net, "2026-11-15T23:59:00Z");
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        String bought = env.durable.getOrDefault("bm_bought", "");
+        check("hold noretry: 결과 OK", r == NativeCycle.Result.OK);
+        check("hold noretry: 기온 후보 로그", env.logged("기온 후보 1건"));
+        check("hold noretry: 주문 1회만", t.posts == 1);
+        check("hold noretry: 메인 1건만 매수",
+                bought.contains("main-market-a") != bought.contains("main-market-b"));
+        check("hold noretry: 기온은 못 삼", !bought.contains("highest-temperature-in-seoul"));
+        check("hold noretry: 홀드 로그", env.logged("기온 예약 — 진입 창이 남은 이벤트가 있어"));
     }
 
     /** 손절 판정 경계 — 폭 파라미터와 결정 구간 설정값 (JS book 테스트와 같은 케이스). */
@@ -2063,12 +2171,15 @@ public class NativeCycleTest {
         tempStopLossUntaggedApplies();
         tempStopLossNoRecordApplies();
         tempReserveTwoSlots();
-        tempReserveUpcomingWindowDefersMain();
-        tempReservePastWindowNoDefer();
-        tempReserveZeroUpcomingNoDefer();
-        tempUpcomingAllBoughtNoDefer();
+        tempReserveUpcomingWindowHoldsMain();
+        tempReservePastWindowNoHold();
+        tempReserveZeroUpcomingNoHold();
+        tempUpcomingAllBoughtNoHold();
         tempFetchAllFailKeepsReserve();
         tempFetchEmptyNoReserve();
+        tempHoldTomorrowEventEveningBefore();
+        tempHoldAppliesToCashSlots();
+        tempHoldMainNotRetriedAfterTempFails();
         tradeSettingsParse();
         stopLossVerdictDrops();
         stopLossPath();

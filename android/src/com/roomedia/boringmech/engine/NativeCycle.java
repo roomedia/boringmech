@@ -1351,16 +1351,17 @@ public final class NativeCycle {
     }
 
     /**
-     * 당일 기온 이벤트 조회 — 15분 캐시. 도시별 실패는 Net 구현이
+     * 오늘+내일 기온 이벤트 조회 — 15분 캐시. 도시별 실패는 Net 구현이
      * 건너뛰므로 돌아온 목록(빈 목록 포함)을 그대로 캐시한다. 단,
      * 전 도시 실패(null)는 캐시하지 않아 다음 사이클에 다시 시도한다
-     * (JS fetchTempEvents와 같은 규칙).
+     * (JS fetchTempEvents와 같은 규칙). 조회 범위만 이틀치이고 후보
+     * 생성은 창 판정으로 당일 이벤트만 쓴다.
      */
     private List<Object> tempEvents(long nowMs) throws Exception {
         if (tempEventsCache != null && nowMs - tempEventsCacheAtMs < TempNo.CACHE_MS) {
             return tempEventsCache;
         }
-        List<Object> events = net.fetchTempEvents(TempNo.todayEventSlugs(nowMs));
+        List<Object> events = net.fetchTempEvents(TempNo.eventSlugsForFetch(nowMs));
         if (events == null) {
             // 전수 실패는 빈 목록으로 바꾸지 않고 null로 전파한다 —
             // "오늘 이벤트 없음"과 구분해 호출자가 예약을 유지하는 쪽으로
@@ -1388,7 +1389,7 @@ public final class NativeCycle {
         // 기온 No 페이드 — 설정이 켜졌을 때만 별도 스캔을 붙인다. 후보는
         // 같은 선정 패스(슬롯·검증 캡 공유)를 타고, 메인 후보와 slug가
         // 겹치면 메인 쪽이 이긴다. 기온 스캔 통계는 요약에 섞지 않는다.
-        // 조회한 이벤트 목록은 아래 예약 판정(창 대기)도 함께 쓴다.
+        // 조회한 이벤트 목록은 아래 홀드 판정(창 대기)도 함께 쓴다.
         List<Object> tempEventsList = null;
         // 기온 이벤트 조회 전수 실패 여부 — 실패와 "오늘 이벤트 없음"을
         // 구분해, 전수 실패 사이클은 예약을 유지하는 쪽으로 판정한다
@@ -1424,47 +1425,43 @@ public final class NativeCycle {
         int filledCount = 0;
         int unfilledCount = 0;
         int failedCount = 0;
-        // 선정 드라이버 — 기온 슬롯 예약 (JS runCycle과 같은 규칙). 토글이
-        // 켜졌고 기온 후보가 있거나 오늘 진입 창이 열릴 기온 이벤트가
-        // 있을 때, 메인 후보는 슬롯 reserveSlots개와 검증 reserveSlots건을
-        // 기온 몫으로 남겨 둔 지점에서 뒤로 미루고(deferredMain), 기온
-        // 후보를 먼저 처리한 뒤 남은 슬롯·검증 캡으로 미룬 메인을 다시
-        // 탄다. 창은 이벤트 당일 entryHourUtc에 열리므로, 후보 존재에만
-        // 예약을 걸면 창이 열리기 전에 메인이 마지막 슬롯까지 먹어
-        // 예약이 지킬 자리가 없어진다. 예약은 하한이라 기온이 남은
-        // 슬롯을 더 쓰는 것도, 기온이 못 사면 메인이 전부를 쓰는 것도
-        // 그대로 된다. 단, 창 대기 예약(후보 없이 창만 남은 경우)은
-        // 미룬 메인을 다시 타지 않는다 — 다시 태우면 같은 사이클에
-        // 예약 슬롯까지 먹어 창이 열릴 때 남는 자리가 없다. 예약이
-        // 없으면 미루는 후보가 없어 기존 단일 패스와 동일하다.
-        boolean tempHasCandidates = candidates.stream()
-                .anyMatch(c -> TempNo.STRATEGY.equals(c.strategy));
-        boolean tempReserve = tempSettings.enabled
-                && (tempHasCandidates
-                    || tempFetchFailed
+        // 선정 드라이버 — 기온 슬롯 홀드 (JS runCycle과 같은 규칙).
+        // 토글 ON + 예약 슬롯 N>0이고, 오늘·내일 기온 이벤트 중 진입
+        // 창이 남은 것이 있거나(후보가 있으면 그 이벤트가 여기에
+        // 걸린다) 조회가 전수 실패했을 때 홀드가 켜진다. 홀드가 켜지면
+        // 메인의 유효 용량을 전체에서 N슬롯 줄여 실제로 비워 둔다:
+        // 메인 후보는 남은 슬롯이 N개 이하이거나 검증이 캡−N에 닿으면
+        // 그 사이클에서 건너뛰고, 다시 태우지 않는다 — 다시 태우면
+        // 비워 둔 슬롯이 같은 사이클에 사라져 창이 열릴 때 남는 자리가
+        // 없다. slots는 건수 상한과 현금 기준 슬롯 수의 최소값이라,
+        // 이 차단은 건당 베팅액 × N만큼의 현금도 함께 비운다. 기온
+        // 후보는 홀드와 무관하게 전 용량을 쓴다 (예약은 하한이라
+        // 기온이 N개를 넘어 사는 것도 막지 않는다). 홀드 조건이 없으면
+        // 차단되는 후보가 없어 기존 단일 패스와 동일하다. 해당하는
+        // 이벤트가 없거나 전부 종료됐으면 홀드가 풀려 메인이 전
+        // 용량을 쓴다.
+        int reserveEff = TempNo.effectiveReserveSlots(
+                tempSettings.reserveSlots, tradeCfg.maxPositions);
+        boolean tempHold = tempSettings.enabled
+                && reserveEff > 0
+                && (tempFetchFailed
                     || TempNo.hasUpcomingWindow(tempEventsList, env.nowMs(),
                             tempSettings.entryHourUtc, snap.heldSlugs, boughtAll));
-        List<ScanFilter.Candidate> worklist = candidates;
-        List<ScanFilter.Candidate> deferredMain = new ArrayList<>();
-        boolean firstPass = true;
-        boolean budgetOut = false;
-        while (!budgetOut) {
-            for (int wi = 0; wi < worklist.size(); wi++) {
-                ScanFilter.Candidate cand = worklist.get(wi);
-                if (!env.isRunning(gen)) {
-                    return;
-                }
-                if (firstPass && tempReserve
-                        && TempNo.reserveDefersMain(cand.strategy, slotsLeft, verified, tradeCfg.verifyCap,
-                                TempNo.effectiveReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions))) {
-                    deferredMain.add(cand);
-                    continue;
-                }
-                if (slotsLeft < 1 || verified >= tradeCfg.verifyCap) {
-                    budgetOut = true;
-                    break;
-                }
-                env.beatProgress(cycle);
+        List<ScanFilter.Candidate> heldMain = new ArrayList<>();
+        for (ScanFilter.Candidate cand : candidates) {
+            if (!env.isRunning(gen)) {
+                return;
+            }
+            if (tempHold
+                    && TempNo.reserveBlocksMain(cand.strategy, slotsLeft, verified, tradeCfg.verifyCap,
+                            reserveEff)) {
+                heldMain.add(cand);
+                continue;
+            }
+            if (slotsLeft < 1 || verified >= tradeCfg.verifyCap) {
+                break;
+            }
+            env.beatProgress(cycle);
             verified++;
             CandidateVerifier.Result detail;
             try {
@@ -1604,19 +1601,13 @@ public final class NativeCycle {
             } finally {
                 guard.releaseSubmitLock(cand.slug);
             }
-            }
-            if (budgetOut || !firstPass || deferredMain.isEmpty() || !tempHasCandidates) {
-                break;
-            }
-            firstPass = false;
-            worklist = deferredMain;
         }
-        if (tempReserve && !tempHasCandidates && !deferredMain.isEmpty()) {
+        if (tempHold && !heldMain.isEmpty()) {
             if (tempFetchFailed) {
-                log("기온 예약 — 조회 전수 실패로 메인 " + deferredMain.size()
+                log("기온 예약 — 조회 전수 실패로 메인 " + heldMain.size()
                         + "건을 미루고 슬롯을 남깁니다");
             } else {
-                log("기온 예약 — 오늘 진입 창이 열릴 이벤트가 있어 메인 " + deferredMain.size()
+                log("기온 예약 — 진입 창이 남은 이벤트가 있어 메인 " + heldMain.size()
                         + "건을 미루고 슬롯을 남깁니다");
             }
         }
