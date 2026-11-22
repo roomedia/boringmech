@@ -23,15 +23,26 @@ public final class StopLoss {
 
     /** "skip" | "decided" | "triggered" | "holding" */
     public static String stopLossVerdict(double entry, double current) {
+        return stopLossVerdict(entry, current, STOP_DROP);
+    }
+
+    /** drop은 전략별 손절 폭 (메인 STOP_DROP·기온 0.15) — engine/StopLoss.verdict와 동일 규칙. */
+    public static String stopLossVerdict(double entry, double current, double drop) {
+        return stopLossVerdict(entry, current, drop, DECIDED_HIGH, DECIDED_LOW);
+    }
+
+    /** 결정 구간 경계(decidedHigh·decidedLow)를 설정값으로 받는 판정. */
+    public static String stopLossVerdict(double entry, double current, double drop,
+                                         double decidedHigh, double decidedLow) {
         if (!Double.isFinite(entry) || !Double.isFinite(current)) {
             return "skip";
         }
-        if (current >= DECIDED_HIGH || current <= DECIDED_LOW) {
+        if (current >= decidedHigh || current <= decidedLow) {
             return "decided";
         }
         // 경계 허용 오차 — engine/StopLoss.verdict와 동일 (십진 경계 쌍의
         // double 연산 오차로 인한 미발화 방지).
-        if (current <= entry - STOP_DROP + 1e-9) {
+        if (current <= entry - drop + 1e-9) {
             return "triggered";
         }
         return "holding";
@@ -88,7 +99,12 @@ public final class StopLoss {
 
     /** 매도 하한가 — floorPrice = min(max(tick, roundTick(current − SLIPPAGE_CAP, tick)), 1 − tick). */
     public static double floorPrice(double current, double tick) {
-        return Math.min(Math.max(tick, roundTick(current - SLIPPAGE_CAP, tick)), 1 - tick);
+        return floorPrice(current, tick, SLIPPAGE_CAP);
+    }
+
+    /** 매도 하한가 — 슬리피지 캡을 설정값으로 받는 판정. */
+    public static double floorPrice(double current, double tick, double slippageCap) {
+        return Math.min(Math.max(tick, roundTick(current - slippageCap, tick)), 1 - tick);
     }
 
     /** 매도 체결 산출 결과. */

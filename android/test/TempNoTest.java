@@ -1,6 +1,7 @@
 // 기온 No 페이드 JVM 단위 테스트 — TempNo 순수 로직(정수/꼬리 판정·밴드
 // 경계·진입 창 경계·토글 OFF·설정 해석·수수료), StopLoss.evaluate의
-// 태그 기준 기온 제외, CandidateVerifier의 기온 밴드·창 분기를 대조한다.
+// 태그 기준 기온 전용 손절 폭, CandidateVerifier의 기온 밴드·창 분기를
+// 대조한다.
 // 실행: android/test/run_temp_no_test.sh
 import com.roomedia.boringmech.engine.BoughtReconcile;
 import com.roomedia.boringmech.engine.CandidateVerifier;
@@ -8,6 +9,7 @@ import com.roomedia.boringmech.engine.JsonText;
 import com.roomedia.boringmech.engine.ScanFilter;
 import com.roomedia.boringmech.engine.StopLoss;
 import com.roomedia.boringmech.engine.TempNo;
+import com.roomedia.boringmech.engine.TradeSettings;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -108,10 +110,19 @@ public class TempNoTest {
         check("window 11:59 open", TempNo.windowOpen(
                 Instant.parse("2026-11-18T11:59:59Z").toEpochMilli(), END_MS));
         check("window endDate closed", !TempNo.windowOpen(END_MS, END_MS));
+        check("window hour 0 opens at midnight", TempNo.windowOpen(
+                Instant.parse("2026-11-18T00:00:00Z").toEpochMilli(), END_MS, 0));
+        check("window hour 9 closed at 05:00", !TempNo.windowOpen(
+                Instant.parse("2026-11-18T05:00:00Z").toEpochMilli(), END_MS, 9));
+        check("window hour 9 opens at 09:00", TempNo.windowOpen(
+                Instant.parse("2026-11-18T09:00:00Z").toEpochMilli(), END_MS, 9));
 
         // ── 설정 해석 ──
         TempNo.Settings def = TempNo.parseSettings(null);
         check("settings null off", !def.enabled && def.bandLo == TempNo.DEFAULT_BAND_LO);
+        check("settings defaults", def.bandHi == TempNo.BAND_HI
+                && def.entryHourUtc == TempNo.ENTRY_HOUR_UTC
+                && def.reserveSlots == TempNo.DEFAULT_RESERVE_SLOTS);
         check("settings bad json", !TempNo.parseSettings("not json").enabled);
         TempNo.Settings custom = settings(true, 0.93);
         check("settings custom", custom.enabled && custom.bandLo == 0.93);
@@ -120,8 +131,30 @@ public class TempNoTest {
                         == TempNo.DEFAULT_BAND_LO);
         check("settings string true is off",
                 !TempNo.parseSettings("{\"tempNoEnabled\":\"true\"}").enabled);
-        check("settings band hi boundary kept",
-                TempNo.parseSettings("{\"tempNoBandLo\":0.998}").bandLo == 0.998);
+        // 하한=상한(빈 밴드)은 쌍째로 기본값으로 되돌린다
+        TempNo.Settings pairReset = TempNo.parseSettings("{\"tempNoBandLo\":0.998}");
+        check("settings band lo == hi resets pair",
+                pairReset.bandLo == TempNo.DEFAULT_BAND_LO && pairReset.bandHi == TempNo.BAND_HI);
+        TempNo.Settings customBand = TempNo.parseSettings(
+                "{\"tempNoBandLo\":0.85,\"tempNoBandHi\":0.99}");
+        check("settings custom band hi kept", customBand.bandLo == 0.85 && customBand.bandHi == 0.99);
+        check("settings band hi above 1 falls back",
+                TempNo.parseSettings("{\"tempNoBandHi\":1.5}").bandHi == TempNo.BAND_HI);
+        check("settings entry hour kept",
+                TempNo.parseSettings("{\"tempEntryHourUtc\":0}").entryHourUtc == 0
+                        && TempNo.parseSettings("{\"tempEntryHourUtc\":23}").entryHourUtc == 23);
+        check("settings entry hour falls back",
+                TempNo.parseSettings("{\"tempEntryHourUtc\":24}").entryHourUtc == TempNo.ENTRY_HOUR_UTC
+                        && TempNo.parseSettings("{\"tempEntryHourUtc\":6.5}").entryHourUtc
+                                == TempNo.ENTRY_HOUR_UTC);
+        check("settings reserve kept",
+                TempNo.parseSettings("{\"tempNoReserveSlots\":0}").reserveSlots == 0
+                        && TempNo.parseSettings("{\"tempNoReserveSlots\":3}").reserveSlots == 3
+                        && TempNo.parseSettings("{\"tempNoReserveSlots\":70}").reserveSlots == 70);
+        check("settings reserve falls back",
+                TempNo.parseSettings("{\"tempNoReserveSlots\":71}").reserveSlots == 1
+                        && TempNo.parseSettings("{\"tempNoReserveSlots\":-1}").reserveSlots == 1
+                        && TempNo.parseSettings("{\"tempNoReserveSlots\":2.5}").reserveSlots == 1);
 
         // ── 수수료 해석 ──
         Object weather = JsonText.parse("{\"feeType\":\"weather_fees\"}");
@@ -142,6 +175,20 @@ public class TempNoTest {
                 settings(true, 0.93), AT_7AM), 0);
         checkEq("scan custom lo inclusive", scanCount(eventOf(marketJson("7°C", "0.93")),
                 settings(true, 0.93), AT_7AM), 1);
+        {
+            TempNo.Settings hi99 = TempNo.parseSettings(
+                    "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"tempNoBandHi\":0.99}");
+            checkEq("scan custom hi excludes 0.998", scanCount(eventOf(marketJson("7°C", "0.998")),
+                    hi99, AT_7AM), 0);
+            checkEq("scan custom hi inclusive", scanCount(eventOf(marketJson("7°C", "0.99")),
+                    hi99, AT_7AM), 1);
+            TempNo.Settings hour9 = TempNo.parseSettings(
+                    "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"tempEntryHourUtc\":9}");
+            checkEq("scan entry hour 9 closed at 07:00", scanCount(eventOf(marketJson("7°C", "0.9")),
+                    hour9, AT_7AM), 0);
+            checkEq("scan entry hour 9 open at 09:00", scanCount(eventOf(marketJson("7°C", "0.9")),
+                    hour9, Instant.parse("2026-11-18T09:00:00Z").toEpochMilli()), 1);
+        }
         checkEq("scan tail excluded", scanCount(eventOf(marketJson("6°C or below", "0.9")), on, AT_7AM), 0);
         checkEq("scan range excluded", scanCount(eventOf(marketJson("50-51°F", "0.9")), on, AT_7AM), 0);
         checkEq("scan before window", scanCount(eventOf(marketJson("7°C", "0.9")), on,
@@ -169,7 +216,7 @@ public class TempNoTest {
             check("candidate price", cands.get(0).price == 0.9);
         }
 
-        // ── 손절 제외 판정 (태그 방식) ──
+        // ── 기온 전용 손절 폭 판정 (태그 방식) ──
         {
             Object page = jlist("[{\"outcomes\":\"[\\\"Yes\\\",\\\"No\\\"]\","
                     + "\"outcomePrices\":\"[0.9,0.1]\"}]");
@@ -177,9 +224,9 @@ public class TempNoTest {
             Object tempRow = JsonText.parse("{\"slug\":\"" + tempSlug + "\","
                     + "\"token_id\":\"t1\",\"avg_price\":0.98,\"current_size\":10,"
                     + "\"outcome\":\"No\"}");
-            // 태그가 있을 때만 제외 — 태그가 없으면 같은 슬러그·같은 가격에도 발화한다
-            checkEq("stoploss temp tagged excluded",
-                    StopLoss.evaluate(tempRow, page, page, true).action, "skip");
+            // 기온 태그 건도 손절한다 — 폭만 메인(-0.25)이 아닌 기온 전용(-0.15)
+            checkEq("stoploss temp tagged triggers",
+                    StopLoss.evaluate(tempRow, page, page, true).action, "triggered");
             checkEq("stoploss temp untagged triggers",
                     StopLoss.evaluate(tempRow, page, page, false).action, "triggered");
             checkEq("stoploss temp default triggers",
@@ -188,6 +235,22 @@ public class TempNoTest {
                     + "\"token_id\":\"t1\",\"avg_price\":0.98,\"current_size\":10,"
                     + "\"outcome\":\"No\"}");
             checkEq("stoploss main still triggers", StopLoss.evaluate(mainRow, page, page).action, "triggered");
+
+            // 폭 판별 — 진입 0.90, No 0.70: 기온 폭(-0.15)에서는 발화,
+            // 메인 폭(-0.25)에서는 유지. No 0.80이면 기온 폭에서도 유지.
+            Object page70 = jlist("[{\"outcomes\":\"[\\\"Yes\\\",\\\"No\\\"]\","
+                    + "\"outcomePrices\":\"[0.3,0.7]\"}]");
+            Object page80 = jlist("[{\"outcomes\":\"[\\\"Yes\\\",\\\"No\\\"]\","
+                    + "\"outcomePrices\":\"[0.2,0.8]\"}]");
+            Object row90 = JsonText.parse("{\"slug\":\"" + tempSlug + "\","
+                    + "\"token_id\":\"t1\",\"avg_price\":0.90,\"current_size\":10,"
+                    + "\"outcome\":\"No\"}");
+            checkEq("stoploss temp drop fires at -0.20",
+                    StopLoss.evaluate(row90, page70, page70, true).action, "triggered");
+            checkEq("stoploss main drop holds at -0.20",
+                    StopLoss.evaluate(row90, page70, page70, false).action, "holding");
+            checkEq("stoploss temp drop holds at -0.10",
+                    StopLoss.evaluate(row90, page80, page80, true).action, "holding");
 
             // 매수 기록 태그 조회 — 문자열·객체·부재 형태를 가른다
             @SuppressWarnings("unchecked")
@@ -201,11 +264,11 @@ public class TempNoTest {
                     BoughtReconcile.strategyOf(tagged, tempSlug), TempNo.STRATEGY);
             checkEq("tag: strategyOf plain", BoughtReconcile.strategyOf(plain, tempSlug), null);
             checkEq("tag: strategyOf missing", BoughtReconcile.strategyOf(empty, tempSlug), null);
-            check("exempt: tagged temp", TempNo.isStopLossExempt(tagged, tempSlug));
-            check("exempt: plain temp not exempt", !TempNo.isStopLossExempt(plain, tempSlug));
-            check("exempt: no record not exempt", !TempNo.isStopLossExempt(empty, tempSlug));
-            check("exempt: tagged non-temp not exempt",
-                    !TempNo.isStopLossExempt(tagged, "some-other-market"));
+            check("tagged: tagged temp", TempNo.isTempTagged(tagged, tempSlug));
+            check("tagged: plain temp not tagged", !TempNo.isTempTagged(plain, tempSlug));
+            check("tagged: no record not tagged", !TempNo.isTempTagged(empty, tempSlug));
+            check("tagged: tagged non-temp not tagged",
+                    !TempNo.isTempTagged(tagged, "some-other-market"));
 
             // 정화는 태그 항목을 slug로 대조하고 원본 형태 그대로 남긴다
             Set<Object> boughtSet = new java.util.LinkedHashSet<>(tagged);
@@ -226,19 +289,31 @@ public class TempNoTest {
         {
             int cap = 60; // NativeCycle.VERIFY_CAP
             check("reserve: main, slots 2, verified 0 → no defer",
-                    !TempNo.reserveDefersMain(null, 2, 0, cap));
+                    !TempNo.reserveDefersMain(null, 2, 0, cap, 1));
             check("reserve: main, slots 1 → defer",
-                    TempNo.reserveDefersMain(null, 1, 0, cap));
+                    TempNo.reserveDefersMain(null, 1, 0, cap, 1));
             check("reserve: main, slots 0 → defer",
-                    TempNo.reserveDefersMain(null, 0, 0, cap));
+                    TempNo.reserveDefersMain(null, 0, 0, cap, 1));
             check("reserve: main, verified cap-2 → no defer",
-                    !TempNo.reserveDefersMain(null, 5, cap - 2, cap));
+                    !TempNo.reserveDefersMain(null, 5, cap - 2, cap, 1));
             check("reserve: main, verified cap-1 → defer",
-                    TempNo.reserveDefersMain(null, 5, cap - 1, cap));
+                    TempNo.reserveDefersMain(null, 5, cap - 1, cap, 1));
             check("reserve: temp is never deferred",
-                    !TempNo.reserveDefersMain(TempNo.STRATEGY, 1, cap - 1, cap));
+                    !TempNo.reserveDefersMain(TempNo.STRATEGY, 1, cap - 1, cap, 1));
             check("reserve: other strategy counts as main",
-                    TempNo.reserveDefersMain("something_else", 1, 0, cap));
+                    TempNo.reserveDefersMain("something_else", 1, 0, cap, 1));
+            // 예약 0 — 슬롯·검증이 바닥이어도 미루지 않는다
+            check("reserve 0: nothing deferred",
+                    !TempNo.reserveDefersMain(null, 0, cap, cap, 0));
+            // 예약 3 — 경계가 3으로 넓어진다
+            check("reserve 3: slots 3 → defer",
+                    TempNo.reserveDefersMain(null, 3, 0, cap, 3));
+            check("reserve 3: slots 4 → no defer",
+                    !TempNo.reserveDefersMain(null, 4, 0, cap, 3));
+            check("reserve 3: verified cap-3 → defer",
+                    TempNo.reserveDefersMain(null, 9, cap - 3, cap, 3));
+            check("reserve 3: verified cap-4 → no defer",
+                    !TempNo.reserveDefersMain(null, 9, cap - 4, cap, 3));
         }
 
         // ── 검증 분기 (밴드·창) ──
@@ -289,6 +364,18 @@ public class TempNoTest {
             CandidateVerifier.Result richRes = CandidateVerifier.verifyCandidate(tempCand, 5, gamma, richBooks, AT_7AM);
             check("verify temp ask 0.999 rejects",
                     !richRes.ok && "ask_out_of_band".equals(richRes.reason));
+
+            // 진입 시작 시각 설정 — 07:00에 시작 9시면 창 밖이다
+            CandidateVerifier.Result hour9Res = CandidateVerifier.verifyCandidate(
+                    tempCand, 5, gamma, books, AT_7AM, TradeSettings.defaults(), 9);
+            check("verify temp entry hour 9 rejects at 07:00",
+                    !hour9Res.ok && "end_out_of_range".equals(hour9Res.reason));
+
+            // 메인 밴드를 설정으로 넓히면 같은 호가도 통과한다
+            TradeSettings wideCfg = TradeSettings.parse("{\"bandHi\":0.99}");
+            CandidateVerifier.Result wideRes = CandidateVerifier.verifyCandidate(
+                    mainCand, 5, mainGamma, books, AT_7AM, wideCfg, TempNo.ENTRY_HOUR_UTC);
+            check("verify main custom bandHi 0.99 accepts 0.97 ask", wideRes.ok);
         }
 
         System.out.println("TempNo tests: " + passed + " passed, " + failed + " failed");

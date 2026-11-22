@@ -20,23 +20,36 @@ public final class StopLoss {
     // engine.js 상수 — 보유 현재가(Gamma) ≤ 진입가 − STOP_DROP이면 전량 매도.
     // 사실상 결정된 마켓(≥DECIDED_HIGH·≤DECIDED_LOW)은 정산이 처리하므로 제외.
     public static final double STOP_DROP = 0.25;
+    // 기온(temp_no 태그) 전용 손절 폭 — 메인과 분리해 −0.15에서 전량 매도.
+    public static final double TEMP_STOP_DROP = 0.15;
     public static final double DECIDED_HIGH = 0.97;
     public static final double DECIDED_LOW = 0.03;
     public static final int RECENT_CAP = 200;
     public static final int ARCHIVE_CAP = 10_000;
     public static final int ATTEMPTED_CAP = 200;
 
-    /** 손절 판정 — "skip" | "decided" | "triggered" | "holding". */
+    /** 손절 판정 (메인 폭) — "skip" | "decided" | "triggered" | "holding". */
     public static String verdict(double entry, double current) {
+        return verdict(entry, current, STOP_DROP);
+    }
+
+    /** 손절 판정 — drop은 전략별 손절 폭 (메인 STOP_DROP·기온 TEMP_STOP_DROP). */
+    public static String verdict(double entry, double current, double drop) {
+        return verdict(entry, current, drop, DECIDED_HIGH, DECIDED_LOW);
+    }
+
+    /** 손절 판정 — 결정 구간 경계(decidedHigh·decidedLow)를 설정값으로 받는 판정. */
+    public static String verdict(double entry, double current, double drop,
+                                 double decidedHigh, double decidedLow) {
         if (!Double.isFinite(entry) || !Double.isFinite(current)) {
             return "skip";
         }
-        if (current >= DECIDED_HIGH || current <= DECIDED_LOW) {
+        if (current >= decidedHigh || current <= decidedLow) {
             return "decided";
         }
-        // 경계 허용 오차 — 십진으로 정확히 −STOP_DROP인 쌍(예: 0.30→0.05)이
+        // 경계 허용 오차 — 십진으로 정확히 −drop인 쌍(예: 0.30→0.05)이
         // double 연산 오차(0.30-0.25=0.04999…)로 미발화하는 것을 막는다.
-        if (current <= entry - STOP_DROP + 1e-9) {
+        if (current <= entry - drop + 1e-9) {
             return "triggered";
         }
         return "holding";
@@ -138,17 +151,22 @@ public final class StopLoss {
     }
 
     /**
-     * tempTagged는 호출자가 매수 기록으로 확정한 손절 제외 여부
-     * (TempNo.isStopLossExempt)다. 기온 No 페이드는 정산까지 보유가
-     * 백테스트 전제라 손절 대상이 아니지만, 제외는 temp_no 태그 매수만 —
-     * 슬러그만으로는 메인 매수와 구분할 수 없다.
+     * tempTagged는 호출자가 매수 기록으로 확정한 기온 태그 여부
+     * (TempNo.isTempTagged)다. 기온 No 페이드는 메인 폭이 아닌 기온 전용
+     * 폭(TEMP_STOP_DROP)으로 손절한다 — 태그는 temp_no 태그 매수만이고,
+     * 슬러그만으로는 메인 매수와 구분할 수 없다 (태그 없는 기온 시장은
+     * 메인 폭이 적용된다).
      */
     public static Eval evaluate(Object row, Object gammaPage1, Object gammaPage2,
                                 boolean tempTagged) {
+        return evaluate(row, gammaPage1, gammaPage2, tempTagged, TradeSettings.defaults());
+    }
+
+    public static Eval evaluate(Object row, Object gammaPage1, Object gammaPage2,
+                                boolean tempTagged, TradeSettings cfg) {
         Object slug = Js.field(row, "slug");
-        if (tempTagged && slug instanceof String && TempNo.isTempSlug((String) slug)) {
-            return new Eval("skip", null);
-        }
+        double drop = tempTagged && slug instanceof String && TempNo.isTempSlug((String) slug)
+                ? cfg.tempStopDrop : cfg.stopDrop;
         double entry = Js.fieldNum(row, "avg_price");
         double size = Js.fieldNum(row, "current_size");
         if (!Js.truthy(slug) || !Js.truthy(Js.field(row, "token_id")) || !Double.isFinite(entry)) {
@@ -169,7 +187,8 @@ public final class StopLoss {
         if (idx < 0 || idx >= first.prices.length) {
             return new Eval("no_index", null);
         }
-        if (!"triggered".equals(verdict(entry, first.prices[idx]))) {
+        if (!"triggered".equals(verdict(entry, first.prices[idx], drop,
+                cfg.decidedHigh, cfg.decidedLow))) {
             return new Eval("holding", first.prices[idx]);
         }
         // 매도 직전 재검증 — 같은 가드로 다시 읽어 여전히 발화 상태일 때만 판다.
@@ -182,7 +201,8 @@ public final class StopLoss {
             return new Eval("skip", null);
         }
         double current = second.prices[idx2];
-        if (!"triggered".equals(verdict(entry, current))) {
+        if (!"triggered".equals(verdict(entry, current, drop,
+                cfg.decidedHigh, cfg.decidedLow))) {
             return new Eval("recheck_dropped", current);
         }
         return new Eval("triggered", current);

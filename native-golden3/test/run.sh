@@ -14,26 +14,11 @@ OUT="${TMPDIR:-/tmp}/boringmech-golden3-classes"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-javac -encoding UTF-8 -cp "$BC" -d "$OUT" \
-  "$SRC/crypto/JsNumber.java" \
-  "$SRC/crypto/Hex.java" \
-  "$SRC/crypto/Keccak.java" \
-  "$SRC/crypto/Secp256k1.java" \
-  "$SRC/crypto/Abi.java" \
-  "$SRC/crypto/CallData.java" \
-  "$SRC/crypto/Redeem.java" \
-  "$SRC/engine/Js.java" \
-  "$SRC/engine/JsonText.java" \
-  "$SRC/engine/PositionBook.java" \
-  "$SRC/engine/ScanFilter.java" \
-  "$SRC/engine/TempNo.java" \
-  "$SRC/write/ManualSell.java" \
-  "$SRC/engine/CandidateVerifier.java" \
-  "$SRC/engine/StopLoss.java" \
-  "$SRC/engine/RedeemPlan.java" \
-  "$SRC/engine/FillJudge.java" \
-  "$SRC/engine/BoughtReconcile.java" \
-  "$SRC/engine/SettledBaseline.java" \
+# TradeSettings가 PositionBook 상수를 참조하므로 engine/write/
+# crypto 전체를 컴파일한다 (JsonModel은 org.json(Android) 전용이라 제외 —
+# NativeCycle 테스트와 같은 방식).
+find "$SRC/engine" "$SRC/write" "$SRC/crypto" -name '*.java' ! -name 'JsonModel.java' > "$OUT/sources.txt"
+javac -encoding UTF-8 -cp "$BC" -d "$OUT" @"$OUT/sources.txt" \
   "$HERE/Json.java" \
   "$HERE/Golden3Test.java"
 

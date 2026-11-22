@@ -52,6 +52,14 @@ function extractLine(marker) {
   return src.slice(i, end).replace(/;\s*$/, "");
 }
 
+function extractStatement(marker, terminator) {
+  const i = src.indexOf(marker);
+  if (i < 0) throw new Error(`마커를 찾지 못함: ${marker}`);
+  const end = src.indexOf(terminator, i);
+  if (end < 0) throw new Error(`종단자를 찾지 못함: ${marker}`);
+  return src.slice(i, end + terminator.length);
+}
+
 function extractArray(marker) {
   const i = src.indexOf(marker);
   if (i < 0) throw new Error(`마커를 찾지 못함: ${marker}`);
@@ -75,13 +83,20 @@ const state = { client: null, lastWinRows: null, lastLostRows: null, lastClosedR
 const parts = [
   harnessPre,
   ...["GAMMA_MARKETS_URL", "DATA_API_V2", "BAND_LO", "BAND_HI", "SPREAD_MAX",
-      "ASK_DEPTH_MIN_USD", "SLIPPAGE_CAP", "SNAPSHOT_MATCH_TOL", "ACTIVITY_PAGE_CAP"]
+      "ASK_DEPTH_MIN_USD", "SLIPPAGE_CAP", "SNAPSHOT_MATCH_TOL", "ACTIVITY_PAGE_CAP",
+      "PRIORITY_BAND_LO", "PRIORITY_BAND_HI", "VOLUME_MIN", "END_WINDOW_DAYS",
+      "ASK_ABOVE_SIGNAL", "VERIFY_CAP", "BET_PCT", "BET_MIN_USD", "CASH_FLOOR_PCT",
+      "RESERVE_USD", "MAX_POSITIONS", "STOP_DROP", "DECIDED_HIGH", "DECIDED_LOW",
+      "TEMP_STOP_DROP", "TEMP_NO_BAND_HI", "TEMP_NO_DEFAULT_BAND_LO",
+      "TEMP_NO_ENTRY_HOUR_UTC", "TEMP_NO_DEFAULT_RESERVE_SLOTS", "TEMP_NO_MAX_RESERVE_SLOTS"]
     .map((n) => extractLine(`const ${n} =`)),
   extractArray("const FAILSAFE_KEYWORDS ="),
   extractLine("const round2 ="),
+  extractStatement("export const DEFAULT_TRADE_SETTINGS", "});"),
   extractBlock("const LS = {"),
   extractBlock("export function isSportsMarket"),
   extractBlock("function roundTick"),
+  extractBlock("export function tempWindowOpen"),
   extractBlock("async function verifyCandidate"),
   extractBlock("async function fetchGammaPrices"),
   extractBlock("async function fetchBuySlugs"),
@@ -201,16 +216,17 @@ const runners = {
     H.__setFetch(async () => pages[qi++]);
     const row = inp.row;
     const slug = row?.slug;
-    // 기온 No 페이드 손절 제외는 태그 방식 — 원본 checkStopLossPosition의
-    // 가드와 같이, 매수 기록(bm_bought)에 temp_no 태그가 있을 때만 제외한다.
+    // 기온 No 페이드 손절 폭은 태그 방식 — 원본 checkStopLossPosition과
+    // 같이, 매수 기록(bm_bought)에 temp_no 태그가 있을 때만 기온 전용
+    // 폭(TEMP_STOP_DROP)을 쓰고 그 외는 메인 폭(STOP_DROP)이다.
     if (inp.bought != null) {
       localStorage.setItem("bm_bought", JSON.stringify(inp.bought));
     } else {
       localStorage.removeItem("bm_bought");
     }
-    if (BM.isTempNoSlug(slug) && BM.boughtStrategyOf(slug) === "temp_no") {
-      return { action: "skip" };
-    }
+    const stopDrop = BM.isTempNoSlug(slug) && BM.boughtStrategyOf(slug) === "temp_no"
+      ? BM.TEMP_STOP_DROP
+      : BM.STOP_DROP;
     const entry = Number(row?.avg_price);
     const size = Number(row?.current_size);
     if (!slug || !row?.token_id || !Number.isFinite(entry)) return { action: "skip" };
@@ -220,7 +236,7 @@ const runners = {
     if (!first) return { action: "skip" };
     const idx = BM.pickOutcomeIndex(first.outcomes, row);
     if (idx < 0 || idx >= first.prices.length) return { action: "no_index" };
-    if (BM.stopLossVerdict(entry, first.prices[idx]) !== "triggered") {
+    if (BM.stopLossVerdict(entry, first.prices[idx], stopDrop) !== "triggered") {
       return { action: "holding", current: first.prices[idx] };
     }
     const second = await H.fetchGammaPrices(row.slug).catch(() => null);
@@ -228,7 +244,7 @@ const runners = {
     const idx2 = BM.pickOutcomeIndex(second.outcomes, row);
     if (idx2 < 0 || idx2 >= second.prices.length) return { action: "skip" };
     const current = second.prices[idx2];
-    if (BM.stopLossVerdict(entry, current) !== "triggered") {
+    if (BM.stopLossVerdict(entry, current, stopDrop) !== "triggered") {
       return { action: "recheck_dropped", current };
     }
     return { action: "triggered", current };

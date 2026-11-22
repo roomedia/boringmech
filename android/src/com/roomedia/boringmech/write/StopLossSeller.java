@@ -145,7 +145,13 @@ public final class StopLossSeller {
 
     /** executeStopLossSell — row는 Data API 포지션 행 모델(Map). gen은 호출 세션의 세대. */
     public boolean executeStopLossSell(Map<String, Object> row, double current, int gen) {
-        return execute(row, current, gen, false);
+        return execute(row, current, gen, false, StopLoss.SLIPPAGE_CAP);
+    }
+
+    /** executeStopLossSell — 매도 하한가의 슬리피지 캡을 설정값으로 받는 실행. */
+    public boolean executeStopLossSell(Map<String, Object> row, double current, int gen,
+                                       double slippageCap) {
+        return execute(row, current, gen, false, slippageCap);
     }
 
     /** 현재 세대 기준으로 실행하는 위임형 — 수동 매도. */
@@ -164,10 +170,11 @@ public final class StopLossSeller {
                     + Js.str(Js.field(row, "slug")));
             return false;
         }
-        return execute(row, current, gen, true);
+        return execute(row, current, gen, true, StopLoss.SLIPPAGE_CAP);
     }
 
-    private boolean execute(Map<String, Object> row, double current, int gen, boolean manual) {
+    private boolean execute(Map<String, Object> row, double current, int gen, boolean manual,
+                            double slippageCap) {
         String label = manual ? "수동 매도" : "손절";
         String slug = Js.str(Js.field(row, "slug"));
         if (!guard.tryAcquireSubmitLock(slug, gen)) {
@@ -180,7 +187,7 @@ public final class StopLossSeller {
                 return false;
             }
             try {
-                return executeLocked(row, current, manual);
+                return executeLocked(row, current, manual, slippageCap);
             } catch (Exception e) {
                 // 원본은 runStopLoss가 행 단위로 잡아 로그한다 — 여기서는
                 // 같은 메시지로 남기고 false로 돌려준다.
@@ -194,7 +201,8 @@ public final class StopLossSeller {
         }
     }
 
-    private boolean executeLocked(Map<String, Object> row, double current, boolean manual) throws Exception {
+    private boolean executeLocked(Map<String, Object> row, double current, boolean manual,
+                                  double slippageCap) throws Exception {
         String prefix = manual ? "수동 매도" : "손절 매도";
         String slug = Js.str(Js.field(row, "slug"));
         String tokenId = Js.str(Js.field(row, "token_id"));
@@ -222,7 +230,7 @@ public final class StopLossSeller {
             String ts = timeout.run("getTickSize", () -> orderBookSource.getTickSize(tokenId));
             tick = Double.parseDouble(ts);
         }
-        double floorPrice = StopLoss.floorPrice(current, tick);
+        double floorPrice = StopLoss.floorPrice(current, tick, slippageCap);
 
         SignedOrder signed;
         try {

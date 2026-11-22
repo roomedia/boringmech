@@ -300,7 +300,7 @@ const TEMP_ROW = {
   token_id: "tok-1", avg_price: 0.98, current_size: 10, outcome: "No",
 };
 const TEMP_PAGE = gammaPage(["Yes", "No"], ["0.9", "0.1"]);
-add("slEvaluate", "eval-temp-tagged-skip", "기온 슬러그 + temp_no 태그 매수 → 손절 제외 skip", {
+add("slEvaluate", "eval-temp-tagged-triggered", "기온 슬러그 + temp_no 태그 매수 → 기온 폭으로 손절 적용", {
   row: TEMP_ROW, page1: TEMP_PAGE, page2: TEMP_PAGE,
   bought: [{ slug: TEMP_ROW.slug, strategy: "temp_no" }],
 });
@@ -311,6 +311,23 @@ add("slEvaluate", "eval-temp-untagged-triggered", "기온 슬러그지만 태그
 add("slEvaluate", "eval-temp-norecord-triggered", "기온 슬러그 + 매수 기록 없음 → 손절 적용", {
   row: TEMP_ROW, page1: TEMP_PAGE, page2: TEMP_PAGE,
   bought: [],
+});
+// 폭 판별 — 진입 0.90, No 0.70: 기온 폭(-0.15) 발화 / 메인 폭(-0.25) 유지.
+// No 0.80이면 기온 폭에서도 유지다.
+const TEMP_ROW_MID = { ...TEMP_ROW, avg_price: 0.90 };
+const TEMP_PAGE_70 = gammaPage(["Yes", "No"], ["0.3", "0.7"]);
+const TEMP_PAGE_80 = gammaPage(["Yes", "No"], ["0.2", "0.8"]);
+add("slEvaluate", "eval-temp-tagged-mid-triggered", "기온 태그 + -0.20 → 기온 폭 발화", {
+  row: TEMP_ROW_MID, page1: TEMP_PAGE_70, page2: TEMP_PAGE_70,
+  bought: [{ slug: TEMP_ROW.slug, strategy: "temp_no" }],
+});
+add("slEvaluate", "eval-temp-untagged-mid-holding", "태그 없음 + -0.20 → 메인 폭 유지", {
+  row: TEMP_ROW_MID, page1: TEMP_PAGE_70, page2: TEMP_PAGE_70,
+  bought: [TEMP_ROW.slug],
+});
+add("slEvaluate", "eval-temp-tagged-shallow-holding", "기온 태그 + -0.10 → 기온 폭에서도 유지", {
+  row: TEMP_ROW_MID, page1: TEMP_PAGE_80, page2: TEMP_PAGE_80,
+  bought: [{ slug: TEMP_ROW.slug, strategy: "temp_no" }],
 });
 
 // ── 리딤 ─────────────────────────────────────────────────────

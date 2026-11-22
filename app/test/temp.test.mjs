@@ -68,27 +68,104 @@ eq(tempWindowOpen(Date.UTC(2026, 10, 18, 12, 0, 0), END_MS), false, "window: end
 eq(tempWindowOpen(NaN, END_MS), false, "window: NaN now");
 
 // ── 설정 해석 ────────────────────────────────────────────────
-eq(parseTempSettings(null), { enabled: false, bandLo: 0.8 }, "settings: null default off");
-eq(parseTempSettings("not json"), { enabled: false, bandLo: 0.8 }, "settings: bad json");
+const DEF_TEMP = { enabled: false, bandLo: 0.8, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1 };
+eq(parseTempSettings(null), DEF_TEMP, "settings: null default off");
+eq(parseTempSettings("not json"), DEF_TEMP, "settings: bad json");
 eq(
   parseTempSettings('{"tempNoEnabled":true,"tempNoBandLo":0.93}'),
-  { enabled: true, bandLo: 0.93 },
+  { enabled: true, bandLo: 0.93, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1 },
   "settings: on + custom band",
 );
 eq(
   parseTempSettings('{"tempNoEnabled":true,"tempNoBandLo":0.999}'),
-  { enabled: true, bandLo: 0.8 },
+  { enabled: true, bandLo: 0.8, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1 },
   "settings: band above hi falls back",
 );
 eq(
   parseTempSettings('{"tempNoEnabled":"true","tempNoBandLo":0.9}'),
-  { enabled: false, bandLo: 0.9 },
+  { enabled: false, bandLo: 0.9, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1 },
   "settings: string true is off",
 );
+// 하한=상한(빈 밴드)은 쌍째로 기본값으로 되돌린다
 eq(
   parseTempSettings({ tempNoEnabled: true, tempNoBandLo: 0.998 }),
-  { enabled: true, bandLo: 0.998 },
-  "settings: band hi boundary kept",
+  { enabled: true, bandLo: 0.8, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1 },
+  "settings: band lo == hi resets pair",
+);
+eq(
+  parseTempSettings('{"tempNoEnabled":true,"tempNoBandLo":0.85,"tempNoBandHi":0.99}'),
+  { enabled: true, bandLo: 0.85, bandHi: 0.99, entryHourUtc: 6, reserveSlots: 1 },
+  "settings: custom band hi kept",
+);
+eq(
+  parseTempSettings('{"tempNoEnabled":true,"tempNoBandLo":0.95,"tempNoBandHi":0.9}'),
+  { enabled: true, bandLo: 0.8, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1 },
+  "settings: band lo >= hi resets pair",
+);
+eq(
+  parseTempSettings('{"tempNoBandHi":1.5}').bandHi,
+  0.998,
+  "settings: band hi above 1 falls back",
+);
+eq(
+  parseTempSettings('{"tempEntryHourUtc":0}').entryHourUtc,
+  0,
+  "settings: entry hour 0 kept",
+);
+eq(
+  parseTempSettings('{"tempEntryHourUtc":23}').entryHourUtc,
+  23,
+  "settings: entry hour 23 kept",
+);
+eq(
+  parseTempSettings('{"tempEntryHourUtc":24}').entryHourUtc,
+  6,
+  "settings: entry hour 24 falls back",
+);
+eq(
+  parseTempSettings('{"tempEntryHourUtc":6.5}').entryHourUtc,
+  6,
+  "settings: entry hour fractional falls back",
+);
+// 진입 창 — 시작 시각 설정
+eq(tempWindowOpen(Date.UTC(2026, 10, 18, 0, 0, 0), END_MS, 0), true, "window: hour 0 opens at midnight");
+eq(tempWindowOpen(Date.UTC(2026, 10, 18, 5, 0, 0), END_MS, 9), false, "window: hour 9 closed at 05:00");
+eq(tempWindowOpen(Date.UTC(2026, 10, 18, 9, 0, 0), END_MS, 9), true, "window: hour 9 opens at 09:00");
+// 예약 슬롯 수 — 0~70 정수만 받고 그 외는 기본값 1
+eq(
+  parseTempSettings('{"tempNoReserveSlots":0}').reserveSlots,
+  0,
+  "settings: reserve 0 kept (no reserve)",
+);
+eq(
+  parseTempSettings('{"tempNoReserveSlots":3}').reserveSlots,
+  3,
+  "settings: reserve 3 kept",
+);
+eq(
+  parseTempSettings('{"tempNoReserveSlots":70}').reserveSlots,
+  70,
+  "settings: reserve max kept",
+);
+eq(
+  parseTempSettings('{"tempNoReserveSlots":71}').reserveSlots,
+  1,
+  "settings: reserve above max falls back",
+);
+eq(
+  parseTempSettings('{"tempNoReserveSlots":-1}').reserveSlots,
+  1,
+  "settings: reserve negative falls back",
+);
+eq(
+  parseTempSettings('{"tempNoReserveSlots":2.5}').reserveSlots,
+  1,
+  "settings: reserve fractional falls back",
+);
+eq(
+  parseTempSettings('{"tempNoReserveSlots":"3"}').reserveSlots,
+  3,
+  "settings: reserve numeric string coerced (Number semantics)",
 );
 
 // ── 수수료 해석 ──────────────────────────────────────────────
@@ -136,6 +213,26 @@ eq(
   1,
   "scan: custom lo inclusive",
 );
+eq(
+  scanTempCandidates(evOf([mkMarket("7°C", "0.998")]), NONE, NONE, { enabled: true, bandLo: 0.8, bandHi: 0.99 }, AT_7AM).length,
+  0,
+  "scan: custom hi 0.99 excludes 0.998",
+);
+eq(
+  scanTempCandidates(evOf([mkMarket("7°C", "0.99")]), NONE, NONE, { enabled: true, bandLo: 0.8, bandHi: 0.99 }, AT_7AM).length,
+  1,
+  "scan: custom hi inclusive",
+);
+eq(
+  scanTempCandidates(evOf([mkMarket("7°C", "0.9")]), NONE, NONE, { enabled: true, bandLo: 0.8, entryHourUtc: 9 }, AT_7AM).length,
+  0,
+  "scan: entry hour 9 closed at 07:00",
+);
+eq(
+  scanTempCandidates(evOf([mkMarket("7°C", "0.9")]), NONE, NONE, { enabled: true, bandLo: 0.8, entryHourUtc: 9 }, Date.UTC(2026, 10, 18, 9)).length,
+  1,
+  "scan: entry hour 9 open at 09:00",
+);
 eq(scanTempCandidates(evOf([mkMarket("6°C or below", "0.9")]), NONE, NONE, ON, AT_7AM).length, 0, "scan: tail excluded");
 eq(scanTempCandidates(evOf([mkMarket("50-51°F", "0.9")]), NONE, NONE, ON, AT_7AM).length, 0, "scan: range excluded");
 eq(
@@ -164,17 +261,18 @@ eq(
   eq(cands[0].price, 0.9, "scan: candidate price is No price");
 }
 
-// ── 매수 전략 태그 (손절 제외 판정) ──────────────────────────
-// 제외 조건은 슬러그 패턴만이 아니라 매수 기록의 temp_no 태그까지다.
+// ── 매수 전략 태그 (기온 손절 폭 판정) ──────────────────────
+// 기온 전용 손절 폭(-0.15) 조건은 슬러그 패턴만이 아니라 매수 기록의
+// temp_no 태그까지다. 태그가 없으면 기온 슬러그여도 메인 폭(-0.25)이다.
 {
   const TEMP_SLUG = "highest-temperature-in-seoul-on-november-18-2026-7c";
   const exempt = (slug) => isTempNoSlug(slug) && boughtStrategyOf(slug) === "temp_no";
   lsStore.clear();
   eq(boughtStrategyOf(TEMP_SLUG), null, "tag: no record is main");
-  eq(exempt(TEMP_SLUG), false, "tag: no record not exempt");
+  eq(exempt(TEMP_SLUG), false, "tag: no record not temp");
   markBought(TEMP_SLUG, "temp_no");
   eq(boughtStrategyOf(TEMP_SLUG), "temp_no", "tag: temp buy tagged");
-  eq(exempt(TEMP_SLUG), true, "tag: tagged temp exempt");
+  eq(exempt(TEMP_SLUG), true, "tag: tagged temp is temp");
   eq(
     JSON.parse(lsStore.get("bm_bought")),
     [{ slug: TEMP_SLUG, strategy: "temp_no" }],
@@ -190,16 +288,16 @@ eq(
   eq(
     exempt("highest-temperature-in-seoul-on-november-18-2026-8c"),
     false,
-    "tag: untagged temp slug not exempt",
+    "tag: untagged temp slug not temp",
   );
   eq(
     JSON.parse(lsStore.get("bm_bought"))[1],
     "highest-temperature-in-seoul-on-november-18-2026-8c",
     "tag: main buy stored as plain string",
   );
-  // 태그가 붙어도 기온 슬러그가 아니면 제외 판정과 무관하다
+  // 태그가 붙어도 기온 슬러그가 아니면 기온 폭 판정과 무관하다
   markBought("will-btc-hit-100k", "temp_no");
-  eq(exempt("will-btc-hit-100k"), false, "tag: tagged non-temp not exempt");
+  eq(exempt("will-btc-hit-100k"), false, "tag: tagged non-temp not temp");
   // 기존 혼합 형태(문자열 + 태그 없는 객체)도 태그 없음으로 읽힌다
   lsStore.set("bm_bought", JSON.stringify(["a-mkt", { slug: "b-mkt" }, { slug: "c-mkt", strategy: "other" }]));
   eq(boughtStrategyOf("a-mkt"), null, "tag: legacy string untagged");
@@ -219,15 +317,24 @@ eq(
   eq(tempReserveDefersMain(undefined, 5, CAP - 1), true, "reserve: main, verified cap-1 → defer");
   eq(tempReserveDefersMain("temp_no", 1, CAP - 1), false, "reserve: temp is never deferred");
   eq(tempReserveDefersMain("something_else", 1, 0), true, "reserve: other strategy counts as main");
+  // 예약 0개 — 아무것도 미루지 않는다
+  eq(tempReserveDefersMain(undefined, 0, 0, 0), false, "reserve 0: slots 0 → no defer");
+  eq(tempReserveDefersMain(undefined, 1, CAP - 1, 0), false, "reserve 0: at cap → no defer");
+  // 예약 3개 — 슬롯·검증 모두 3개 지점부터 미룬다
+  eq(tempReserveDefersMain(undefined, 4, 0, 3), false, "reserve 3: slots 4 → no defer");
+  eq(tempReserveDefersMain(undefined, 3, 0, 3), true, "reserve 3: slots 3 → defer");
+  eq(tempReserveDefersMain(undefined, 9, CAP - 4, 3), false, "reserve 3: verified cap-4 → no defer");
+  eq(tempReserveDefersMain(undefined, 9, CAP - 3, 3), true, "reserve 3: verified cap-3 → defer");
+  eq(tempReserveDefersMain("temp_no", 3, CAP - 3, 3), false, "reserve 3: temp is never deferred");
 
   // 구조 가드 — runCycle 드라이버가 예약 판정과 미룬 메인 재주행을 실제로 쓴다
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
   const cycleSrc = src.slice(src.indexOf("async function runCycle"));
   eq(
-    cycleSrc.includes("tempReserveDefersMain(cand.strategy, slotsLeft, verified)"),
+    cycleSrc.includes("tempReserveDefersMain(cand.strategy, slotsLeft, verified, tempSettings.reserveSlots, tradeCfg.verifyCap)"),
     true,
-    "reserve guard: driver defers via predicate",
+    "reserve guard: driver defers via predicate with settings reserve",
   );
   eq(
     cycleSrc.includes("for (const cand of deferredMain)"),
@@ -243,6 +350,33 @@ eq(
     cycleSrc.includes("if (!aborted && !budgetOut)"),
     true,
     "reserve guard: budget-exhausted pass skips deferred pass (native parity)",
+  );
+}
+
+// ── 기온 전용 손절 배선 (구조 가드) ──────────────────────────
+// checkStopLossPosition이 태그 판정으로 폭을 고르고, 두 번의 판정 모두에
+// 그 폭을 넘기는지 소스로 확인한다 (판정 자체의 경계는 book 테스트가 본다).
+{
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+  const slSrc = src.slice(
+    src.indexOf("async function checkStopLossPosition"),
+    src.indexOf("async function runStopLoss"),
+  );
+  eq(
+    slSrc.includes('boughtStrategyOf(slug) === "temp_no"') && slSrc.includes("? cfg.tempStopDrop"),
+    true,
+    "temp stoploss guard: tagged temp picks cfg.tempStopDrop",
+  );
+  eq(
+    slSrc.includes("stopLossVerdict(entry, first.prices[idx], stopDrop, cfg.decidedHigh, cfg.decidedLow)"),
+    true,
+    "temp stoploss guard: first verdict uses picked drop",
+  );
+  eq(
+    slSrc.includes("stopLossVerdict(entry, current, stopDrop, cfg.decidedHigh, cfg.decidedLow)"),
+    true,
+    "temp stoploss guard: recheck verdict uses picked drop",
   );
 }
 

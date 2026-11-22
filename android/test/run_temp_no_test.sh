@@ -14,15 +14,10 @@ BC="$REPO/android/libs/bcprov-jdk18on-1.78.1.jar"
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 
-javac -encoding UTF-8 -cp "$BC" -d "$OUT/classes" \
-  "$SRC/engine/TempNo.java" \
-  "$SRC/engine/BoughtReconcile.java" \
-  "$SRC/engine/ScanFilter.java" \
-  "$SRC/engine/CandidateVerifier.java" \
-  "$SRC/engine/StopLoss.java" \
-  "$SRC/engine/Js.java" \
-  "$SRC/engine/JsonText.java" \
-  "$SRC/crypto/JsNumber.java" \
-  "$SRC/write/ManualSell.java" \
+# TradeSettings가 PositionBook 상수를 참조하므로 순수 로직
+# 집합이 아니라 engine/write/crypto 전체를 컴파일한다 (JsonModel은
+# org.json(Android) 전용이라 제외 — NativeCycle 테스트와 같은 방식).
+find "$SRC/engine" "$SRC/write" "$SRC/crypto" -name '*.java' ! -name 'JsonModel.java' > "$OUT/sources.txt"
+javac -encoding UTF-8 -cp "$BC" -d "$OUT/classes" @"$OUT/sources.txt" \
   "$HERE/TempNoTest.java"
 java -cp "$OUT/classes:$BC" TempNoTest

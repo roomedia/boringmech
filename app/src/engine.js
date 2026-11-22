@@ -27,18 +27,25 @@ const POLYGON_RPCS = [
   "https://polygon.api.onfinality.io/public",
 ];
 
-const BET_PCT = 0.01;
-const BET_MIN_USD = 5.0;
-const CASH_FLOOR_PCT = 0.3;
-const RESERVE_USD = 2.87;
-const MAX_POSITIONS = 70;
-const BAND_LO = 0.6;
-const BAND_HI = 0.9;
-const SPREAD_MAX = 0.02;
-const ASK_DEPTH_MIN_USD = 10.0;
-const SLIPPAGE_CAP = 0.015;
-const SNAPSHOT_MATCH_TOL = 0.03;
-const VERIFY_CAP = 60;
+// 매매 판단 상수 — 전부 bm_settings로 바꿀 수 있고(parseTradeSettings),
+// 기본값은 아래 상수와 같다. 설정을 건드리기 전에는 동작이 변하지 않는다.
+export const BET_PCT = 0.01;
+export const BET_MIN_USD = 5.0;
+export const CASH_FLOOR_PCT = 0.3;
+export const RESERVE_USD = 2.87;
+export const MAX_POSITIONS = 70;
+export const BAND_LO = 0.6;
+export const BAND_HI = 0.9;
+export const PRIORITY_BAND_LO = 0.7;
+export const PRIORITY_BAND_HI = 0.8;
+export const VOLUME_MIN = 10000;
+export const END_WINDOW_DAYS = 45;
+export const SPREAD_MAX = 0.02;
+export const ASK_DEPTH_MIN_USD = 10.0;
+export const SLIPPAGE_CAP = 0.015;
+export const SNAPSHOT_MATCH_TOL = 0.03;
+export const ASK_ABOVE_SIGNAL = 0.05;
+export const VERIFY_CAP = 60;
 const CYCLE_MS = 60_000;
 // 요청 타임아웃 (F1) — 무응답 fetch가 사이클을 무한정 붙잡지 않게 한다.
 export const FETCH_TIMEOUT_MS = 20_000;
@@ -134,20 +141,20 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS)
   }
 }
 
-export function betUsdFor(equity) {
-  return round2(Math.max(BET_MIN_USD, (equity || 0) * BET_PCT));
+export function betUsdFor(equity, cfg = DEFAULT_TRADE_SETTINGS) {
+  return round2(Math.max(cfg.betMinUsd, (equity || 0) * cfg.betPct));
 }
 
-export function sizing(cash, equity, openCount) {
+export function sizing(cash, equity, openCount, cfg = DEFAULT_TRADE_SETTINGS) {
   // 비유한 입력(NaN·Infinity)이면 사이징을 닫는다 — 측정값을 못 믿으면 사지 않는다
   if (!Number.isFinite(cash) || !Number.isFinite(equity) || !Number.isFinite(openCount)) {
-    return { cashFloor: RESERVE_USD, available: 0, bet: betUsdFor(0), slots: 0 };
+    return { cashFloor: cfg.reserveUsd, available: 0, bet: betUsdFor(0, cfg), slots: 0 };
   }
-  const cashFloor = round2(Math.max(RESERVE_USD, equity * CASH_FLOOR_PCT));
+  const cashFloor = round2(Math.max(cfg.reserveUsd, equity * cfg.cashFloorPct));
   const available = round2(Math.max(0, cash - cashFloor));
-  const bet = betUsdFor(equity);
+  const bet = betUsdFor(equity, cfg);
   const cashSlots = Math.floor((available + 1e-9) / bet);
-  const slots = Math.max(0, Math.min(cashSlots, MAX_POSITIONS - openCount));
+  const slots = Math.max(0, Math.min(cashSlots, cfg.maxPositions - openCount));
   return { cashFloor, available, bet, slots };
 }
 
@@ -491,11 +498,11 @@ export function isSportsMarket(m) {
   return !!m?.sportsMarketType || String(m?.feeType || "").startsWith("sports");
 }
 
-export function scanCandidates(markets, heldSlugs, boughtSlugs, stats = null) {
+export function scanCandidates(markets, heldSlugs, boughtSlugs, stats = null, cfg = DEFAULT_TRADE_SETTINGS) {
   const today = new Date();
   const iso = (d) => d.toISOString().slice(0, 10);
   const todayIso = iso(today);
-  const endMaxIso = iso(new Date(today.getTime() + 45 * 86400_000));
+  const endMaxIso = iso(new Date(today.getTime() + cfg.endWindowDays * 86400_000));
   const out = [];
   const drop = (reason) => {
     if (stats) stats[reason] = (stats[reason] || 0) + 1;
@@ -512,7 +519,7 @@ export function scanCandidates(markets, heldSlugs, boughtSlugs, stats = null) {
     // NaN은 모든 비교를 false로 만들어 가드를 통과한다 — 비유한 숫자는
     // 형식 오류로 탈락시킨다.
     const volume = Number(m.volume || 0);
-    if (!Number.isFinite(volume) || volume < 10000) { drop("volume_low"); continue; }
+    if (!Number.isFinite(volume) || volume < cfg.volumeMin) { drop("volume_low"); continue; }
     let prices;
     try {
       prices = JSON.parse(m.outcomePrices || "[]").map(Number);
@@ -526,13 +533,13 @@ export function scanCandidates(markets, heldSlugs, boughtSlugs, stats = null) {
     }
     const side = prices[0] >= prices[1] ? "yes" : "no";
     const price = side === "yes" ? prices[0] : prices[1];
-    if (price < BAND_LO || price > BAND_HI) { drop("band_out"); continue; }
+    if (price < cfg.bandLo || price > cfg.bandHi) { drop("band_out"); continue; }
     out.push({ slug, question: m.question || "", side, price, endDate: m.endDate || "" });
   }
   if (stats) stats.total = markets.length;
-  // 매수 우선순위: 0.70–0.80 구간 먼저, 그 안에서 만기 가까운 순
-  // (동률은 입력 순서 유지 — Array.sort는 안정 정렬이다)
-  const bandGroup = (p) => (p >= 0.7 && p < 0.8 ? 0 : 1);
+  // 매수 우선순위: 우선 밴드(priorityBandLo–priorityBandHi) 구간 먼저,
+  // 그 안에서 만기 가까운 순 (동률은 입력 순서 유지 — Array.sort는 안정 정렬이다)
+  const bandGroup = (p) => (p >= cfg.priorityBandLo && p < cfg.priorityBandHi ? 0 : 1);
   out.sort((a, b) =>
     bandGroup(a.price) - bandGroup(b.price) ||
     a.endDate.localeCompare(b.endDate));
@@ -542,12 +549,19 @@ export function scanCandidates(markets, heldSlugs, boughtSlugs, stats = null) {
 // ── 기온 No 페이드 (2026-11-20) ─────────────────────────────
 // 일일 최고기온 이벤트(highest-temperature-in-<city>-on-<date>, negRisk
 // 그룹)의 정확한 정수 기온 시장 No를 밴드 안에서 사서 정산까지 보유한다.
-// 근거는 전용 백테스트 PASS (backtest-temp-no-20261119.md). 정산까지
-// 보유가 전제라 손절에서는 매수 태그(temp_no)가 있는 건만 제외한다. 기본 OFF — 뷰어
-// 설정(bm_settings)의 tempNoEnabled가 켜질 때만 후보를 만든다.
+// 근거는 전용 백테스트 PASS (backtest-temp-no-20261119.md). 손절은 메인
+// (-0.25)과 분리해 기온 전용 폭(-0.15)을 적용하고, 판정은 매수 태그
+// (temp_no)가 있는 건만 기온으로 본다 (태그 없는 기온 시장은 메인 취급).
+// 기본 OFF — 뷰어 설정(bm_settings)의 tempNoEnabled가 켜질 때만 후보를 만든다.
 export const TEMP_NO_BAND_HI = 0.998;
 export const TEMP_NO_DEFAULT_BAND_LO = 0.8;
 export const TEMP_NO_FEE_RATE = 0.05;
+// 기온 전용 손절 폭 — 진입가 − TEMP_STOP_DROP이면 전량 매도 (메인 STOP_DROP과 별개).
+export const TEMP_STOP_DROP = 0.15;
+// 기온 슬롯 예약 수 — 기본 1개, 설정(tempNoReserveSlots)으로 0~MAX 지정.
+// 0이면 예약 없음. 검증 캡 예약도 같은 수를 따른다.
+export const TEMP_NO_DEFAULT_RESERVE_SLOTS = 1;
+export const TEMP_NO_MAX_RESERVE_SLOTS = 70;
 const TEMP_NO_ENTRY_HOUR_UTC = 6;
 const TEMP_NO_CACHE_MS = 15 * 60_000;
 const TEMP_NO_SLUG_PREFIX = "highest-temperature-in-";
@@ -567,7 +581,7 @@ export const TEMP_NO_CITIES = [
   "warsaw", "wellington", "wuhan",
 ];
 
-/** 기온 이벤트·하위 시장 슬러그 판정 — 손절 제외의 슬러그 쪽 조건 (매수 태그와 함께 본다). */
+/** 기온 이벤트·하위 시장 슬러그 판정 — 기온 손절 폭 판정의 슬러그 쪽 조건 (매수 태그와 함께 본다). */
 export function isTempNoSlug(slug) {
   return typeof slug === "string" && slug.startsWith(TEMP_NO_SLUG_PREFIX);
 }
@@ -590,25 +604,49 @@ export function tempEventSlugFor(city, nowMs) {
 }
 
 /**
- * 진입 창 — 이벤트 당일 06:00 UTC ≤ now < 이벤트 endDate.
+ * 진입 창 — 이벤트 당일 entryHourUtc:00 UTC ≤ now < 이벤트 endDate.
  * 이벤트 날짜는 endDate의 UTC 날짜로 정한다 (실측 endDate는 당일
  * 12:00 UTC). 창 밖이면 후보를 만들지 않는다.
  */
-export function tempWindowOpen(nowMs, endMs) {
+export function tempWindowOpen(nowMs, endMs, entryHourUtc = TEMP_NO_ENTRY_HOUR_UTC) {
   if (!Number.isFinite(nowMs) || !Number.isFinite(endMs)) return false;
   const d = new Date(endMs);
   const startMs = Date.UTC(
-    d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), TEMP_NO_ENTRY_HOUR_UTC,
+    d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), entryHourUtc,
   );
   return startMs <= nowMs && nowMs < endMs;
 }
 
-/**
- * 뷰어 설정(bm_settings) 해석 — { tempNoEnabled, tempNoBandLo }.
- * 토글은 정확히 true일 때만 켜진 것으로 보고, 밴드 하한은 (0, 0.998]
- * 범위를 벗어나면 기본값으로 되돌린다 (못 믿는 설정으로 사지 않는다).
- */
-export function parseTempSettings(raw) {
+// ── 매매 설정 (bm_settings) ──────────────────────────────────
+// 매매 판단 수치는 전부 설정으로 바꿀 수 있다. 기본값은 기존 하드코딩
+// 상수와 같고, 범위를 벗어난 값은 필드 단위로 기본값으로 되돌린다
+// (못 믿는 설정으로 사지 않는다). 하한·상한 쌍은 순서가 어긋나면
+// 쌍째로 기본값으로 되돌린다.
+export const DEFAULT_TRADE_SETTINGS = Object.freeze({
+  bandLo: BAND_LO,
+  bandHi: BAND_HI,
+  priorityBandLo: PRIORITY_BAND_LO,
+  priorityBandHi: PRIORITY_BAND_HI,
+  volumeMin: VOLUME_MIN,
+  endWindowDays: END_WINDOW_DAYS,
+  spreadMax: SPREAD_MAX,
+  askDepthMinUsd: ASK_DEPTH_MIN_USD,
+  slippageCap: SLIPPAGE_CAP,
+  snapshotMatchTol: SNAPSHOT_MATCH_TOL,
+  askAboveSignal: ASK_ABOVE_SIGNAL,
+  betPct: BET_PCT,
+  betMinUsd: BET_MIN_USD,
+  cashFloorPct: CASH_FLOOR_PCT,
+  reserveUsd: RESERVE_USD,
+  maxPositions: MAX_POSITIONS,
+  verifyCap: VERIFY_CAP,
+  stopDrop: STOP_DROP,
+  tempStopDrop: TEMP_STOP_DROP,
+  decidedHigh: DECIDED_HIGH,
+  decidedLow: DECIDED_LOW,
+});
+
+function settingsObject(raw) {
   let o = raw;
   if (typeof raw === "string") {
     try {
@@ -617,14 +655,103 @@ export function parseTempSettings(raw) {
       o = null;
     }
   }
-  if (!o || typeof o !== "object") {
-    return { enabled: false, bandLo: TEMP_NO_DEFAULT_BAND_LO };
+  return o && typeof o === "object" ? o : null;
+}
+
+function numField(o, key, def, ok) {
+  const v = Number(o?.[key]);
+  return Number.isFinite(v) && ok(v) ? v : def;
+}
+
+const inOpen01 = (v) => v > 0 && v < 1;
+const inHalfOpen01 = (v) => v > 0 && v <= 1;
+const nonNeg = (v) => v >= 0;
+
+/** 뷰어 설정(bm_settings) 해석 — 매매 판단 수치 전체. */
+export function parseTradeSettings(raw) {
+  const o = settingsObject(raw);
+  const d = DEFAULT_TRADE_SETTINGS;
+  if (!o) return { ...d };
+  const out = {
+    bandLo: numField(o, "bandLo", d.bandLo, inOpen01),
+    bandHi: numField(o, "bandHi", d.bandHi, inHalfOpen01),
+    priorityBandLo: numField(o, "priorityBandLo", d.priorityBandLo, nonNeg),
+    priorityBandHi: numField(o, "priorityBandHi", d.priorityBandHi, inHalfOpen01),
+    volumeMin: numField(o, "volumeMin", d.volumeMin, nonNeg),
+    endWindowDays: numField(o, "endWindowDays", d.endWindowDays,
+      (v) => Number.isInteger(v) && v >= 1 && v <= 365),
+    spreadMax: numField(o, "spreadMax", d.spreadMax, inHalfOpen01),
+    askDepthMinUsd: numField(o, "askDepthMinUsd", d.askDepthMinUsd, nonNeg),
+    slippageCap: numField(o, "slippageCap", d.slippageCap, (v) => v >= 0 && v <= 0.5),
+    snapshotMatchTol: numField(o, "snapshotMatchTol", d.snapshotMatchTol, (v) => v >= 0 && v <= 1),
+    askAboveSignal: numField(o, "askAboveSignal", d.askAboveSignal, (v) => v >= 0 && v <= 1),
+    betPct: numField(o, "betPct", d.betPct, inHalfOpen01),
+    betMinUsd: numField(o, "betMinUsd", d.betMinUsd, nonNeg),
+    cashFloorPct: numField(o, "cashFloorPct", d.cashFloorPct, (v) => v >= 0 && v <= 1),
+    reserveUsd: numField(o, "reserveUsd", d.reserveUsd, nonNeg),
+    maxPositions: numField(o, "maxPositions", d.maxPositions,
+      (v) => Number.isInteger(v) && v >= 1 && v <= 10000),
+    verifyCap: numField(o, "verifyCap", d.verifyCap,
+      (v) => Number.isInteger(v) && v >= 1 && v <= 10000),
+    stopDrop: numField(o, "stopDrop", d.stopDrop, inOpen01),
+    tempStopDrop: numField(o, "tempStopDrop", d.tempStopDrop, inOpen01),
+    decidedHigh: numField(o, "decidedHigh", d.decidedHigh, inOpen01),
+    decidedLow: numField(o, "decidedLow", d.decidedLow, inOpen01),
+  };
+  if (!(out.bandLo < out.bandHi)) {
+    out.bandLo = d.bandLo;
+    out.bandHi = d.bandHi;
   }
+  if (!(out.priorityBandLo < out.priorityBandHi)) {
+    out.priorityBandLo = d.priorityBandLo;
+    out.priorityBandHi = d.priorityBandHi;
+  }
+  if (!(out.decidedLow < out.decidedHigh)) {
+    out.decidedLow = d.decidedLow;
+    out.decidedHigh = d.decidedHigh;
+  }
+  return out;
+}
+
+/**
+ * 뷰어 설정(bm_settings) 해석 — { tempNoEnabled, tempNoBandLo, tempNoBandHi,
+ * tempEntryHourUtc, tempNoReserveSlots }.
+ * 토글은 정확히 true일 때만 켜진 것으로 보고, 밴드 하한은 (0, 상한]
+ * 범위를 벗어나면 기본값으로 되돌린다 (못 믿는 설정으로 사지 않는다).
+ * 예약 슬롯 수는 0~TEMP_NO_MAX_RESERVE_SLOTS의 정수만 받고, 그 외
+ * (음수·소수·문자열·범위 초과)는 기본값 1로 되돌린다.
+ */
+export function parseTempSettings(raw) {
+  const o = settingsObject(raw);
+  if (!o) {
+    return {
+      enabled: false,
+      bandLo: TEMP_NO_DEFAULT_BAND_LO,
+      bandHi: TEMP_NO_BAND_HI,
+      entryHourUtc: TEMP_NO_ENTRY_HOUR_UTC,
+      reserveSlots: TEMP_NO_DEFAULT_RESERVE_SLOTS,
+    };
+  }
+  const hi = Number(o.tempNoBandHi);
+  let bandHi = Number.isFinite(hi) && hi > 0 && hi <= 1 ? hi : TEMP_NO_BAND_HI;
   const lo = Number(o.tempNoBandLo);
-  const bandLo = Number.isFinite(lo) && lo > 0 && lo <= TEMP_NO_BAND_HI
+  let bandLo = Number.isFinite(lo) && lo > 0 && lo <= TEMP_NO_BAND_HI
     ? lo
     : TEMP_NO_DEFAULT_BAND_LO;
-  return { enabled: o.tempNoEnabled === true, bandLo };
+  if (!(bandLo < bandHi)) {
+    bandLo = TEMP_NO_DEFAULT_BAND_LO;
+    bandHi = TEMP_NO_BAND_HI;
+  }
+  const hour = Number(o.tempEntryHourUtc);
+  const entryHourUtc = Number.isInteger(hour) && hour >= 0 && hour <= 23
+    ? hour
+    : TEMP_NO_ENTRY_HOUR_UTC;
+  const rs = Number(o.tempNoReserveSlots);
+  const reserveSlots = Number.isInteger(rs)
+    && rs >= 0 && rs <= TEMP_NO_MAX_RESERVE_SLOTS
+    ? rs
+    : TEMP_NO_DEFAULT_RESERVE_SLOTS;
+  return { enabled: o.tempNoEnabled === true, bandLo, bandHi, entryHourUtc, reserveSlots };
 }
 
 // 테이커 수수료율 — feeType 카테고리 매핑(네이티브 ManualSell의
@@ -648,12 +775,15 @@ export function resolveTempFeeRate(m) {
 
 /**
  * 기온 슬롯 예약 판정 — 예약이 켜졌을 때(토글 ON + 기온 후보 존재) 메인
- * 후보를 뒤로 미룰지 정하는 순수 함수. 메인 후보는 슬롯 1개와 검증 1건을
- * 기온 몫으로 남겨 둔 지점부터 미룬다. 기온 후보 자체는 미루지 않는다
- * (예약은 하한이지 상한이 아니다).
+ * 후보를 뒤로 미룰지 정하는 순수 함수. 메인 후보는 슬롯 reserveSlots개와
+ * 검증 reserveSlots건을 기온 몫으로 남겨 둔 지점부터 미룬다. 기온 후보
+ * 자체는 미루지 않는다 (예약은 하한이지 상한이 아니다). reserveSlots가
+ * 0이면 예약이 없어 아무것도 미루지 않는다.
  */
-export function tempReserveDefersMain(strategy, slotsLeft, verified) {
-  return strategy !== "temp_no" && (slotsLeft <= 1 || verified >= VERIFY_CAP - 1);
+export function tempReserveDefersMain(strategy, slotsLeft, verified, reserveSlots = TEMP_NO_DEFAULT_RESERVE_SLOTS, verifyCap = VERIFY_CAP) {
+  if (strategy === "temp_no") return false;
+  if (!(reserveSlots > 0)) return false;
+  return slotsLeft <= reserveSlots || verified >= verifyCap - reserveSlots;
 }
 
 /**
@@ -666,6 +796,8 @@ export function scanTempCandidates(events, heldSlugs, boughtSlugs, settings, now
   const out = [];
   if (!settings?.enabled) return out;
   const bandLo = settings.bandLo;
+  const bandHi = settings.bandHi ?? TEMP_NO_BAND_HI;
+  const entryHourUtc = settings.entryHourUtc ?? TEMP_NO_ENTRY_HOUR_UTC;
   const drop = (reason) => {
     if (stats) stats[reason] = (stats[reason] || 0) + 1;
   };
@@ -673,7 +805,7 @@ export function scanTempCandidates(events, heldSlugs, boughtSlugs, settings, now
     if (!ev || !isTempNoSlug(ev.slug)) continue;
     const endMs = Date.parse(ev.endDate || "");
     if (!Number.isFinite(endMs)) { drop("temp_end_bad"); continue; }
-    if (!tempWindowOpen(nowMs, endMs)) { drop("temp_window"); continue; }
+    if (!tempWindowOpen(nowMs, endMs, entryHourUtc)) { drop("temp_window"); continue; }
     for (const m of ev.markets || []) {
       if (!m.active || m.closed) { drop("temp_inactive"); continue; }
       if (m.acceptingOrders === false || m.archived === true) { drop("temp_not_accepting"); continue; }
@@ -696,7 +828,7 @@ export function scanTempCandidates(events, heldSlugs, boughtSlugs, settings, now
       }
       // No 가격 = Gamma outcomePrices[1] (Yes의 보수와 같은 값).
       const price = prices[1];
-      if (price < bandLo || price > TEMP_NO_BAND_HI) { drop("temp_band_out"); continue; }
+      if (price < bandLo || price > bandHi) { drop("temp_band_out"); continue; }
       out.push({
         slug,
         question: m.question || "",
@@ -705,7 +837,7 @@ export function scanTempCandidates(events, heldSlugs, boughtSlugs, settings, now
         endDate: m.endDate || ev.endDate || "",
         strategy: "temp_no",
         bandLo,
-        bandHi: TEMP_NO_BAND_HI,
+        bandHi,
         feeRate: resolveTempFeeRate(m),
       });
     }
@@ -840,8 +972,8 @@ export function boughtCorrupted() {
 }
 
 // 매수 기록 항목은 두 형태가 섞인다 — 기존 문자열(slug만)과, 전략 태그를
-// 단 객체({slug, strategy})다. 기온 No 페이드 매수만 객체로 남겨 손절
-// 제외를 슬러그 패턴이 아니라 실제 전략 귀속으로 판정한다.
+// 단 객체({slug, strategy})다. 기온 No 페이드 매수만 객체로 남겨 손절 폭
+// 판정을 슬러그 패턴이 아니라 실제 전략 귀속으로 판정한다.
 function boughtEntries() {
   try {
     const parsed = JSON.parse(durableRead(LS.bought) || "[]");
@@ -1259,7 +1391,7 @@ async function snapshot() {
     manualSellRecords(),
   );
   state.lastClosedRows = closedRows;
-  const s = sizing(cash, equity, book.openCount);
+  const s = sizing(cash, equity, book.openCount, parseTradeSettings(durableRead(LS.settings)));
   // 종목 목록·손절 대상은 장부와 같은 단일 기준으로 추린다 — status 없는
   // 보유 행이 목록에서도 손절에서도 빠지지 않게 한다 (네이티브 패리티).
   const openRows = positions.filter(isOpenRow);
@@ -1297,7 +1429,7 @@ async function snapshot() {
   return snap;
 }
 
-async function verifyCandidate(cand, bet) {
+async function verifyCandidate(cand, bet, cfg = DEFAULT_TRADE_SETTINGS, entryHourUtc = TEMP_NO_ENTRY_HOUR_UTC) {
   const reject = (reason) => ({ ok: false, reason });
   const page = await fetchJson(
     `${GAMMA_MARKETS_URL}?${new URLSearchParams({ slug: cand.slug })}`,
@@ -1328,22 +1460,19 @@ async function verifyCandidate(cand, bet) {
   // 기온 후보는 자기 밴드와 진입 창을 들고 온다 — 메인 밴드(0.60~0.90)와
   // 45일 만기 창을 적용하면 전건 탈락하므로 전략별로 갈라서 본다.
   const isTemp = cand.strategy === "temp_no";
-  const bandLo = isTemp ? cand.bandLo : BAND_LO;
-  const bandHi = isTemp ? cand.bandHi : BAND_HI;
+  const bandLo = isTemp ? cand.bandLo : cfg.bandLo;
+  const bandHi = isTemp ? cand.bandHi : cfg.bandHi;
   if (isTemp) {
     const endMs = Date.parse(m.endDate || "");
     if (!Number.isFinite(endMs)) return reject("end_out_of_range");
-    const d = new Date(endMs);
-    const startMs = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 6);
-    const nowMs = Date.now();
-    if (!(startMs <= nowMs && nowMs < endMs)) return reject("end_out_of_range");
+    if (!tempWindowOpen(Date.now(), endMs, entryHourUtc)) return reject("end_out_of_range");
   } else {
     const todayIso = new Date().toISOString().slice(0, 10);
-    const endMaxIso = new Date(Date.now() + 45 * 86400_000).toISOString().slice(0, 10);
+    const endMaxIso = new Date(Date.now() + cfg.endWindowDays * 86400_000).toISOString().slice(0, 10);
     const end = (m.endDate || "").slice(0, 10);
     if (!(todayIso < end && end <= endMaxIso)) return reject("end_out_of_range");
   }
-  if (Math.abs(prices[idx] - cand.price) > SNAPSHOT_MATCH_TOL) {
+  if (Math.abs(prices[idx] - cand.price) > cfg.snapshotMatchTol) {
     return reject("snapshot_mismatch");
   }
   // 선택한 쪽이 여전히 우세 쪽인지 다시 본다 — 스캔 뒤 가격이 뒤집히면
@@ -1366,11 +1495,11 @@ async function verifyCandidate(cand, bet) {
   if (bestAsk < bandLo || bestAsk > bandHi) return reject("ask_out_of_band");
   // 신호가보다 크게 비싸진 호가는 사지 않는다 — 슬리피지 상한이 호가
   // 기준뿐이면 신호 0.75를 0.90에 사는 경로가 정상으로 통과한다.
-  if (bestAsk > cand.price + 0.05) return reject("ask_above_signal");
-  if (bestAsk - bestBid > SPREAD_MAX + 1e-9) return reject("spread_too_wide");
-  if (asks[0].size * bestAsk < Math.max(ASK_DEPTH_MIN_USD, bet)) return reject("ask_depth_low");
+  if (bestAsk > cand.price + cfg.askAboveSignal) return reject("ask_above_signal");
+  if (bestAsk - bestBid > cfg.spreadMax + 1e-9) return reject("spread_too_wide");
+  if (asks[0].size * bestAsk < Math.max(cfg.askDepthMinUsd, bet)) return reject("ask_depth_low");
   const tick = Number(book.tick_size || (await state.client.getTickSize(tokenId)));
-  const limitPrice = Math.min(roundTick(bestAsk + SLIPPAGE_CAP, tick), bandHi);
+  const limitPrice = Math.min(roundTick(bestAsk + cfg.slippageCap, tick), bandHi);
   // 최소 주문 수량 검사용 추정치 — 실제 주식수는 시장가 주문이 금액에서 역산한다
   const estShares = bet / limitPrice;
   const minSize = Number(book.min_order_size || 0);
@@ -1570,12 +1699,12 @@ function notifyMoney(title, body) {
 // 쓴다 — 조회 실패·빈 응답이면 null을 돌려 그 건을 스킵하게 한다.
 // 포지션의 outcome 인덱스는 페이퍼와 같이 Gamma outcomes 이름 대조가
 // 1순위, 실패하면 Data API 행의 outcome_index로 폴백한다.
-export function stopLossVerdict(entry, current) {
+export function stopLossVerdict(entry, current, drop = STOP_DROP, decidedHigh = DECIDED_HIGH, decidedLow = DECIDED_LOW) {
   if (!Number.isFinite(entry) || !Number.isFinite(current)) return "skip";
-  if (current >= DECIDED_HIGH || current <= DECIDED_LOW) return "decided";
-  // 경계 허용 오차 — 십진으로 정확히 −STOP_DROP인 쌍(0.30→0.05 등)이
+  if (current >= decidedHigh || current <= decidedLow) return "decided";
+  // 경계 허용 오차 — 십진으로 정확히 −drop인 쌍(0.30→0.05 등)이
   // double 연산 오차로 미발화하는 것을 막는다 (v0.3.32 감사).
-  if (current <= entry - STOP_DROP + 1e-9) return "triggered";
+  if (current <= entry - drop + 1e-9) return "triggered";
   return "holding";
 }
 
@@ -1721,7 +1850,7 @@ function recordStopLossAttempt(tokenId, slug) {
   }
 }
 
-async function executeStopLossSell(row, current) {
+async function executeStopLossSell(row, current, cfg = DEFAULT_TRADE_SETTINGS) {
   if (!tryAcquireSubmitLock(row.slug)) {
     log(`손절 제출 잠금 중 — 건너뜀 ${row.slug}`);
     return false;
@@ -1729,7 +1858,7 @@ async function executeStopLossSell(row, current) {
   try {
     beginSubmit();
     try {
-      return await executeStopLossSellLocked(row, current);
+      return await executeStopLossSellLocked(row, current, cfg);
     } finally {
       endSubmit();
     }
@@ -1738,7 +1867,7 @@ async function executeStopLossSell(row, current) {
   }
 }
 
-async function executeStopLossSellLocked(row, current) {
+async function executeStopLossSellLocked(row, current, cfg = DEFAULT_TRADE_SETTINGS) {
   const slug = row.slug;
   const entry = Number(row.avg_price);
   // 매도 수량은 CLOB 조건부 토큰 잔고가 정본 (Data API 수량은 표시값일 수 있다)
@@ -1759,7 +1888,7 @@ async function executeStopLossSellLocked(row, current) {
   const book = await state.client.getOrderBook(row.token_id);
   const tick = Number(book.tick_size || (await state.client.getTickSize(row.token_id)));
   const floorPrice = Math.min(
-    Math.max(tick, roundTick(current - SLIPPAGE_CAP, tick)),
+    Math.max(tick, roundTick(current - cfg.slippageCap, tick)),
     1 - tick,
   );
   let signed;
@@ -1821,13 +1950,15 @@ async function executeStopLossSellLocked(row, current) {
   return true;
 }
 
-async function checkStopLossPosition(row) {
+async function checkStopLossPosition(row, cfg = DEFAULT_TRADE_SETTINGS) {
   const slug = row?.slug;
-  // 기온 No 페이드는 정산까지 보유가 백테스트 전제라 손절 대상이 아니다.
-  // 단, 제외는 매수 기록에 temp_no 태그가 있는 건만 — 메인 전략이 밴드
-  // 겹침으로 산 기온 시장은 태그가 없어 손절이 그대로 적용되고, 기록을
+  // 기온 No 페이드는 메인 폭이 아닌 기온 전용 폭으로 손절한다.
+  // 단, 기온 폭은 매수 기록에 temp_no 태그가 있는 건만 — 메인 전략이 밴드
+  // 겹침으로 산 기온 시장은 태그가 없어 메인 폭이 그대로 적용되고, 기록을
   // 찾을 수 없는 경우도 메인으로 간주한다 (안전 기본값).
-  if (isTempNoSlug(slug) && boughtStrategyOf(slug) === "temp_no") return false;
+  const stopDrop = isTempNoSlug(slug) && boughtStrategyOf(slug) === "temp_no"
+    ? cfg.tempStopDrop
+    : cfg.stopDrop;
   const entry = Number(row?.avg_price);
   const size = Number(row?.current_size);
   if (!slug || !row?.token_id || !Number.isFinite(entry)) return false;
@@ -1845,27 +1976,27 @@ async function checkStopLossPosition(row) {
     log(`손절 판정 불가 ${slug} — 보유 쪽(outcome)을 가격 목록에서 찾지 못함`);
     return false;
   }
-  if (stopLossVerdict(entry, first.prices[idx]) !== "triggered") return false;
+  if (stopLossVerdict(entry, first.prices[idx], stopDrop, cfg.decidedHigh, cfg.decidedLow) !== "triggered") return false;
   // 매도 직전 재검증 — 같은 가드로 다시 읽어 여전히 발화 상태일 때만 판다
   const second = await fetchGammaPrices(slug).catch(() => null);
   if (!second) return false;
   const idx2 = pickOutcomeIndex(second.outcomes, row);
   if (idx2 < 0 || idx2 >= second.prices.length) return false;
   const current = second.prices[idx2];
-  if (stopLossVerdict(entry, current) !== "triggered") {
+  if (stopLossVerdict(entry, current, stopDrop, cfg.decidedHigh, cfg.decidedLow) !== "triggered") {
     log(`손절 재검증 탈락 ${slug} · 현재가 ${current} (진입 ${entry})`);
     return false;
   }
-  return executeStopLossSell(row, current);
+  return executeStopLossSell(row, current, cfg);
 }
 
-async function runStopLoss(gen) {
+async function runStopLoss(gen, cfg = DEFAULT_TRADE_SETTINGS) {
   let sold = 0;
   for (const row of state.lastOpenRows) {
     if (!state.running || gen !== state.gen) break;
     beatProgress();
     try {
-      if (await checkStopLossPosition(row)) sold += 1;
+      if (await checkStopLossPosition(row, cfg)) sold += 1;
     } catch (e) {
       // 한 건의 실패가 사이클 전체를 죽이지 않는다 — 다음 사이클에 재시도
       log(`손절 처리 오류 ${row?.slug ?? "?"}: ${String(e.message ?? e).slice(0, 120)}`);
@@ -1916,6 +2047,8 @@ export function saveSettledBaseline(base) {
 }
 
 async function runCycle(gen) {
+  // 매매 설정은 사이클마다 새로 읽는다 — 설정 변경은 다음 사이클부터 적용.
+  const tradeCfg = parseTradeSettings(durableRead(LS.settings));
   setStage("snapshot");
   let snap;
   try {
@@ -1929,7 +2062,7 @@ async function runCycle(gen) {
       const rows = await fetchPositions(state.funder);
       state.lastOpenRows = rows.filter(isOpenRow);
       setStage("stoploss");
-      await runStopLoss(gen);
+      await runStopLoss(gen, tradeCfg);
       log(`스냅샷 실패로 손절만 단독 실행함 — 원래 오류: ${String(e?.message ?? e).slice(0, 100)}`);
     } catch (e2) {
       log(`스냅샷 실패 + 손절 단독 실행도 실패: ${String(e2?.message ?? e2).slice(0, 100)}`);
@@ -1952,7 +2085,7 @@ async function runCycle(gen) {
   beatProgress();
   // 손절은 신규 매수보다 먼저 — 팔린 건이 있으면 잔고·슬롯을 다시 읽는다
   setStage("stoploss");
-  const soldCount = await runStopLoss(gen);
+  const soldCount = await runStopLoss(gen, tradeCfg);
   beatProgress();
   if (soldCount > 0) {
     snap = await snapshot();
@@ -2007,7 +2140,7 @@ async function runCycle(gen) {
   const boughtAll = boughtSlugs();
   for (const s of snap.stopLossSlugs || []) boughtAll.add(s);
   for (const s of stopLossAttemptedSlugs()) boughtAll.add(s);
-  const candidates = scanCandidates(markets, snap.heldSlugs, boughtAll, scanStats);
+  const candidates = scanCandidates(markets, snap.heldSlugs, boughtAll, scanStats, tradeCfg);
   // 기온 No 페이드 — 설정이 켜졌을 때만 별도 스캔을 붙인다. 후보는 같은
   // 선정 패스(슬롯·검증 캡 공유)를 타고, 메인 후보와 slug가 겹치면
   // 메인 쪽이 이긴다 (excludeSlugs). 기온 스캔 통계는 요약에 섞지 않는다.
@@ -2020,7 +2153,7 @@ async function runCycle(gen) {
         events, snap.heldSlugs, boughtAll, tempSettings, Date.now(), null, mainSlugs,
       );
       if (tempCands.length) {
-        log(`기온 후보 ${tempCands.length}건 (밴드 ${tempSettings.bandLo}–${TEMP_NO_BAND_HI})`);
+        log(`기온 후보 ${tempCands.length}건 (밴드 ${tempSettings.bandLo}–${tempSettings.bandHi})`);
         candidates.push(...tempCands);
       }
     } catch (e) {
@@ -2044,7 +2177,7 @@ async function runCycle(gen) {
     verified += 1;
     let detail;
     try {
-      detail = await verifyCandidate(cand, snap.bet);
+      detail = await verifyCandidate(cand, snap.bet, tradeCfg, tempSettings.entryHourUtc);
     } catch (e) {
       tallyReject("verify_error");
       log(`검증 오류 ${cand.slug}: ${e.message ?? e}`);
@@ -2168,11 +2301,12 @@ async function runCycle(gen) {
     return false;
   };
   // 선정 드라이버 — 기온 슬롯 예약 (토글 ON이고 기온 후보가 있을 때만).
-  // 메인 후보는 슬롯 1개와 검증 1건을 기온 몫으로 남겨 둔 지점에서 뒤로
-  // 미루고(deferredMain), 기온 후보를 먼저 처리한 뒤 남은 슬롯·검증 캡으로
-  // 미룬 메인을 다시 탄다. 예약은 하한이라 기온이 남은 슬롯을 더 쓰는
-  // 것도, 기온이 없거나 못 사면 메인이 전부를 쓰는 것도 그대로 된다.
-  // 예약이 없으면 미루는 후보가 없어 기존 단일 패스와 동일하다.
+  // 메인 후보는 슬롯 reserveSlots개와 검증 reserveSlots건을 기온 몫으로
+  // 남겨 둔 지점에서 뒤로 미루고(deferredMain), 기온 후보를 먼저 처리한
+  // 뒤 남은 슬롯·검증 캡으로 미룬 메인을 다시 탄다. 예약은 하한이라
+  // 기온이 남은 슬롯을 더 쓰는 것도, 기온이 없거나 못 사면 메인이 전부를
+  // 쓰는 것도 그대로 된다. 예약이 없으면 미루는 후보가 없어 기존 단일
+  // 패스와 동일하다.
   const tempReserve = tempSettings.enabled
     && candidates.some((c) => c.strategy === "temp_no");
   const deferredMain = [];
@@ -2180,11 +2314,11 @@ async function runCycle(gen) {
   let budgetOut = false;
   for (const cand of candidates) {
     if (!state.running || gen !== state.gen) { aborted = true; break; }
-    if (tempReserve && tempReserveDefersMain(cand.strategy, slotsLeft, verified)) {
+    if (tempReserve && tempReserveDefersMain(cand.strategy, slotsLeft, verified, tempSettings.reserveSlots, tradeCfg.verifyCap)) {
       deferredMain.push(cand);
       continue;
     }
-    if (slotsLeft < 1 || verified >= VERIFY_CAP) { budgetOut = true; break; }
+    if (slotsLeft < 1 || verified >= tradeCfg.verifyCap) { budgetOut = true; break; }
     if (await attemptCandidate(cand)) { aborted = true; break; }
   }
   // 예산 소진으로 끊긴 패스는 미룬 메인을 다시 타지 않는다 — 예산은
@@ -2193,7 +2327,7 @@ async function runCycle(gen) {
   if (!aborted && !budgetOut) {
     for (const cand of deferredMain) {
       if (!state.running || gen !== state.gen) { aborted = true; break; }
-      if (slotsLeft < 1 || verified >= VERIFY_CAP) break;
+      if (slotsLeft < 1 || verified >= tradeCfg.verifyCap) break;
       if (await attemptCandidate(cand)) { aborted = true; break; }
     }
   }

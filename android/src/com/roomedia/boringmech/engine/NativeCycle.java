@@ -354,7 +354,8 @@ public final class NativeCycle {
                 ManualSell.combineRecords(loadDurableJsonList(ManualSell.ARCHIVE_KEY),
                         loadDurableJsonList(ManualSell.LEDGER_KEY)), attemptedObjects());
         lastClosedRows = closedRows;
-        PositionBook.Sizing sizing = PositionBook.sizing(cash, equity, book.openCount);
+        PositionBook.Sizing sizing = PositionBook.sizing(cash, equity, book.openCount,
+                TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY)));
         Snap snap = new Snap();
         snap.cash = cash;
         snap.positionsValue = positionsValue;
@@ -552,15 +553,14 @@ public final class NativeCycle {
                 feeTypeBySlug.put(slug, feeType);
             }
         }
-        // 기온 No 페이드는 정산까지 보유가 전제라 손절 대상이 아니다 —
-        // 단, 제외는 매수 기록에 temp_no 태그가 있는 건만 (메인 매수·기록
-        // 없음은 손절 적용). 수수료 카테고리 캐시만 채우고 판정·매도는
-        // 건너뛴다 (evaluate에도 같은 가드가 있다).
-        boolean tempExempt = slug != null
-                && TempNo.isStopLossExempt(loadDurableJsonList("bm_bought"), slug);
-        if (tempExempt) {
-            return false;
-        }
+        // 기온 No 페이드는 메인 폭(-0.25)이 아닌 기온 전용 폭(-0.15)으로
+        // 손절한다 — 단, 기온 폭은 매수 기록에 temp_no 태그가 있는 건만
+        // (메인 매수·기록 없음은 메인 폭 적용). 판정 폭은 evaluate에도
+        // 같은 기준으로 들어간다.
+        TradeSettings tradeCfg = TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY));
+        boolean tempTagged = slug != null
+                && TempNo.isTempTagged(loadDurableJsonList("bm_bought"), slug);
+        double stopDrop = tempTagged ? tradeCfg.tempStopDrop : tradeCfg.stopDrop;
         // JS는 1차 판정이 triggered일 때만 2차 조회를 한다 — 조회 횟수·시점을 맞춘다.
         boolean firstTriggered = false;
         StopLoss.GammaPrices p1 = StopLoss.parseGammaPrices(page1);
@@ -568,12 +568,13 @@ public final class NativeCycle {
             int idx = StopLoss.pickOutcomeIndex(p1.outcomes, row);
             double entry = Js.fieldNum(row, "avg_price");
             if (idx >= 0 && idx < p1.prices.length
-                    && "triggered".equals(StopLoss.verdict(entry, p1.prices[idx]))) {
+                    && "triggered".equals(StopLoss.verdict(entry, p1.prices[idx], stopDrop,
+                            tradeCfg.decidedHigh, tradeCfg.decidedLow))) {
                 firstTriggered = true;
             }
         }
         Object page2 = firstTriggered ? fetchGammaPageQuiet(slug) : null;
-        StopLoss.Eval ev = StopLoss.evaluate(row, page1, page2, tempExempt);
+        StopLoss.Eval ev = StopLoss.evaluate(row, page1, page2, tempTagged, tradeCfg);
         String slugStr = Js.truthy(slugRaw) ? Js.str(slugRaw) : "?";
         double entry = Js.fieldNum(row, "avg_price");
         switch (ev.action) {
@@ -587,7 +588,7 @@ public final class NativeCycle {
                 log("손절 재검증 탈락 " + slugStr + " · 현재가 " + n(ev.current) + " (진입 " + n(entry) + ")");
                 return false;
             case "triggered":
-                return seller.executeStopLossSell(row, ev.current, gen);
+                return seller.executeStopLossSell(row, ev.current, gen, tradeCfg.slippageCap);
             default:
                 return false;
         }
@@ -1307,8 +1308,10 @@ public final class NativeCycle {
         // 체결됐는데 bm_bought에 없는 포지션이면 체결 기록도 보유도
         // 사라져 차단이 뚫리는 경로가 있었다 (v0.3.35 감사 축 2).
         boughtAll.addAll(StopLossLedger.attemptedSlugs(ledgerStore));
+        // 매매 설정은 스캔 패스마다 새로 읽는다 — 설정 변경은 다음 패스부터 적용.
+        TradeSettings tradeCfg = TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY));
         List<ScanFilter.Candidate> candidates = ScanFilter.scanCandidates(
-                markets, snap.heldSlugs, boughtAll, scanStats, env.nowMs());
+                markets, snap.heldSlugs, boughtAll, scanStats, env.nowMs(), tradeCfg);
         // 기온 No 페이드 — 설정이 켜졌을 때만 별도 스캔을 붙인다. 후보는
         // 같은 선정 패스(슬롯·검증 캡 공유)를 타고, 메인 후보와 slug가
         // 겹치면 메인 쪽이 이긴다. 기온 스캔 통계는 요약에 섞지 않는다.
@@ -1324,7 +1327,7 @@ public final class NativeCycle {
                         events, snap.heldSlugs, boughtAll, tempSettings, env.nowMs(), mainSlugs);
                 if (!tempCands.isEmpty()) {
                     log("기온 후보 " + tempCands.size() + "건 (밴드 " + n(tempSettings.bandLo)
-                            + "–" + n(TempNo.BAND_HI) + ")");
+                            + "–" + n(tempSettings.bandHi) + ")");
                     candidates.addAll(tempCands);
                 }
             } catch (Exception e) {
@@ -1338,12 +1341,13 @@ public final class NativeCycle {
         int unfilledCount = 0;
         int failedCount = 0;
         // 선정 드라이버 — 기온 슬롯 예약 (JS runCycle과 같은 규칙). 토글이
-        // 켜졌고 기온 후보가 있을 때만, 메인 후보는 슬롯 1개와 검증 1건을
-        // 기온 몫으로 남겨 둔 지점에서 뒤로 미루고(deferredMain), 기온
-        // 후보를 먼저 처리한 뒤 남은 슬롯·검증 캡으로 미룬 메인을 다시
-        // 탄다. 예약은 하한이라 기온이 남은 슬롯을 더 쓰는 것도, 기온이
-        // 없거나 못 사면 메인이 전부를 쓰는 것도 그대로 된다. 예약이
-        // 없으면 미루는 후보가 없어 기존 단일 패스와 동일하다.
+        // 켜졌고 기온 후보가 있을 때만, 메인 후보는 슬롯 reserveSlots개와
+        // 검증 reserveSlots건을 기온 몫으로 남겨 둔 지점에서 뒤로
+        // 미루고(deferredMain), 기온 후보를 먼저 처리한 뒤 남은 슬롯·검증
+        // 캡으로 미룬 메인을 다시 탄다. 예약은 하한이라 기온이 남은 슬롯을
+        // 더 쓰는 것도, 기온이 없거나 못 사면 메인이 전부를 쓰는 것도
+        // 그대로 된다. 예약이 없으면 미루는 후보가 없어 기존 단일 패스와
+        // 동일하다.
         boolean tempReserve = tempSettings.enabled
                 && candidates.stream().anyMatch(c -> TempNo.STRATEGY.equals(c.strategy));
         List<ScanFilter.Candidate> worklist = candidates;
@@ -1357,11 +1361,12 @@ public final class NativeCycle {
                     return;
                 }
                 if (firstPass && tempReserve
-                        && TempNo.reserveDefersMain(cand.strategy, slotsLeft, verified, VERIFY_CAP)) {
+                        && TempNo.reserveDefersMain(cand.strategy, slotsLeft, verified, tradeCfg.verifyCap,
+                                tempSettings.reserveSlots)) {
                     deferredMain.add(cand);
                     continue;
                 }
-                if (slotsLeft < 1 || verified >= VERIFY_CAP) {
+                if (slotsLeft < 1 || verified >= tradeCfg.verifyCap) {
                     budgetOut = true;
                     break;
                 }
@@ -1369,7 +1374,8 @@ public final class NativeCycle {
             verified++;
             CandidateVerifier.Result detail;
             try {
-                detail = CandidateVerifier.verifyCandidate(cand, snap.bet, gammaSource, bookSource, env.nowMs());
+                detail = CandidateVerifier.verifyCandidate(cand, snap.bet, gammaSource, bookSource, env.nowMs(),
+                        tradeCfg, tempSettings.entryHourUtc);
             } catch (Exception e) {
                 tally(rejects, "verify_error");
                 log("검증 오류 " + cand.slug + ": " + msg(e));

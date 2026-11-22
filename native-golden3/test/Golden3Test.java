@@ -188,15 +188,15 @@ public class Golden3Test {
                 return out;
             }
             case "slEvaluate": {
-                // 손절 제외는 태그 방식 — 입력의 매수 기록으로 판정한다 (원본 가드와 동일).
+                // 기온 전용 손절 폭은 태그 방식 — 입력의 매수 기록으로 판정한다 (원본과 동일).
                 @SuppressWarnings("unchecked")
                 Map<String, Object> rowMap = (Map<String, Object>) inp.get("row");
                 Object slugRaw = rowMap == null ? null : rowMap.get("slug");
-                boolean tempExempt = TempNo.isStopLossExempt(
+                boolean tempTagged = TempNo.isTempTagged(
                         asListOrNull(inp.get("bought")),
                         slugRaw instanceof String ? (String) slugRaw : null);
                 StopLoss.Eval ev = StopLoss.evaluate(
-                        inp.get("row"), inp.get("page1"), inp.get("page2"), tempExempt);
+                        inp.get("row"), inp.get("page1"), inp.get("page2"), tempTagged);
                 Map<String, Object> out = new LinkedHashMap<>();
                 out.put("action", ev.action);
                 if (ev.current != null) {

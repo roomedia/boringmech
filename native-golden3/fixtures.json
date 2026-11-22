@@ -2107,8 +2107,8 @@
   },
   {
    "kind": "slEvaluate",
-   "name": "eval-temp-tagged-skip",
-   "description": "기온 슬러그 + temp_no 태그 매수 → 손절 제외 skip",
+   "name": "eval-temp-tagged-triggered",
+   "description": "기온 슬러그 + temp_no 태그 매수 → 기온 폭으로 손절 적용",
    "input": {
     "row": {
      "slug": "highest-temperature-in-seoul-on-november-18-2026-7c",
@@ -2191,6 +2191,99 @@
      }
     ],
     "bought": []
+   }
+  },
+  {
+   "kind": "slEvaluate",
+   "name": "eval-temp-tagged-mid-triggered",
+   "description": "기온 태그 + -0.20 → 기온 폭 발화",
+   "input": {
+    "row": {
+     "slug": "highest-temperature-in-seoul-on-november-18-2026-7c",
+     "token_id": "tok-1",
+     "avg_price": 0.9,
+     "current_size": 10,
+     "outcome": "No"
+    },
+    "page1": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.3\",\"0.7\"]"
+     }
+    ],
+    "page2": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.3\",\"0.7\"]"
+     }
+    ],
+    "bought": [
+     {
+      "slug": "highest-temperature-in-seoul-on-november-18-2026-7c",
+      "strategy": "temp_no"
+     }
+    ]
+   }
+  },
+  {
+   "kind": "slEvaluate",
+   "name": "eval-temp-untagged-mid-holding",
+   "description": "태그 없음 + -0.20 → 메인 폭 유지",
+   "input": {
+    "row": {
+     "slug": "highest-temperature-in-seoul-on-november-18-2026-7c",
+     "token_id": "tok-1",
+     "avg_price": 0.9,
+     "current_size": 10,
+     "outcome": "No"
+    },
+    "page1": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.3\",\"0.7\"]"
+     }
+    ],
+    "page2": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.3\",\"0.7\"]"
+     }
+    ],
+    "bought": [
+     "highest-temperature-in-seoul-on-november-18-2026-7c"
+    ]
+   }
+  },
+  {
+   "kind": "slEvaluate",
+   "name": "eval-temp-tagged-shallow-holding",
+   "description": "기온 태그 + -0.10 → 기온 폭에서도 유지",
+   "input": {
+    "row": {
+     "slug": "highest-temperature-in-seoul-on-november-18-2026-7c",
+     "token_id": "tok-1",
+     "avg_price": 0.9,
+     "current_size": 10,
+     "outcome": "No"
+    },
+    "page1": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.2\",\"0.8\"]"
+     }
+    ],
+    "page2": [
+     {
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.2\",\"0.8\"]"
+     }
+    ],
+    "bought": [
+     {
+      "slug": "highest-temperature-in-seoul-on-november-18-2026-7c",
+      "strategy": "temp_no"
+     }
+    ]
    }
   },
   {

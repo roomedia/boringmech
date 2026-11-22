@@ -88,8 +88,12 @@ public final class PositionBook {
 
     /** 건당 베팅액 — 평가금의 1%, 하한 $5. (equity || 0) 의미론 포함. */
     public static double betUsdFor(double equity) {
+        return betUsdFor(equity, TradeSettings.defaults());
+    }
+
+    public static double betUsdFor(double equity, TradeSettings cfg) {
         double e = (equity == 0 || Double.isNaN(equity)) ? 0 : equity;
-        return Js.round2(Math.max(BET_MIN_USD, e * BET_PCT));
+        return Js.round2(Math.max(cfg.betMinUsd, e * cfg.betPct));
     }
 
     /** 사이징 결과 (engine.js sizing 반환 객체). slots는 JS number라 double로 둔다. */
@@ -108,15 +112,19 @@ public final class PositionBook {
     }
 
     public static Sizing sizing(double cash, double equity, double openCount) {
+        return sizing(cash, equity, openCount, TradeSettings.defaults());
+    }
+
+    public static Sizing sizing(double cash, double equity, double openCount, TradeSettings cfg) {
         // 비유한 입력이면 사이징을 닫는다 — 측정값을 못 믿으면 사지 않는다
         if (!Double.isFinite(cash) || !Double.isFinite(equity) || !Double.isFinite(openCount)) {
-            return new Sizing(RESERVE_USD, 0, betUsdFor(0), 0);
+            return new Sizing(cfg.reserveUsd, 0, betUsdFor(0, cfg), 0);
         }
-        double cashFloor = Js.round2(Math.max(RESERVE_USD, equity * CASH_FLOOR_PCT));
+        double cashFloor = Js.round2(Math.max(cfg.reserveUsd, equity * cfg.cashFloorPct));
         double available = Js.round2(Math.max(0, cash - cashFloor));
-        double bet = betUsdFor(equity);
+        double bet = betUsdFor(equity, cfg);
         double cashSlots = Math.floor((available + 1e-9) / bet);
-        double slots = Math.max(0, Math.min(cashSlots, MAX_POSITIONS - openCount));
+        double slots = Math.max(0, Math.min(cashSlots, cfg.maxPositions - openCount));
         return new Sizing(cashFloor, available, bet, slots);
     }
 

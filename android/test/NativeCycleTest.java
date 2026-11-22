@@ -8,6 +8,7 @@ import com.roomedia.boringmech.engine.PositionBook;
 import com.roomedia.boringmech.engine.PositionsFetcher;
 import com.roomedia.boringmech.engine.RedeemPlan;
 import com.roomedia.boringmech.engine.StopLoss;
+import com.roomedia.boringmech.engine.TradeSettings;
 import com.roomedia.boringmech.write.ClobWriteClient;
 import com.roomedia.boringmech.write.JsonCodec;
 import com.roomedia.boringmech.write.ManualSell;
@@ -618,8 +619,112 @@ public class NativeCycleTest {
                 && env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
     }
 
+    /** 예약 슬롯 2개 설정 — 슬롯 2개가 전부 기온 몫이 돼 메인이 못 산다. */
+    private static void tempReserveTwoSlots() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 20; // 자본 $20 · 건당 $5 → 슬롯 2
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        tempStageTwo(net);
+        env.durable.put("bm_settings",
+                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"tempNoReserveSlots\":2}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        String bought = env.durable.getOrDefault("bm_bought", "");
+        check("reserve2: 결과 OK", r == NativeCycle.Result.OK);
+        check("reserve2: 주문 2회", t.posts == 2);
+        check("reserve2: 기온 2건 모두 매수",
+                bought.contains("highest-temperature-in-seoul-on-november-15-2026-7c")
+                        && bought.contains("highest-temperature-in-seoul-on-november-15-2026-8c"));
+        check("reserve2: 메인은 못 삼", !bought.contains("test-buy-market"));
+    }
+
+    /** 손절 판정 경계 — 폭 파라미터와 결정 구간 설정값 (JS book 테스트와 같은 케이스). */
+    private static void stopLossVerdictDrops() {
+        check("verdict temp boundary", "triggered".equals(StopLoss.verdict(0.90, 0.75, 0.15)));
+        check("verdict temp above line", "holding".equals(StopLoss.verdict(0.90, 0.76, 0.15)));
+        check("verdict temp fires main holds",
+                "triggered".equals(StopLoss.verdict(0.90, 0.70, 0.15))
+                        && "holding".equals(StopLoss.verdict(0.90, 0.70)));
+        check("verdict decided wins", "decided".equals(StopLoss.verdict(0.90, 0.97, 0.15)));
+        check("verdict custom decided",
+                "decided".equals(StopLoss.verdict(0.90, 0.80, 0.15, 0.80, 0.03))
+                        && "triggered".equals(StopLoss.verdict(0.90, 0.74, 0.15, 0.97, 0.03)));
+    }
+
+    /** 매매 설정 해석 — 기본값은 기존 상수와 같고, 범위 밖·어긋난 쌍은 기본값으로 되돌린다. */
+    private static void tradeSettingsParse() {
+        TradeSettings d = TradeSettings.parse(null);
+        check("cfg defaults", d.bandLo == 0.6 && d.bandHi == 0.9
+                && d.priorityBandLo == 0.7 && d.priorityBandHi == 0.8
+                && d.volumeMin == 10000 && d.endWindowDays == 45
+                && d.spreadMax == 0.02 && d.askDepthMinUsd == 10
+                && d.slippageCap == 0.015 && d.snapshotMatchTol == 0.03
+                && d.askAboveSignal == 0.05
+                && d.betPct == 0.01 && d.betMinUsd == 5 && d.cashFloorPct == 0.3
+                && d.reserveUsd == 2.87 && d.maxPositions == 70 && d.verifyCap == 60
+                && d.stopDrop == 0.25 && d.tempStopDrop == 0.15
+                && d.decidedHigh == 0.97 && d.decidedLow == 0.03);
+        check("cfg bad json defaults", TradeSettings.parse("not json").bandLo == 0.6);
+        TradeSettings c = TradeSettings.parse("{\"bandLo\":0.5,\"betPct\":0.02,\"maxPositions\":10}");
+        check("cfg custom kept", c.bandLo == 0.5 && c.betPct == 0.02 && c.maxPositions == 10
+                && c.bandHi == 0.9);
+        check("cfg band pair reset", TradeSettings.parse("{\"bandLo\":0.95,\"bandHi\":0.9}").bandLo == 0.6
+                && TradeSettings.parse("{\"bandLo\":0.95,\"bandHi\":0.9}").bandHi == 0.9);
+        check("cfg decided pair reset",
+                TradeSettings.parse("{\"decidedLow\":0.98,\"decidedHigh\":0.97}").decidedHigh == 0.97);
+        check("cfg int fallbacks", TradeSettings.parse("{\"maxPositions\":0}").maxPositions == 70
+                && TradeSettings.parse("{\"maxPositions\":3.5}").maxPositions == 70
+                && TradeSettings.parse("{\"verifyCap\":\"30\"}").verifyCap == 30);
+        check("cfg drop fallbacks", TradeSettings.parse("{\"stopDrop\":0}").stopDrop == 0.25
+                && TradeSettings.parse("{\"tempStopDrop\":0.2}").tempStopDrop == 0.2);
+        check("cfg verifyCap matches orchestrator", d.verifyCap == NativeCycle.VERIFY_CAP);
+        // 기본값 리터럴이 출처 상수와 어긋나지 않는지 전수 대조한다
+        check("cfg defaults match source constants",
+                d.bandLo == com.roomedia.boringmech.engine.ScanFilter.BAND_LO
+                        && d.bandHi == com.roomedia.boringmech.engine.ScanFilter.BAND_HI
+                        && d.priorityBandLo == com.roomedia.boringmech.engine.ScanFilter.PRIORITY_BAND_LO
+                        && d.priorityBandHi == com.roomedia.boringmech.engine.ScanFilter.PRIORITY_BAND_HI
+                        && d.volumeMin == com.roomedia.boringmech.engine.ScanFilter.VOLUME_MIN
+                        && d.endWindowDays == com.roomedia.boringmech.engine.ScanFilter.END_WINDOW_DAYS
+                        && d.spreadMax == com.roomedia.boringmech.engine.CandidateVerifier.SPREAD_MAX
+                        && d.askDepthMinUsd == com.roomedia.boringmech.engine.CandidateVerifier.ASK_DEPTH_MIN_USD
+                        && d.slippageCap == com.roomedia.boringmech.engine.CandidateVerifier.SLIPPAGE_CAP
+                        && d.snapshotMatchTol == com.roomedia.boringmech.engine.CandidateVerifier.SNAPSHOT_MATCH_TOL
+                        && d.askAboveSignal == com.roomedia.boringmech.engine.CandidateVerifier.ASK_ABOVE_SIGNAL
+                        && d.betPct == PositionBook.BET_PCT
+                        && d.betMinUsd == PositionBook.BET_MIN_USD
+                        && d.cashFloorPct == PositionBook.CASH_FLOOR_PCT
+                        && d.reserveUsd == PositionBook.RESERVE_USD
+                        && d.maxPositions == (int) PositionBook.MAX_POSITIONS
+                        && d.stopDrop == StopLoss.STOP_DROP
+                        && d.tempStopDrop == StopLoss.TEMP_STOP_DROP
+                        && d.decidedHigh == StopLoss.DECIDED_HIGH
+                        && d.decidedLow == StopLoss.DECIDED_LOW);
+        // 커스텀 사이징이 실제로 반영되는지
+        check("cfg sizing bet", PositionBook.sizing(1000, 1000, 0,
+                TradeSettings.parse("{\"betPct\":0.02}")).bet == 20);
+        check("cfg sizing slots", PositionBook.sizing(100000, 100000, 0,
+                TradeSettings.parse("{\"maxPositions\":2}")).slots == 2);
+    }
+
     /** 기온 포지션 손절 시나리오 공통 무대 — No 0.9 진입, 현재가 0.25로 발화 상태. */
     private static OrderTransport tempStopLossStage(FakeEnv env, FakeNet net, String slug) {
+        return tempStopLossStage(env, net, slug, "0.25");
+    }
+
+    /** noPrice는 현재 No 가격 — 진입 0.9 기준 기온 폭(-0.15) 발화선은 0.75, 메인 폭(-0.25)은 0.65. */
+    private static OrderTransport tempStopLossStage(FakeEnv env, FakeNet net, String slug,
+                                                    String noPrice) {
+        double no = Double.parseDouble(noPrice);
+        String yesPrice = String.valueOf(1 - no);
+        String askPrice = String.valueOf(no + 0.01);
+        double taking = 10 * no;
+        String takingStr = taking == Math.floor(taking)
+                ? String.valueOf((long) taking) : String.valueOf(taking);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("slug", slug);
         row.put("token_id", "222");
@@ -631,20 +736,21 @@ public class NativeCycleTest {
         net.positions = new ArrayList<>(List.of(row));
         Map<String, Object> gamma = new LinkedHashMap<>();
         gamma.put("outcomes", "[\"Yes\",\"No\"]");
-        gamma.put("outcomePrices", "[\"0.75\",\"0.25\"]");
+        gamma.put("outcomePrices", "[\"" + yesPrice + "\",\"" + noPrice + "\"]");
         net.gammaPages.put(slug, new ArrayList<>(List.of(gamma)));
         net.books.put("222", jmap("{\"tick_size\":\"0.01\",\"neg_risk\":true,"
-                + "\"asks\":[{\"price\":\"0.26\",\"size\":\"100\"}],"
-                + "\"bids\":[{\"price\":\"0.25\",\"size\":\"100\"}]}"));
+                + "\"asks\":[{\"price\":\"" + askPrice + "\",\"size\":\"100\"}],"
+                + "\"bids\":[{\"price\":\"" + noPrice + "\",\"size\":\"100\"}]}"));
         net.condBalance = BigInteger.valueOf(10_000_000);
         OrderTransport t = new OrderTransport();
         t.responseBody = "{\"success\":true,\"status\":\"matched\","
-                + "\"makingAmount\":\"10\",\"takingAmount\":\"2.5\","
+                + "\"makingAmount\":\"10\",\"takingAmount\":\"" + takingStr + "\","
                 + "\"transactionHashes\":[\"0xdef\"]}";
         return t;
     }
 
-    private static void tempStopLossTaggedExempt() {
+    /** 기온 태그 건도 손절한다 — 폭만 기온 전용(-0.15)이다. */
+    private static void tempStopLossTaggedApplies() {
         String slug = "highest-temperature-in-seoul-on-november-15-2026-7c";
         FakeEnv env = new FakeEnv();
         FakeNet net = new FakeNet();
@@ -654,8 +760,34 @@ public class NativeCycleTest {
         NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
         NativeCycle.Result r = c.runIteration(1);
         check("temp-sl tagged: 결과 OK", r == NativeCycle.Result.OK);
-        check("temp-sl tagged: 매도 제출 없음", t.posts == 0);
-        check("temp-sl tagged: 손절 로그 없음", !env.logged("손절 매도 " + slug));
+        check("temp-sl tagged: 손절 매도 실행", env.logged("손절 매도 " + slug));
+    }
+
+    /** 폭 판별 — 현재가 0.70은 기온 폭(-0.15)에서는 발화, 메인 폭(-0.25)에서는 유지. */
+    private static void tempStopLossTaggedMidApplies() {
+        String slug = "highest-temperature-in-seoul-on-november-15-2026-7c";
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        OrderTransport t = tempStopLossStage(env, net, slug, "0.70");
+        env.durable.put("bm_bought",
+                "[{\"slug\":\"" + slug + "\",\"strategy\":\"temp_no\"}]");
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("temp-sl tagged mid: 결과 OK", r == NativeCycle.Result.OK);
+        check("temp-sl tagged mid: 손절 매도 실행", env.logged("손절 매도 " + slug));
+    }
+
+    private static void tempStopLossUntaggedMidHolds() {
+        String slug = "highest-temperature-in-seoul-on-november-15-2026-7c";
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        OrderTransport t = tempStopLossStage(env, net, slug, "0.70");
+        env.durable.put("bm_bought", "[\"" + slug + "\"]");
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("temp-sl untagged mid: 결과 OK", r == NativeCycle.Result.OK);
+        check("temp-sl untagged mid: 매도 제출 없음", t.posts == 0);
+        check("temp-sl untagged mid: 손절 로그 없음", !env.logged("손절 매도 " + slug));
     }
 
     private static void tempStopLossUntaggedApplies() {
@@ -1559,9 +1691,14 @@ public class NativeCycleTest {
         tempReserveTempBeyondOne();
         tempReserveVerifyCap();
         tempReserveOffMainFirst();
-        tempStopLossTaggedExempt();
+        tempStopLossTaggedApplies();
+        tempStopLossTaggedMidApplies();
+        tempStopLossUntaggedMidHolds();
         tempStopLossUntaggedApplies();
         tempStopLossNoRecordApplies();
+        tempReserveTwoSlots();
+        tradeSettingsParse();
+        stopLossVerdictDrops();
         stopLossPath();
         snapshotFailureFallback();
         marketsFailureIsolation();

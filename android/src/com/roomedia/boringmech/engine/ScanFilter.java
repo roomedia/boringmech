@@ -19,8 +19,11 @@ public final class ScanFilter {
     // engine.js 상수
     public static final double BAND_LO = 0.6;
     public static final double BAND_HI = 0.9;
+    public static final double PRIORITY_BAND_LO = 0.7;
+    public static final double PRIORITY_BAND_HI = 0.8;
     public static final double VOLUME_MIN = 10000;
-    public static final long END_WINDOW_DAYS_MS = 45L * 86400_000L;
+    public static final int END_WINDOW_DAYS = 45;
+    public static final long END_WINDOW_DAYS_MS = END_WINDOW_DAYS * 86400_000L;
 
     private static final Pattern SHORT_TERM_RE =
             Pattern.compile("(bitcoin|ethereum|solana|xrp|dogecoin|cardano)-up-or-down|up-or-down-");
@@ -85,8 +88,15 @@ public final class ScanFilter {
     public static List<Candidate> scanCandidates(
             List<Object> markets, Set<String> heldSlugs, Set<String> boughtSlugs,
             Map<String, Integer> stats, long nowMs) {
+        return scanCandidates(markets, heldSlugs, boughtSlugs, stats, nowMs,
+                TradeSettings.defaults());
+    }
+
+    public static List<Candidate> scanCandidates(
+            List<Object> markets, Set<String> heldSlugs, Set<String> boughtSlugs,
+            Map<String, Integer> stats, long nowMs, TradeSettings cfg) {
         String todayIso = isoDay(nowMs);
-        String endMaxIso = isoDay(nowMs + END_WINDOW_DAYS_MS);
+        String endMaxIso = isoDay(nowMs + cfg.endWindowDays * 86400_000L);
         List<Candidate> out = new ArrayList<>();
         for (Object m : markets) {
             if (!Js.truthy(Js.field(m, "active")) || Js.truthy(Js.field(m, "closed"))) {
@@ -122,7 +132,7 @@ public final class ScanFilter {
             }
             // NaN은 모든 비교를 false로 만들어 가드를 통과한다 — 비유한 숫자는 탈락.
             double volume = Js.numOrZero(Js.field(m, "volume"));
-            if (!Double.isFinite(volume) || volume < VOLUME_MIN) {
+            if (!Double.isFinite(volume) || volume < cfg.volumeMin) {
                 drop(stats, "volume_low");
                 continue;
             }
@@ -134,7 +144,7 @@ public final class ScanFilter {
             }
             String side = prices.get(0) >= prices.get(1) ? "yes" : "no";
             double price = "yes".equals(side) ? prices.get(0) : prices.get(1);
-            if (price < BAND_LO || price > BAND_HI) {
+            if (price < cfg.bandLo || price > cfg.bandHi) {
                 drop(stats, "band_out");
                 continue;
             }
@@ -144,13 +154,17 @@ public final class ScanFilter {
                     Js.truthy(qRaw) ? Js.str(qRaw) : "",
                     side,
                     price,
-                    endFull));
+                    endFull,
+                    null,
+                    cfg.bandLo,
+                    cfg.bandHi,
+                    null));
         }
         if (stats != null) {
             stats.put("total", markets.size());
         }
         out.sort((a, b) -> {
-            int g = bandGroup(a.price) - bandGroup(b.price);
+            int g = bandGroup(a.price, cfg) - bandGroup(b.price, cfg);
             if (g != 0) {
                 return g;
             }
@@ -159,8 +173,8 @@ public final class ScanFilter {
         return out;
     }
 
-    private static int bandGroup(double p) {
-        return p >= 0.7 && p < 0.8 ? 0 : 1;
+    private static int bandGroup(double p, TradeSettings cfg) {
+        return p >= cfg.priorityBandLo && p < cfg.priorityBandHi ? 0 : 1;
     }
 
     private static void drop(Map<String, Integer> stats, String reason) {

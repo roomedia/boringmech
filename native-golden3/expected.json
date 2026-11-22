@@ -431,8 +431,9 @@
   "eval-skip-fetch-fail": {
    "action": "skip"
   },
-  "eval-temp-tagged-skip": {
-   "action": "skip"
+  "eval-temp-tagged-triggered": {
+   "action": "triggered",
+   "current": 0.1
   },
   "eval-temp-untagged-triggered": {
    "action": "triggered",
@@ -441,6 +442,18 @@
   "eval-temp-norecord-triggered": {
    "action": "triggered",
    "current": 0.1
+  },
+  "eval-temp-tagged-mid-triggered": {
+   "action": "triggered",
+   "current": 0.7
+  },
+  "eval-temp-untagged-mid-holding": {
+   "action": "holding",
+   "current": 0.7
+  },
+  "eval-temp-tagged-shallow-holding": {
+   "action": "holding",
+   "current": 0.8
   },
   "plan-mixed": {
    "targets": [

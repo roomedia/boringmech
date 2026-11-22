@@ -39,6 +39,26 @@
   .err{font-size:13.5px;color:var(--danger);line-height:1.5;margin-top:10px;white-space:pre-wrap}
   .log{background:#101012;color:#d6f2e2;border-radius:14px;padding:14px 16px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.7;min-height:110px;white-space:pre-wrap;word-break:break-all}
   .hidden{display:none}
+  .set{padding:18px 0 20px;border-bottom:1px solid var(--line)}
+  .set:last-of-type{border-bottom:none;padding-bottom:2px}
+  .set-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+  .set .lab{font-size:16px;font-weight:600}
+  .set .val{font-size:30px;font-weight:800;letter-spacing:-.5px;font-variant-numeric:tabular-nums;line-height:1.1}
+  .set .unit{font-size:15px;font-weight:700;color:var(--sub);margin-left:2px}
+  input[type=range].slider{-webkit-appearance:none;appearance:none;width:100%;height:30px;background:transparent;cursor:pointer;margin-top:6px}
+  input[type=range].slider::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:#e2e2e7}
+  input[type=range].slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:28px;height:28px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.28);margin-top:-12px;border:none}
+  input[type=range].slider::-moz-range-track{height:4px;border-radius:2px;background:#e2e2e7}
+  input[type=range].slider::-moz-range-thumb{width:28px;height:28px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.28);border:none}
+  .stepper{display:flex;align-items:center;gap:12px}
+  .step-btn{width:42px;height:42px;border-radius:50%;border:1px solid var(--line);background:#fff;font-size:22px;font-weight:600;color:var(--ink);cursor:pointer;line-height:1;flex:none}
+  .step-btn:active{background:#f0f0f3}
+  .numin{font:inherit;font-size:26px;font-weight:800;letter-spacing:-.5px;width:132px;text-align:right;border:none;border-bottom:2px solid var(--line);background:transparent;padding:2px 0;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .numin:focus{outline:none;border-bottom-color:var(--ink)}
+  .switch{position:relative;width:52px;height:32px;-webkit-appearance:none;appearance:none;background:#e3e3e8;border-radius:999px;transition:background .2s;cursor:pointer;flex:none}
+  .switch:checked{background:var(--accent)}
+  .switch::after{content:"";position:absolute;top:2px;left:2px;width:28px;height:28px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:left .2s}
+  .switch:checked::after{left:22px}
   .pos{padding:13px 0;border-bottom:1px solid var(--line)}
   .pos:last-child{border-bottom:none;padding-bottom:2px}
   .pos .t{font-size:15px;font-weight:700;line-height:1.35}
@@ -101,10 +121,10 @@
 
     <div class="card">
       <h2>다음 사이징</h2>
-      <div class="row"><span class="k">건당 베팅 (평가금 1% · 하한 $5)</span><span class="v" id="bet">—</span></div>
-      <div class="row"><span class="k">현금 하한 (30%)</span><span class="v" id="floor">—</span></div>
+      <div class="row"><span class="k">건당 베팅</span><span class="v" id="bet">—</span></div>
+      <div class="row"><span class="k">현금 하한</span><span class="v" id="floor">—</span></div>
       <div class="row"><span class="k">투입 가능</span><span class="v" id="available">—</span></div>
-      <div class="row"><span class="k">남은 슬롯 (최대 70)</span><span class="v" id="slots">—</span></div>
+      <div class="row"><span class="k">남은 슬롯</span><span class="v" id="slots">—</span></div>
     </div>
 
     <div class="card">
@@ -146,14 +166,181 @@
 
     <div class="card">
       <h2>기온 No 페이드</h2>
-      <div class="row"><span class="k">전략</span><span class="v" id="tempNoState">—</span></div>
-      <div class="row"><span class="k">사용</span><input type="checkbox" id="tempNoEnabled"></div>
-      <div class="row"><span class="k">밴드 하한 (No 가격)</span><span class="v"><input type="number" id="tempNoBandLo" step="0.01" min="0.01" max="0.998" style="width:90px"> · 상한 0.998</span></div>
-      <div class="stack" style="margin-top:10px">
+      <div class="set">
+        <div class="set-head"><span class="lab">사용</span><input type="checkbox" class="switch" id="tempNoEnabled"></div>
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">밴드 하한</span><span class="val" id="val_tempBandLo">0.80</span></div>
+        <input type="range" class="slider" id="tempNoBandLo" value="0.8" min="0.05" max="0.99" step="0.01">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">밴드 상한</span><span class="val" id="val_tempBandHi">0.998</span></div>
+        <input type="range" class="slider" id="tempNoBandHi" value="0.998" min="0.90" max="1" step="0.001">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">손절 폭</span><span class="val" id="val_tempStopDrop">0.15</span></div>
+        <input type="range" class="slider" id="tempStopDrop" value="0.15" min="0.05" max="0.50" step="0.01">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">진입 시작</span>
+          <span class="stepper">
+            <button type="button" class="step-btn" data-for="tempEntryHourUtc" data-dir="-1">−</button>
+            <span><span class="val" id="val_tempEntryHour">6</span><span class="unit">시 UTC</span></span>
+            <button type="button" class="step-btn" data-for="tempEntryHourUtc" data-dir="1">+</button>
+          </span>
+        </div>
+        <input type="hidden" id="tempEntryHourUtc" value="6">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">예약 슬롯</span>
+          <span class="stepper">
+            <button type="button" class="step-btn" data-for="tempNoReserveSlots" data-dir="-1">−</button>
+            <span><span class="val" id="val_tempReserve">1</span><span class="unit">개</span></span>
+            <button type="button" class="step-btn" data-for="tempNoReserveSlots" data-dir="1">+</button>
+          </span>
+        </div>
+        <input type="hidden" id="tempNoReserveSlots" value="1">
+      </div>
+      <div class="stack" style="margin-top:16px">
         <button class="btn ghost" id="btnTempSave">설정 저장</button>
       </div>
       <div class="err" id="tempNoErr"></div>
-      <p class="note">기본 꺼짐. 켜면 당일 최고기온의 정확한 정수 기온 시장 No를 밴드 안에서 매수합니다. 진입 창은 당일 06:00 UTC부터 이벤트 종료까지이고, 손절 없이 정산까지 보유합니다.</p>
+    </div>
+
+    <div class="card">
+      <h2>매수 · 검증</h2>
+      <div class="set">
+        <div class="set-head"><span class="lab">매수 밴드 하한</span><span class="val" id="val_bandLo">0.60</span></div>
+        <input type="range" class="slider" id="ts_bandLo" value="0.6" min="0.05" max="0.95" step="0.01">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">매수 밴드 상한</span><span class="val" id="val_bandHi">0.90</span></div>
+        <input type="range" class="slider" id="ts_bandHi" value="0.9" min="0.55" max="1" step="0.01">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">우선 밴드 하한</span><span class="val" id="val_priorityBandLo">0.70</span></div>
+        <input type="range" class="slider" id="ts_priorityBandLo" value="0.7" min="0" max="0.99" step="0.01">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">우선 밴드 상한</span><span class="val" id="val_priorityBandHi">0.80</span></div>
+        <input type="range" class="slider" id="ts_priorityBandHi" value="0.8" min="0.05" max="1" step="0.01">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">최소 거래량</span>
+          <span><span class="unit">$</span><input class="numin" type="number" id="ts_volumeMin" value="10000" inputmode="numeric"></span>
+        </div>
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">만기 창</span>
+          <span class="stepper">
+            <button type="button" class="step-btn" data-for="ts_endWindowDays" data-dir="-1">−</button>
+            <span><span class="val" id="val_endWindowDays">45</span><span class="unit">일</span></span>
+            <button type="button" class="step-btn" data-for="ts_endWindowDays" data-dir="1">+</button>
+          </span>
+        </div>
+        <input type="hidden" id="ts_endWindowDays" value="45">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">스프레드 상한</span><span class="val" id="val_spreadMax">0.02</span></div>
+        <input type="range" class="slider" id="ts_spreadMax" value="0.02" min="0.005" max="0.10" step="0.005">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">호가 깊이 하한</span>
+          <span class="stepper">
+            <button type="button" class="step-btn" data-for="ts_askDepthMinUsd" data-dir="-1">−</button>
+            <span><span class="unit">$</span><span class="val" id="val_askDepthMinUsd">10</span></span>
+            <button type="button" class="step-btn" data-for="ts_askDepthMinUsd" data-dir="1">+</button>
+          </span>
+        </div>
+        <input type="hidden" id="ts_askDepthMinUsd" value="10">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">지정가 버퍼 · 매도 하한 폭</span><span class="val" id="val_slippageCap">0.015</span></div>
+        <input type="range" class="slider" id="ts_slippageCap" value="0.015" min="0" max="0.05" step="0.005">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">스냅샷 허용 오차</span><span class="val" id="val_snapshotMatchTol">0.03</span></div>
+        <input type="range" class="slider" id="ts_snapshotMatchTol" value="0.03" min="0" max="0.20" step="0.01">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">신호가 허용 폭</span><span class="val" id="val_askAboveSignal">0.05</span></div>
+        <input type="range" class="slider" id="ts_askAboveSignal" value="0.05" min="0" max="0.20" step="0.01">
+      </div>
+      <div class="stack" style="margin-top:16px">
+        <button class="btn ghost" id="btnBandSave">설정 저장</button>
+      </div>
+      <div class="err" id="bandErr"></div>
+    </div>
+
+    <div class="card">
+      <h2>사이징</h2>
+      <div class="set">
+        <div class="set-head"><span class="lab">건당 비율</span><span class="val" id="val_betPct">0.01</span></div>
+        <input type="range" class="slider" id="ts_betPct" value="0.01" min="0.005" max="0.10" step="0.005">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">건당 하한</span>
+          <span class="stepper">
+            <button type="button" class="step-btn" data-for="ts_betMinUsd" data-dir="-1">−</button>
+            <span><span class="unit">$</span><span class="val" id="val_betMinUsd">5</span></span>
+            <button type="button" class="step-btn" data-for="ts_betMinUsd" data-dir="1">+</button>
+          </span>
+        </div>
+        <input type="hidden" id="ts_betMinUsd" value="5">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">현금 하한 비율</span><span class="val" id="val_cashFloorPct">0.30</span></div>
+        <input type="range" class="slider" id="ts_cashFloorPct" value="0.3" min="0" max="1" step="0.05">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">현금 하한 하한값</span>
+          <span><span class="unit">$</span><input class="numin" type="number" id="ts_reserveUsd" value="2.87" step="0.01" inputmode="decimal"></span>
+        </div>
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">동시 보유 상한</span>
+          <span class="stepper">
+            <button type="button" class="step-btn" data-for="ts_maxPositions" data-dir="-1">−</button>
+            <span><span class="val" id="val_maxPositions">70</span><span class="unit">건</span></span>
+            <button type="button" class="step-btn" data-for="ts_maxPositions" data-dir="1">+</button>
+          </span>
+        </div>
+        <input type="hidden" id="ts_maxPositions" value="70">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">사이클당 검증 상한</span>
+          <span class="stepper">
+            <button type="button" class="step-btn" data-for="ts_verifyCap" data-dir="-1">−</button>
+            <span><span class="val" id="val_verifyCap">60</span><span class="unit">건</span></span>
+            <button type="button" class="step-btn" data-for="ts_verifyCap" data-dir="1">+</button>
+          </span>
+        </div>
+        <input type="hidden" id="ts_verifyCap" value="60">
+      </div>
+      <div class="stack" style="margin-top:16px">
+        <button class="btn ghost" id="btnSizeSave">설정 저장</button>
+      </div>
+      <div class="err" id="sizeErr"></div>
+    </div>
+
+    <div class="card">
+      <h2>손절</h2>
+      <div class="set">
+        <div class="set-head"><span class="lab">손절 폭</span><span class="val" id="val_stopDrop">0.25</span></div>
+        <input type="range" class="slider" id="ts_stopDrop" value="0.25" min="0.05" max="0.60" step="0.01">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">결정 구간 상한</span><span class="val" id="val_decidedHigh">0.97</span></div>
+        <input type="range" class="slider" id="ts_decidedHigh" value="0.97" min="0.80" max="0.99" step="0.01">
+      </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">결정 구간 하한</span><span class="val" id="val_decidedLow">0.03</span></div>
+        <input type="range" class="slider" id="ts_decidedLow" value="0.03" min="0.01" max="0.20" step="0.01">
+      </div>
+      <div class="stack" style="margin-top:16px">
+        <button class="btn ghost" id="btnStopSave">설정 저장</button>
+      </div>
+      <div class="err" id="stopErr"></div>
     </div>
 
     <div class="card">
@@ -505,10 +692,11 @@
       $('relayerSaved').classList.toggle('hidden', !has);
     }
 
-    // 기온 No 페이드 설정 — bm_settings에 JSON으로 저장한다 (엔진이
-    // durableRead로 읽는 그 경로). 네이티브 미러에도 같이 써서 웹뷰
-    // localStorage가 비어도 네이티브 엔진이 설정을 읽게 한다.
-    function readTempSettings(){
+    // 설정 — bm_settings에 JSON으로 저장한다 (엔진이 durableRead로 읽는
+    // 그 경로). 네이티브 미러에도 같이 써서 웹뷰 localStorage가 비어도
+    // 네이티브 엔진이 설정을 읽게 한다. 저장은 키 단위 병합이다 — 한
+    // 카드의 저장이 다른 카드의 키를 지우지 않는다.
+    function readSettingsObject(){
       var raw = null;
       try { raw = localStorage.getItem('bm_settings'); } catch (e) {}
       if (!raw) {
@@ -518,20 +706,195 @@
       }
       var o = null;
       try { o = raw ? JSON.parse(raw) : null; } catch (e) {}
-      if (!o || typeof o !== 'object') o = {};
+      return (o && typeof o === 'object') ? o : {};
+    }
+
+    function writeSettingsObject(patch){
+      var o = readSettingsObject();
+      for (var k in patch) o[k] = patch[k];
+      try { localStorage.setItem('bm_settings', JSON.stringify(o)); } catch (e) {}
+      try {
+        if (window.AndroidBridge && AndroidBridge.putDurable) {
+          AndroidBridge.putDurable('bm_settings', JSON.stringify(o));
+        }
+      } catch (e) {}
+    }
+
+    function readTempSettings(){
+      var o = readSettingsObject();
+      var hi = Number(o.tempNoBandHi);
+      var bandHi = (isFinite(hi) && hi > 0 && hi <= 1) ? hi : 0.998;
       var lo = Number(o.tempNoBandLo);
+      var bandLo = (isFinite(lo) && lo > 0 && lo <= 0.998) ? lo : 0.80;
+      if (!(bandLo < bandHi)) { bandLo = 0.80; bandHi = 0.998; }
+      var hour = Number(o.tempEntryHourUtc);
+      var drop = Number(o.tempStopDrop);
+      var rs = Number(o.tempNoReserveSlots);
       return {
         enabled: o.tempNoEnabled === true,
-        bandLo: (isFinite(lo) && lo > 0 && lo <= 0.998) ? lo : 0.80
+        bandLo: bandLo,
+        bandHi: bandHi,
+        entryHourUtc: (isFinite(hour) && Math.floor(hour) === hour && hour >= 0 && hour <= 23) ? hour : 6,
+        tempStopDrop: (isFinite(drop) && drop > 0 && drop < 1) ? drop : 0.15,
+        reserveSlots: (isFinite(rs) && Math.floor(rs) === rs && rs >= 0 && rs <= 70) ? rs : 1
       };
+    }
+
+    function fmtNum(v){
+      return String(parseFloat(Number(v).toFixed(3)));
     }
 
     function renderTempSettings(){
       var s = readTempSettings();
-      $('tempNoState').textContent = s.enabled ? '켜짐' : '꺼짐 (기본)';
       $('tempNoEnabled').checked = s.enabled;
       $('tempNoBandLo').value = s.bandLo;
+      $('val_tempBandLo').textContent = fmtNum(s.bandLo);
+      $('tempNoBandHi').value = s.bandHi;
+      $('val_tempBandHi').textContent = fmtNum(s.bandHi);
+      $('tempEntryHourUtc').value = s.entryHourUtc;
+      $('val_tempEntryHour').textContent = s.entryHourUtc;
+      $('tempStopDrop').value = s.tempStopDrop;
+      $('val_tempStopDrop').textContent = fmtNum(s.tempStopDrop);
+      $('tempNoReserveSlots').value = s.reserveSlots;
+      $('val_tempReserve').textContent = s.reserveSlots;
     }
+
+    // 매매 설정 (매수·검증 / 사이징 / 손절) — 엔진 parseTradeSettings와
+    // 같은 기본값·같은 범위. 범위 밖 입력은 저장 단계에서 막는다.
+    // ctrl: slider(슬라이더) · step(스테퍼) · num(직접 입력)
+    var TRADE_GROUPS = {
+      band: { err: 'bandErr', fields: [
+        { id: 'ts_bandLo', key: 'bandLo', def: 0.6, min: 0, max: 1, minEx: true, maxEx: true, label: '매수 밴드 하한', ctrl: 'slider' },
+        { id: 'ts_bandHi', key: 'bandHi', def: 0.9, min: 0, max: 1, minEx: true, label: '매수 밴드 상한', ctrl: 'slider' },
+        { id: 'ts_priorityBandLo', key: 'priorityBandLo', def: 0.7, min: 0, max: 1, label: '우선 밴드 하한', ctrl: 'slider' },
+        { id: 'ts_priorityBandHi', key: 'priorityBandHi', def: 0.8, min: 0, max: 1, minEx: true, label: '우선 밴드 상한', ctrl: 'slider' },
+        { id: 'ts_volumeMin', key: 'volumeMin', def: 10000, min: 0, label: '최소 거래량', ctrl: 'num' },
+        { id: 'ts_endWindowDays', key: 'endWindowDays', def: 45, min: 1, max: 365, int: true, label: '만기 창', ctrl: 'step', step: 1 },
+        { id: 'ts_spreadMax', key: 'spreadMax', def: 0.02, min: 0, max: 1, minEx: true, label: '스프레드 상한', ctrl: 'slider' },
+        { id: 'ts_askDepthMinUsd', key: 'askDepthMinUsd', def: 10, min: 0, label: '호가 깊이 하한', ctrl: 'step', step: 5, smax: 500 },
+        { id: 'ts_slippageCap', key: 'slippageCap', def: 0.015, min: 0, max: 0.5, label: '지정가 버퍼 · 매도 하한 폭', ctrl: 'slider' },
+        { id: 'ts_snapshotMatchTol', key: 'snapshotMatchTol', def: 0.03, min: 0, max: 1, label: '스냅샷 허용 오차', ctrl: 'slider' },
+        { id: 'ts_askAboveSignal', key: 'askAboveSignal', def: 0.05, min: 0, max: 1, label: '신호가 허용 폭', ctrl: 'slider' }
+      ], pairs: [['ts_bandLo', 'ts_bandHi', '매수 밴드'], ['ts_priorityBandLo', 'ts_priorityBandHi', '우선 밴드']] },
+      size: { err: 'sizeErr', fields: [
+        { id: 'ts_betPct', key: 'betPct', def: 0.01, min: 0, max: 1, minEx: true, label: '건당 비율', ctrl: 'slider' },
+        { id: 'ts_betMinUsd', key: 'betMinUsd', def: 5, min: 0, label: '건당 하한', ctrl: 'step', step: 1, smax: 100 },
+        { id: 'ts_cashFloorPct', key: 'cashFloorPct', def: 0.3, min: 0, max: 1, label: '현금 하한 비율', ctrl: 'slider' },
+        { id: 'ts_reserveUsd', key: 'reserveUsd', def: 2.87, min: 0, label: '현금 하한 하한값', ctrl: 'num' },
+        { id: 'ts_maxPositions', key: 'maxPositions', def: 70, min: 1, max: 10000, int: true, label: '동시 보유 상한', ctrl: 'step', step: 1, smax: 200 },
+        { id: 'ts_verifyCap', key: 'verifyCap', def: 60, min: 1, max: 10000, int: true, label: '사이클당 검증 상한', ctrl: 'step', step: 1, smax: 200 }
+      ], pairs: [] },
+      stop: { err: 'stopErr', fields: [
+        { id: 'ts_stopDrop', key: 'stopDrop', def: 0.25, min: 0, max: 1, minEx: true, maxEx: true, label: '손절 폭', ctrl: 'slider' },
+        { id: 'ts_decidedHigh', key: 'decidedHigh', def: 0.97, min: 0, max: 1, minEx: true, maxEx: true, label: '결정 구간 상한', ctrl: 'slider' },
+        { id: 'ts_decidedLow', key: 'decidedLow', def: 0.03, min: 0, max: 1, minEx: true, maxEx: true, label: '결정 구간 하한', ctrl: 'slider' }
+      ], pairs: [['ts_decidedLow', 'ts_decidedHigh', '결정 구간']] }
+    };
+
+    function fieldValid(f, v){
+      if (!isFinite(v)) return false;
+      if (f.int && Math.floor(v) !== v) return false;
+      if (f.min !== undefined && (f.minEx ? v <= f.min : v < f.min)) return false;
+      if (f.max !== undefined && (f.maxEx ? v >= f.max : v > f.max)) return false;
+      return true;
+    }
+
+    function fieldById(id){
+      for (var g in TRADE_GROUPS) {
+        var fields = TRADE_GROUPS[g].fields;
+        for (var i = 0; i < fields.length; i++) {
+          if (fields[i].id === id) return fields[i];
+        }
+      }
+      return null;
+    }
+
+    function renderTradeSettings(){
+      var o = readSettingsObject();
+      for (var g in TRADE_GROUPS) {
+        var fields = TRADE_GROUPS[g].fields;
+        for (var i = 0; i < fields.length; i++) {
+          var f = fields[i];
+          var v = Number(o[f.key]);
+          v = fieldValid(f, v) ? v : f.def;
+          $(f.id).value = v;
+          var disp = $('val_' + f.key);
+          if (disp) disp.textContent = fmtNum(v);
+        }
+      }
+    }
+
+    function saveTradeGroup(name){
+      var g = TRADE_GROUPS[name];
+      var err = $(g.err);
+      err.textContent = '';
+      var patch = {};
+      var vals = {};
+      for (var i = 0; i < g.fields.length; i++) {
+        var f = g.fields[i];
+        var v = Number($(f.id).value);
+        if (!fieldValid(f, v)) {
+          err.textContent = f.label + ' 값이 범위를 벗어났습니다.';
+          return;
+        }
+        vals[f.id] = v;
+        patch[f.key] = v;
+      }
+      for (var j = 0; j < g.pairs.length; j++) {
+        var p = g.pairs[j];
+        if (!(vals[p[0]] < vals[p[1]])) {
+          err.textContent = p[2] + ' 하한은 상한보다 작아야 합니다.';
+          return;
+        }
+      }
+      writeSettingsObject(patch);
+      renderTradeSettings();
+    }
+
+    // 슬라이더·스테퍼 배선 — 값 표시는 fmtNum으로 통일한다.
+    var SLIDER_DISP = {
+      tempNoBandLo: 'val_tempBandLo',
+      tempNoBandHi: 'val_tempBandHi',
+      tempStopDrop: 'val_tempStopDrop'
+    };
+    document.querySelectorAll('input.slider').forEach(function(el){
+      el.addEventListener('input', function(){
+        var dispId = SLIDER_DISP[el.id];
+        if (!dispId && el.id.indexOf('ts_') === 0) {
+          var f = fieldById(el.id);
+          if (f) dispId = 'val_' + f.key;
+        }
+        if (dispId && $(dispId)) $(dispId).textContent = fmtNum(el.value);
+      });
+    });
+    var TEMP_STEPS = {
+      tempEntryHourUtc: { step: 1, min: 0, max: 23, disp: 'val_tempEntryHour' },
+      tempNoReserveSlots: { step: 1, min: 0, max: 70, disp: 'val_tempReserve' }
+    };
+    document.querySelectorAll('.step-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var id = btn.getAttribute('data-for');
+        var dir = Number(btn.getAttribute('data-dir'));
+        var spec = TEMP_STEPS[id] || null;
+        var dispId = spec ? spec.disp : null;
+        var step = spec ? spec.step : 1;
+        var lo = spec ? spec.min : 0;
+        var hi = spec ? spec.max : 0;
+        if (!spec) {
+          var f = fieldById(id);
+          if (!f) return;
+          step = f.step || 1;
+          lo = f.min !== undefined ? f.min : 0;
+          hi = f.smax !== undefined ? f.smax : (f.max !== undefined ? f.max : lo);
+          dispId = 'val_' + f.key;
+        }
+        var v = Number($(id).value);
+        if (!isFinite(v)) v = lo;
+        v = Math.min(hi, Math.max(lo, v + dir * step));
+        $(id).value = v;
+        if (dispId && $(dispId)) $(dispId).textContent = fmtNum(v);
+      });
+    });
 
     // 네이티브 섀도우 대조 상태 — 실행 횟수·일치 횟수와 최근 불일치 필드만 작게.
     function renderShadow(){
@@ -643,6 +1006,7 @@
       renderUpdate();
       renderRelayer();
       renderTempSettings();
+      renderTradeSettings();
       renderShadow();
       renderBattery();
     }
@@ -834,15 +1198,43 @@
         $('tempNoErr').textContent = '밴드 하한은 0보다 크고 0.998 이하여야 합니다.';
         return;
       }
-      var settings = { tempNoEnabled: !!$('tempNoEnabled').checked, tempNoBandLo: lo };
-      try { localStorage.setItem('bm_settings', JSON.stringify(settings)); } catch (e) {}
-      try {
-        if (window.AndroidBridge && AndroidBridge.putDurable) {
-          AndroidBridge.putDurable('bm_settings', JSON.stringify(settings));
-        }
-      } catch (e) {}
+      var hi = Number($('tempNoBandHi').value);
+      if (!isFinite(hi) || hi <= 0 || hi > 1) {
+        $('tempNoErr').textContent = '밴드 상한은 0보다 크고 1 이하여야 합니다.';
+        return;
+      }
+      if (!(lo < hi)) {
+        $('tempNoErr').textContent = '밴드 하한은 상한보다 작아야 합니다.';
+        return;
+      }
+      var hour = Number($('tempEntryHourUtc').value);
+      if (!isFinite(hour) || Math.floor(hour) !== hour || hour < 0 || hour > 23) {
+        $('tempNoErr').textContent = '진입 시작은 0에서 23 사이의 정수(UTC 시)여야 합니다.';
+        return;
+      }
+      var drop = Number($('tempStopDrop').value);
+      if (!isFinite(drop) || drop <= 0 || drop >= 1) {
+        $('tempNoErr').textContent = '기온 손절 폭은 0보다 크고 1보다 작아야 합니다.';
+        return;
+      }
+      var rs = Number($('tempNoReserveSlots').value);
+      if (!isFinite(rs) || Math.floor(rs) !== rs || rs < 0 || rs > 70) {
+        $('tempNoErr').textContent = '예약 슬롯 수는 0에서 70 사이의 정수여야 합니다.';
+        return;
+      }
+      writeSettingsObject({
+        tempNoEnabled: !!$('tempNoEnabled').checked,
+        tempNoBandLo: lo,
+        tempNoBandHi: hi,
+        tempEntryHourUtc: hour,
+        tempStopDrop: drop,
+        tempNoReserveSlots: rs
+      });
       renderTempSettings();
     });
+    $('btnBandSave').addEventListener('click', function(){ saveTradeGroup('band'); });
+    $('btnSizeSave').addEventListener('click', function(){ saveTradeGroup('size'); });
+    $('btnStopSave').addEventListener('click', function(){ saveTradeGroup('stop'); });
     // 수동 매도 제출은 이 핸들러가 유일한 경로다.
     $('btnSellConfirm').addEventListener('click', function(){
       if (!pendingSell || !pendingSell.token_id) return;

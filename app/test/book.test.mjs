@@ -64,6 +64,29 @@ const {
   stopLossAttemptedSlugs,
   STOPLOSS_RECENT_CAP,
   isOpenRow,
+  parseTradeSettings,
+  DEFAULT_TRADE_SETTINGS,
+  BAND_LO,
+  BAND_HI,
+  PRIORITY_BAND_LO,
+  PRIORITY_BAND_HI,
+  VOLUME_MIN,
+  END_WINDOW_DAYS,
+  SPREAD_MAX,
+  ASK_DEPTH_MIN_USD,
+  SLIPPAGE_CAP,
+  SNAPSHOT_MATCH_TOL,
+  ASK_ABOVE_SIGNAL,
+  BET_PCT,
+  BET_MIN_USD,
+  CASH_FLOOR_PCT,
+  RESERVE_USD,
+  MAX_POSITIONS,
+  VERIFY_CAP,
+  STOP_DROP,
+  TEMP_STOP_DROP,
+  DECIDED_HIGH,
+  DECIDED_LOW,
 } = await import("../src/engine.js");
 const { decodeFunctionData, parseAbi } = await import("viem");
 const { readFileSync } = await import("node:fs");
@@ -428,6 +451,15 @@ eq(stopLossVerdict(0.28, 0.02), "decided", "stoploss: crashed to zero excluded")
 eq(stopLossVerdict(0.75, NaN), "skip", "stoploss: missing price skips");
 eq(stopLossVerdict(NaN, 0.4), "skip", "stoploss: missing entry skips");
 eq(stopLossVerdict(0.62, 0.37), "triggered", "stoploss: low band triggers");
+// 기온 전용 폭(0.15) — 경계 발화, 메인 폭으로는 미발화인 구간
+eq(stopLossVerdict(0.90, 0.75, 0.15), "triggered", "stoploss temp: boundary triggers at -0.15");
+eq(stopLossVerdict(0.90, 0.76, 0.15), "holding", "stoploss temp: above -0.15 line holds");
+eq(stopLossVerdict(0.90, 0.70, 0.15), "triggered", "stoploss temp: -0.20 triggers temp drop");
+eq(stopLossVerdict(0.90, 0.70), "holding", "stoploss temp: -0.20 holds at main drop");
+eq(stopLossVerdict(0.90, 0.97, 0.15), "decided", "stoploss temp: decided wins over drop");
+// 결정 구간 경계 설정값
+eq(stopLossVerdict(0.90, 0.80, 0.15, 0.80, 0.03), "decided", "stoploss cfg: custom decided high");
+eq(stopLossVerdict(0.90, 0.74, 0.15, 0.97, 0.03), "triggered", "stoploss cfg: default decided lets drop fire");
 
 // 22. outcome 인덱스 — Gamma 이름 대조 1순위, outcome_index 폴백
 eq(pickOutcomeIndex(["Yes", "No"], { outcome: "No" }), 1, "index: name match");
@@ -1226,21 +1258,76 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   eq(src.includes("LS.redeemDoneArchive"), true, "done-archive: wired");
 }
 
-// 43. 기온 손절 제외는 태그 방식 — 슬러그 단독 가드가 되돌아오지 않게
-// 소스 가드로 고정하고, 매수 기록 전 경로가 전략을 넘기는지 본다.
+// 43. 기온 손절은 태그 방식 — 슬러그 단독·태그 단독 제외 가드가 되돌아오지
+// 않게 소스 가드로 고정하고, 매수 기록 전 경로가 전략을 넘기는지 본다.
+// (기온 전용 폭 배선 자체는 temp 테스트의 구조 가드가 본다.)
 {
   const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
   eq(src.includes("if (isTempNoSlug(slug)) return false;"), false,
     "temp-tag: no slug-only stop-loss guard");
   eq(
     src.includes('if (isTempNoSlug(slug) && boughtStrategyOf(slug) === "temp_no") return false;'),
-    true,
-    "temp-tag: stop-loss guard requires bought tag",
+    false,
+    "temp-tag: no tag-based stop-loss exemption left",
   );
   eq(src.split("markBought(cand.slug, cand.strategy)").length - 1, 4,
     "temp-tag: all four buy record paths pass strategy");
   eq(src.includes("markBought(cand.slug);"), false,
     "temp-tag: no untagged buy record path");
+}
+
+// 44. 매매 설정 — 기본값은 기존 하드코딩 상수와 같고(동작 불변),
+// 범위 밖 값은 필드 단위로, 어긋난 쌍은 쌍째로 기본값으로 되돌린다.
+eq(DEFAULT_TRADE_SETTINGS, {
+  bandLo: BAND_LO, bandHi: BAND_HI,
+  priorityBandLo: PRIORITY_BAND_LO, priorityBandHi: PRIORITY_BAND_HI,
+  volumeMin: VOLUME_MIN, endWindowDays: END_WINDOW_DAYS,
+  spreadMax: SPREAD_MAX, askDepthMinUsd: ASK_DEPTH_MIN_USD,
+  slippageCap: SLIPPAGE_CAP, snapshotMatchTol: SNAPSHOT_MATCH_TOL,
+  askAboveSignal: ASK_ABOVE_SIGNAL,
+  betPct: BET_PCT, betMinUsd: BET_MIN_USD, cashFloorPct: CASH_FLOOR_PCT,
+  reserveUsd: RESERVE_USD, maxPositions: MAX_POSITIONS, verifyCap: VERIFY_CAP,
+  stopDrop: STOP_DROP, tempStopDrop: TEMP_STOP_DROP,
+  decidedHigh: DECIDED_HIGH, decidedLow: DECIDED_LOW,
+}, "trade settings: defaults equal legacy constants");
+eq(parseTradeSettings(null), DEFAULT_TRADE_SETTINGS, "trade settings: null gives defaults");
+eq(parseTradeSettings("not json"), DEFAULT_TRADE_SETTINGS, "trade settings: bad json gives defaults");
+eq(parseTradeSettings({}), DEFAULT_TRADE_SETTINGS, "trade settings: empty gives defaults");
+{
+  const c = parseTradeSettings({ bandLo: 0.5, betPct: 0.02, maxPositions: 10, verifyCap: 5 });
+  eq([c.bandLo, c.betPct, c.maxPositions, c.verifyCap], [0.5, 0.02, 10, 5],
+    "trade settings: custom values kept");
+  eq(c.bandHi, BAND_HI, "trade settings: untouched fields stay default");
+}
+eq(parseTradeSettings({ bandLo: 1.5 }).bandLo, BAND_LO, "trade settings: bandLo above 1 falls back");
+eq(parseTradeSettings({ bandLo: 0.95, bandHi: 0.9 }).bandLo, BAND_LO, "trade settings: band pair reset (lo)");
+eq(parseTradeSettings({ bandLo: 0.95, bandHi: 0.9 }).bandHi, BAND_HI, "trade settings: band pair reset (hi)");
+eq(parseTradeSettings({ priorityBandLo: 0.85, priorityBandHi: 0.8 }).priorityBandLo, PRIORITY_BAND_LO,
+  "trade settings: priority pair reset");
+eq(parseTradeSettings({ decidedLow: 0.98, decidedHigh: 0.97 }).decidedHigh, DECIDED_HIGH,
+  "trade settings: decided pair reset");
+eq(parseTradeSettings({ maxPositions: 0 }).maxPositions, MAX_POSITIONS, "trade settings: maxPositions 0 falls back");
+eq(parseTradeSettings({ maxPositions: 3.5 }).maxPositions, MAX_POSITIONS, "trade settings: fractional maxPositions falls back");
+eq(parseTradeSettings({ verifyCap: "30" }).verifyCap, 30, "trade settings: numeric string coerced");
+eq(parseTradeSettings({ endWindowDays: 0 }).endWindowDays, END_WINDOW_DAYS, "trade settings: endWindowDays 0 falls back");
+eq(parseTradeSettings({ stopDrop: 0 }).stopDrop, STOP_DROP, "trade settings: stopDrop 0 falls back");
+eq(parseTradeSettings({ tempStopDrop: 0.2 }).tempStopDrop, 0.2, "trade settings: tempStopDrop kept");
+// 커스텀 설정이 실제 판정을 바꾸는지 — 사이징과 스캔으로 확인한다.
+{
+  const cfg = parseTradeSettings({ betPct: 0.02, betMinUsd: 7, maxPositions: 2 });
+  eq(sizing(1000, 1000, 0, cfg).bet, 20, "trade settings: sizing uses custom betPct");
+  eq(sizing(100000, 100000, 0, cfg).slots, 2, "trade settings: sizing uses custom maxPositions");
+  eq(sizing(1000, 1000, 0).bet, 10, "trade settings: default sizing unchanged");
+  const mkt = (slug, price, vol) => ({
+    slug, question: slug, active: true, closed: false, acceptingOrders: true,
+    endDate: new Date(Date.now() + 10 * 86400_000).toISOString(),
+    volume: vol, outcomePrices: JSON.stringify([price, 1 - price]),
+  });
+  const wide = parseTradeSettings({ bandLo: 0.5, bandHi: 0.95, volumeMin: 500 });
+  eq(scanCandidates([mkt("a", 0.55, 600)], new Set(), new Set(), null, wide).length, 1,
+    "trade settings: scan uses custom band+volume");
+  eq(scanCandidates([mkt("a", 0.55, 600)], new Set(), new Set()).length, 0,
+    "trade settings: default scan still excludes 0.55/low volume");
 }
 
 console.log(`book tests: ${passed} passed, ${failed} failed`);
