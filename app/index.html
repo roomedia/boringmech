@@ -45,6 +45,16 @@
   .set .lab{font-size:16px;font-weight:600}
   .set .val{font-size:30px;font-weight:800;letter-spacing:-.5px;font-variant-numeric:tabular-nums;line-height:1.1}
   .set .unit{font-size:15px;font-weight:700;color:var(--sub);margin-left:2px}
+  .set.dirty .lab::after{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:7px;vertical-align:middle}
+  .set .val.tap{cursor:pointer}
+  .set .val.tap:active{opacity:.45}
+  .btnrow{display:flex;gap:10px}
+  .btnrow .btn{flex:1}
+  .btn.ghost.sm{font-size:13.5px;padding:10px}
+  .btn.ghost:disabled{background:#fff;color:#c7c7cc;border-color:var(--line)}
+  .sheet-num{font:inherit;font-size:30px;font-weight:800;letter-spacing:-.5px;width:100%;text-align:right;border:none;border-bottom:2px solid var(--line);background:transparent;padding:4px 0;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .sheet-num:focus{outline:none;border-bottom-color:var(--ink)}
+  .sheet-num.bad{border-bottom-color:var(--danger)}
   input[type=range].slider{-webkit-appearance:none;appearance:none;width:100%;height:30px;background:transparent;cursor:pointer;margin-top:6px}
   input[type=range].slider::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:#e2e2e7}
   input[type=range].slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:28px;height:28px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.28);margin-top:-12px;border:none}
@@ -202,7 +212,11 @@
         <input type="hidden" id="tempNoReserveSlots" value="1">
       </div>
       <div class="stack" style="margin-top:16px">
-        <button class="btn ghost" id="btnTempSave">설정 저장</button>
+        <button class="btn ghost" id="btnTempSave" disabled>설정 저장</button>
+        <div class="btnrow">
+          <button class="btn ghost sm" id="btnTempSaved" disabled>저장본으로</button>
+          <button class="btn ghost sm" id="btnTempDefault">기본값으로</button>
+        </div>
       </div>
       <div class="err" id="tempNoErr"></div>
     </div>
@@ -267,7 +281,11 @@
         <input type="range" class="slider" id="ts_askAboveSignal" value="0.05" min="0" max="0.20" step="0.01">
       </div>
       <div class="stack" style="margin-top:16px">
-        <button class="btn ghost" id="btnBandSave">설정 저장</button>
+        <button class="btn ghost" id="btnBandSave" disabled>설정 저장</button>
+        <div class="btnrow">
+          <button class="btn ghost sm" id="btnBandSaved" disabled>저장본으로</button>
+          <button class="btn ghost sm" id="btnBandDefault">기본값으로</button>
+        </div>
       </div>
       <div class="err" id="bandErr"></div>
     </div>
@@ -318,7 +336,11 @@
         <input type="hidden" id="ts_verifyCap" value="60">
       </div>
       <div class="stack" style="margin-top:16px">
-        <button class="btn ghost" id="btnSizeSave">설정 저장</button>
+        <button class="btn ghost" id="btnSizeSave" disabled>설정 저장</button>
+        <div class="btnrow">
+          <button class="btn ghost sm" id="btnSizeSaved" disabled>저장본으로</button>
+          <button class="btn ghost sm" id="btnSizeDefault">기본값으로</button>
+        </div>
       </div>
       <div class="err" id="sizeErr"></div>
     </div>
@@ -338,7 +360,11 @@
         <input type="range" class="slider" id="ts_decidedLow" value="0.03" min="0.01" max="0.20" step="0.01">
       </div>
       <div class="stack" style="margin-top:16px">
-        <button class="btn ghost" id="btnStopSave">설정 저장</button>
+        <button class="btn ghost" id="btnStopSave" disabled>설정 저장</button>
+        <div class="btnrow">
+          <button class="btn ghost sm" id="btnStopSaved" disabled>저장본으로</button>
+          <button class="btn ghost sm" id="btnStopDefault">기본값으로</button>
+        </div>
       </div>
       <div class="err" id="stopErr"></div>
     </div>
@@ -349,6 +375,17 @@
       <div class="stack" style="margin-top:10px">
         <button class="btn ghost" id="btnCopyLog">로그 복사</button>
         <button class="btn ghost" id="btnReport">구리에게 제보</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="numOverlay">
+    <div class="sheet">
+      <h2 id="numTitle">값 입력</h2>
+      <input class="sheet-num" type="number" id="numInput" inputmode="decimal" autocomplete="off" spellcheck="false">
+      <div class="stack" style="margin-top:16px">
+        <button class="btn" id="btnNumOk">확인</button>
+        <button class="btn ghost" id="btnNumCancel">취소</button>
       </div>
     </div>
   </div>
@@ -745,18 +782,7 @@
     }
 
     function renderTempSettings(){
-      var s = readTempSettings();
-      $('tempNoEnabled').checked = s.enabled;
-      $('tempNoBandLo').value = s.bandLo;
-      $('val_tempBandLo').textContent = fmtNum(s.bandLo);
-      $('tempNoBandHi').value = s.bandHi;
-      $('val_tempBandHi').textContent = fmtNum(s.bandHi);
-      $('tempEntryHourUtc').value = s.entryHourUtc;
-      $('val_tempEntryHour').textContent = s.entryHourUtc;
-      $('tempStopDrop').value = s.tempStopDrop;
-      $('val_tempStopDrop').textContent = fmtNum(s.tempStopDrop);
-      $('tempNoReserveSlots').value = s.reserveSlots;
-      $('val_tempReserve').textContent = s.reserveSlots;
+      syncGroupForm('temp', false);
     }
 
     // 매매 설정 (매수·검증 / 사이징 / 손절) — 엔진 parseTradeSettings와
@@ -810,18 +836,7 @@
     }
 
     function renderTradeSettings(){
-      var o = readSettingsObject();
-      for (var g in TRADE_GROUPS) {
-        var fields = TRADE_GROUPS[g].fields;
-        for (var i = 0; i < fields.length; i++) {
-          var f = fields[i];
-          var v = Number(o[f.key]);
-          v = fieldValid(f, v) ? v : f.def;
-          $(f.id).value = v;
-          var disp = $('val_' + f.key);
-          if (disp) disp.textContent = fmtNum(v);
-        }
-      }
+      for (var g in TRADE_GROUPS) syncGroupForm(g, false);
     }
 
     function saveTradeGroup(name){
@@ -848,7 +863,220 @@
         }
       }
       writeSettingsObject(patch);
-      renderTradeSettings();
+      syncGroupForm(name, true);
+    }
+
+    // 설정 폼 상태 — 카드별 baseline은 마지막으로 저장본과 동기화된 폼 값.
+    // 폼이 baseline과 다르면 그 카드는 변경 상태다: refresh가 폼을 덮어쓰지
+    // 않고(자동 초기화 방지), 변경 항목에 점이 붙고, 저장 버튼이 켜진다.
+    var SET_GROUPS = {
+      temp: { save: 'btnTempSave', toSaved: 'btnTempSaved', toDefault: 'btnTempDefault', err: 'tempNoErr' },
+      band: { save: 'btnBandSave', toSaved: 'btnBandSaved', toDefault: 'btnBandDefault', err: 'bandErr' },
+      size: { save: 'btnSizeSave', toSaved: 'btnSizeSaved', toDefault: 'btnSizeDefault', err: 'sizeErr' },
+      stop: { save: 'btnStopSave', toSaved: 'btnStopSaved', toDefault: 'btnStopDefault', err: 'stopErr' }
+    };
+    // 기온 카드 필드 — prop은 readTempSettings 반환 키, def는 그 폴백 기본값
+    var TEMP_FIELDS = [
+      { id: 'tempNoEnabled', key: 'tempNoEnabled', prop: 'enabled', def: false, ctrl: 'check' },
+      { id: 'tempNoBandLo', key: 'tempNoBandLo', prop: 'bandLo', def: 0.8, ctrl: 'slider', disp: 'val_tempBandLo' },
+      { id: 'tempNoBandHi', key: 'tempNoBandHi', prop: 'bandHi', def: 0.998, ctrl: 'slider', disp: 'val_tempBandHi' },
+      { id: 'tempStopDrop', key: 'tempStopDrop', prop: 'tempStopDrop', def: 0.15, ctrl: 'slider', disp: 'val_tempStopDrop' },
+      { id: 'tempEntryHourUtc', key: 'tempEntryHourUtc', prop: 'entryHourUtc', def: 6, ctrl: 'step', disp: 'val_tempEntryHour' },
+      { id: 'tempNoReserveSlots', key: 'tempNoReserveSlots', prop: 'reserveSlots', def: 1, ctrl: 'step', disp: 'val_tempReserve' }
+    ];
+    var formBaseline = {};
+
+    function groupFields(name){
+      return name === 'temp' ? TEMP_FIELDS : TRADE_GROUPS[name].fields;
+    }
+
+    function fieldFormValue(f){
+      var el = $(f.id);
+      if (!el) return undefined;
+      if (f.ctrl === 'check') return !!el.checked;
+      return Number(el.value);
+    }
+
+    function setFieldFormValue(f, v){
+      var el = $(f.id);
+      if (!el) return;
+      if (f.ctrl === 'check') { el.checked = !!v; return; }
+      el.value = v;
+      var dispId = f.disp || ((f.ctrl === 'slider' || f.ctrl === 'step') ? 'val_' + f.key : null);
+      if (dispId && $(dispId)) $(dispId).textContent = fmtNum(v);
+    }
+
+    function groupSavedValues(name){
+      var out = {};
+      if (name === 'temp') {
+        var s = readTempSettings();
+        TEMP_FIELDS.forEach(function(f){ out[f.key] = s[f.prop]; });
+        return out;
+      }
+      var o = readSettingsObject();
+      TRADE_GROUPS[name].fields.forEach(function(f){
+        var v = Number(o[f.key]);
+        out[f.key] = fieldValid(f, v) ? v : f.def;
+      });
+      return out;
+    }
+
+    function groupDefaultValues(name){
+      var out = {};
+      groupFields(name).forEach(function(f){ out[f.key] = f.def; });
+      return out;
+    }
+
+    function valuesDiffer(a, b){
+      if (typeof a === 'boolean' || typeof b === 'boolean') return !!a !== !!b;
+      var na = Number(a), nb = Number(b);
+      if (!isFinite(na) || !isFinite(nb)) return String(a) !== String(b);
+      return Math.abs(na - nb) > 1e-9;
+    }
+
+    function groupDirty(name){
+      var base = formBaseline[name];
+      if (!base) return false;
+      var fields = groupFields(name);
+      for (var i = 0; i < fields.length; i++) {
+        if (valuesDiffer(fieldFormValue(fields[i]), base[fields[i].key])) return true;
+      }
+      return false;
+    }
+
+    function anySettingsDirty(){
+      for (var g in SET_GROUPS) if (groupDirty(g)) return true;
+      return false;
+    }
+
+    // 저장본을 폼에 동기화한다. 변경 중인 카드는 force가 아니면 건드리지
+    // 않는다 — 10초 refresh가 저장 안 한 변경을 지우던 경로가 여기였다.
+    function syncGroupForm(name, force){
+      if (!force && formBaseline[name] && groupDirty(name)) {
+        updateSettingsUI();
+        return;
+      }
+      var saved = groupSavedValues(name);
+      groupFields(name).forEach(function(f){ setFieldFormValue(f, saved[f.key]); });
+      formBaseline[name] = saved;
+      updateSettingsUI();
+    }
+
+    function updateSettingsUI(){
+      for (var name in SET_GROUPS) {
+        var meta = SET_GROUPS[name];
+        var base = formBaseline[name];
+        var dirty = groupDirty(name);
+        var fields = groupFields(name);
+        var atDefault = true;
+        for (var i = 0; i < fields.length; i++) {
+          var f = fields[i];
+          var fv = fieldFormValue(f);
+          var el = $(f.id);
+          var setEl = el && el.closest ? el.closest('.set') : null;
+          if (setEl && base) setEl.classList.toggle('dirty', valuesDiffer(fv, base[f.key]));
+          if (valuesDiffer(fv, f.def)) atDefault = false;
+        }
+        var saveBtn = $(meta.save);
+        if (saveBtn) saveBtn.disabled = !dirty;
+        var svBtn = $(meta.toSaved);
+        if (svBtn) svBtn.disabled = !dirty;
+        var dfBtn = $(meta.toDefault);
+        if (dfBtn) dfBtn.disabled = atDefault;
+      }
+    }
+
+    // 되돌리기는 폼만 되돌린다 — 확정은 저장 버튼으로 따로 한다.
+    function revertGroup(name, toDefault){
+      var msg = toDefault ? '기본값으로 되돌릴까요?' : '저장본으로 되돌릴까요?';
+      if (!window.confirm(msg)) return;
+      var vals = toDefault ? groupDefaultValues(name)
+        : (formBaseline[name] || groupSavedValues(name));
+      groupFields(name).forEach(function(f){ setFieldFormValue(f, vals[f.key]); });
+      var err = $(SET_GROUPS[name].err);
+      if (err) err.textContent = '';
+      updateSettingsUI();
+    }
+
+    // 숫자 직접 입력 — 큰 숫자를 누르면 시트가 열리고, 대상 컨트롤의
+    // min·max·step 규칙으로 검증·스냅한 값만 폼에 반영한다.
+    var numTarget = null;
+    function openNumSheet(spec){
+      numTarget = spec;
+      $('numTitle').textContent = spec.label;
+      var cur = Number($(spec.inputId).value);
+      var inp = $('numInput');
+      inp.value = isFinite(cur) ? fmtNum(cur) : '';
+      inp.classList.remove('bad');
+      $('numOverlay').classList.remove('hidden');
+      setTimeout(function(){ try { inp.focus(); inp.select(); } catch (e) {} }, 30);
+    }
+
+    function closeNumSheet(){
+      $('numOverlay').classList.add('hidden');
+      numTarget = null;
+    }
+
+    function applyNumSheet(){
+      if (!numTarget) return;
+      var t = numTarget;
+      var raw = $('numInput').value;
+      var v = Number(raw);
+      var ok = raw !== '' && isFinite(v);
+      if (ok && t.int && Math.floor(v) !== v) ok = false;
+      if (ok && t.min !== undefined && v < t.min) ok = false;
+      if (ok && t.max !== undefined && v > t.max) ok = false;
+      if (!ok) { $('numInput').classList.add('bad'); return; }
+      if (t.step) {
+        var base = t.min !== undefined ? t.min : 0;
+        v = base + Math.round((v - base) / t.step) * t.step;
+        var dec = (String(t.step).split('.')[1] || '').length;
+        v = Number(v.toFixed(Math.max(dec, 3)));
+        if (t.min !== undefined && v < t.min) v = t.min;
+        if (t.max !== undefined && v > t.max) v = t.max;
+      }
+      $(t.inputId).value = v;
+      if (t.dispId && $(t.dispId)) $(t.dispId).textContent = fmtNum(v);
+      closeNumSheet();
+      updateSettingsUI();
+    }
+
+    function sliderSpec(inputId, dispId, label){
+      var el = $(inputId);
+      return { inputId: inputId, dispId: dispId, label: label,
+        min: Number(el.min), max: Number(el.max), step: Number(el.step) || 1 };
+    }
+
+    function wireTap(dispId, specFn){
+      var disp = $(dispId);
+      if (!disp) return;
+      disp.classList.add('tap');
+      disp.addEventListener('click', function(){ openNumSheet(specFn()); });
+    }
+
+    wireTap('val_tempBandLo', function(){ return sliderSpec('tempNoBandLo', 'val_tempBandLo', '밴드 하한'); });
+    wireTap('val_tempBandHi', function(){ return sliderSpec('tempNoBandHi', 'val_tempBandHi', '밴드 상한'); });
+    wireTap('val_tempStopDrop', function(){ return sliderSpec('tempStopDrop', 'val_tempStopDrop', '손절 폭'); });
+    wireTap('val_tempEntryHour', function(){
+      return { inputId: 'tempEntryHourUtc', dispId: 'val_tempEntryHour', label: '진입 시작', min: 0, max: 23, step: 1, int: true };
+    });
+    wireTap('val_tempReserve', function(){
+      return { inputId: 'tempNoReserveSlots', dispId: 'val_tempReserve', label: '예약 슬롯', min: 0, max: 70, step: 1, int: true };
+    });
+    for (var tg in TRADE_GROUPS) {
+      TRADE_GROUPS[tg].fields.forEach(function(f){
+        if (f.ctrl === 'slider') {
+          wireTap('val_' + f.key, function(){
+            return sliderSpec(f.id, 'val_' + f.key, f.label);
+          });
+        } else if (f.ctrl === 'step') {
+          wireTap('val_' + f.key, function(){
+            return { inputId: f.id, dispId: 'val_' + f.key, label: f.label,
+              min: f.min, max: f.smax !== undefined ? f.smax : f.max,
+              step: f.step || 1, int: !!f.int };
+          });
+        }
+      });
     }
 
     // 슬라이더·스테퍼 배선 — 값 표시는 fmtNum으로 통일한다.
@@ -865,6 +1093,7 @@
           if (f) dispId = 'val_' + f.key;
         }
         if (dispId && $(dispId)) $(dispId).textContent = fmtNum(el.value);
+        updateSettingsUI();
       });
     });
     var TEMP_STEPS = {
@@ -893,7 +1122,12 @@
         v = Math.min(hi, Math.max(lo, v + dir * step));
         $(id).value = v;
         if (dispId && $(dispId)) $(dispId).textContent = fmtNum(v);
+        updateSettingsUI();
       });
+    });
+    $('tempNoEnabled').addEventListener('change', updateSettingsUI);
+    document.querySelectorAll('.numin').forEach(function(el){
+      el.addEventListener('input', updateSettingsUI);
     });
 
     // 네이티브 섀도우 대조 상태 — 실행 횟수·일치 횟수와 최근 불일치 필드만 작게.
@@ -1170,6 +1404,8 @@
       setTimeout(function(){ btn.textContent = '구리에게 제보'; }, 3000);
     });
     $('btnUnlink').addEventListener('click', function(){
+      if (anySettingsDirty()
+          && !window.confirm('저장하지 않은 설정 변경이 있습니다. 연동을 해제할까요?')) return;
       BM.unlink();
       hasKey = false;
       intentOn = false;
@@ -1230,11 +1466,30 @@
         tempStopDrop: drop,
         tempNoReserveSlots: rs
       });
-      renderTempSettings();
+      syncGroupForm('temp', true);
     });
     $('btnBandSave').addEventListener('click', function(){ saveTradeGroup('band'); });
     $('btnSizeSave').addEventListener('click', function(){ saveTradeGroup('size'); });
     $('btnStopSave').addEventListener('click', function(){ saveTradeGroup('stop'); });
+    Object.keys(SET_GROUPS).forEach(function(name){
+      $(SET_GROUPS[name].toSaved).addEventListener('click', function(){ revertGroup(name, false); });
+      $(SET_GROUPS[name].toDefault).addEventListener('click', function(){ revertGroup(name, true); });
+    });
+    $('btnNumOk').addEventListener('click', applyNumSheet);
+    $('btnNumCancel').addEventListener('click', closeNumSheet);
+    $('numOverlay').addEventListener('click', function(e){
+      if (e.target === $('numOverlay')) closeNumSheet();
+    });
+    $('numInput').addEventListener('keydown', function(e){
+      if (e.key === 'Enter') applyNumSheet();
+    });
+    $('numInput').addEventListener('input', function(){
+      $('numInput').classList.remove('bad');
+    });
+    // 저장 안 한 변경을 안고 화면을 떠나려 하면 한 번만 묻는다.
+    window.addEventListener('beforeunload', function(e){
+      if (anySettingsDirty()) { e.preventDefault(); e.returnValue = ''; }
+    });
     // 수동 매도 제출은 이 핸들러가 유일한 경로다.
     $('btnSellConfirm').addEventListener('click', function(){
       if (!pendingSell || !pendingSell.token_id) return;

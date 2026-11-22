@@ -1399,5 +1399,49 @@ eq(parseTradeSettings({ tempStopDrop: 0.2 }).tempStopDrop, 0.2, "trade settings:
     "audit7: resolved id removed from archive");
 }
 
+// 46. 설정 화면 UX (2026-11-23 동호 확정) — 자동 초기화 제거, 되돌리기
+// 버튼, 숫자 직접 입력, 저장 버튼 활성 상태. 뷰어 인라인 스크립트라
+// 구조 가드로 고정한다.
+{
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  // 자동 초기화 제거 — refresh의 렌더는 변경 중인 카드를 덮어쓰지 않는다
+  eq(html.includes("if (!force && formBaseline[name] && groupDirty(name))"), true,
+    "ux1: dirty group survives refresh render");
+  eq(html.includes("renderTempSettings();\n      renderTradeSettings();"), true,
+    "ux1: refresh still syncs clean groups");
+  eq(html.includes("syncGroupForm('temp', true)"), true,
+    "ux1: temp save force-syncs from saved values");
+  eq(html.includes("syncGroupForm(name, true)"), true,
+    "ux1: trade save force-syncs its group");
+  // 변경 표시와 저장 버튼 활성 상태
+  eq(html.includes(".set.dirty .lab::after"), true, "ux1: dirty dot style exists");
+  eq(html.includes("saveBtn.disabled = !dirty"), true, "ux4: save enabled only when dirty");
+  eq(html.includes("svBtn.disabled = !dirty"), true, "ux2: revert-to-saved enabled only when dirty");
+  eq(html.includes("dfBtn.disabled = atDefault"), true, "ux2: revert-to-default disabled at defaults");
+  // 카드 4개 전부 저장 버튼은 비활성으로 시작하고 되돌리기 버튼 쌍을 갖는다
+  for (const card of ["Temp", "Band", "Size", "Stop"]) {
+    eq(html.includes(`id="btn${card}Save" disabled`), true, `ux4: ${card} save starts disabled`);
+    eq(html.includes(`id="btn${card}Saved" disabled`), true, `ux2: ${card} revert-to-saved button exists`);
+    eq(html.includes(`id="btn${card}Default"`), true, `ux2: ${card} revert-to-default button exists`);
+  }
+  // 되돌리기는 컨펌 후 폼에만 적용된다 (저장소 쓰기는 저장 버튼 경로뿐)
+  eq(html.includes("if (!window.confirm(msg)) return;"), true, "ux2: revert asks confirm first");
+  eq(html.includes("function revertGroup(name, toDefault)"), true, "ux2: revert handler exists");
+  // 화면을 떠날 때 저장 안 한 변경이 있으면 한 번 묻는다
+  eq(html.includes("window.addEventListener('beforeunload'"), true, "ux1: beforeunload guard exists");
+  eq(html.includes("anySettingsDirty()"), true, "ux1: dirty aggregate exists");
+  // 숫자 직접 입력 — 시트와 범위 검증 (범위 밖이면 넣지 않는다)
+  eq(html.includes('id="numOverlay"'), true, "ux3: number sheet exists");
+  eq(html.includes('id="numInput"'), true, "ux3: number input exists");
+  eq(html.includes("if (ok && t.min !== undefined && v < t.min) ok = false;"), true,
+    "ux3: below-min input rejected");
+  eq(html.includes("if (ok && t.max !== undefined && v > t.max) ok = false;"), true,
+    "ux3: above-max input rejected");
+  eq(html.includes("v = base + Math.round((v - base) / t.step) * t.step;"), true,
+    "ux3: input snapped to step grid");
+  eq(html.includes("function sliderSpec(inputId, dispId, label)"), true,
+    "ux3: direct input reuses slider min/max/step");
+}
+
 console.log(`book tests: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
