@@ -1,6 +1,9 @@
 # STATUS: v0.3.38 출시
 
-- 상태: running
+- 상태: awaiting
+- 릴리스: https://github.com/roomedia/boringmech/releases/tag/v0.3.38 (APK boringmech-v0.3.38.apk 328,232바이트 첨부 확인)
+- 출시 커밋: 6911065 (roomedia 단독 저자), 태그 v0.3.38, main 푸시 완료
+- 서명 경로 실기기 검증은 아직이다. 실기기에서 실제 서명 제출 1회 성공이 확인되기 전까지 이 버전은 서명 경로 미검증 상태다 (릴리스 노트에 표기함).
 - 시작: 2026-11-22
 - 범위: 출시 전 전면 감사(4축) → 수리·가드 테스트 → 버전 범프 → 검증 전수 → 커밋·태그·GitHub 릴리스
 - 변경분: 기온 손절 0.15, 기온 슬롯 수 설정, 매매 수치 26개 설정화 (커밋 0d4671c, main 푸시 완료)
@@ -9,7 +12,7 @@
   - [완료] 1.5단계: 감사 발견 수리 + 가드 테스트 (아래 "1.5단계 수리 기록" 참조)
   - [완료] 2단계: 버전 0.3.38 범프 (build.sh APK명·version-code 41·version-name, package.json) + 번들 재생성 (APP_VERSION=0.3.38)
   - [완료] 3단계: 검증 전수 — JS book 405·temp 118·bundle 6, JVM NativeCycle 249·TempNo 105·ExternalWatchdog 15·RestartGuard 7·SubmitGuard 21·WatchdogLogic 35·StageDeadline 19, 골든 1차 38/38·2차 200·3차 178·4차 215, APK 빌드 + DEX GATE PASSED, 축소 스모크 PASSED
-  - [진행] 4단계: 커밋 (roomedia 단독 저자), 태그 v0.3.38, GitHub 릴리스 + APK 첨부
+  - [완료] 4단계: 커밋 6911065 (roomedia 단독 저자), 태그 v0.3.38, GitHub 릴리스 + APK 첨부
 - 주의: 기온 전략 토글 기본 OFF, 메인 손절 -0.25 등 기존 기본값 유지. 무관한 백테스트 산출물은 커밋에 섞지 않는다.
 
 ## 1.5단계 수리 기록 (2026-11-22, 작업 트리에만 반영 — 커밋·버전 범프 안 함)
