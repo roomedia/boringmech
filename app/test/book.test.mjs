@@ -68,6 +68,7 @@ const {
   STOPLOSS_RECENT_CAP,
   isOpenRow,
   parseTradeSettings,
+  settingsSummaryText,
   DEFAULT_TRADE_SETTINGS,
   BAND_LO,
   BAND_HI,
@@ -1482,6 +1483,42 @@ eq(parseTradeSettings({ tempStopDrop: 0.2 }).tempStopDrop, 0.2, "trade settings:
     "ux3: input snapped to step grid");
   eq(html.includes("function sliderSpec(inputId, dispId, label)"), true,
     "ux3: direct input reuses slider min/max/step");
+}
+
+// 47. 연동 화면 하단 요약 — 저장된 설정의 해석 결과로 렌더한다.
+// 기본값이면 기존 고정 문구와 글자까지 같고, 바꾸면 바뀐 값이 보인다.
+{
+  const LEGACY_SUMMARY = "밴드 0.60–0.90 · 건당 평가금 1% · 현금 30% 유지 · 최대 70건 · 손절 진입가 −0.25, 그 외 만기 보유";
+  eq(settingsSummaryText(parseTradeSettings(null)), LEGACY_SUMMARY,
+    "summary: defaults render legacy text");
+  eq(settingsSummaryText(), LEGACY_SUMMARY, "summary: no cfg renders defaults");
+  eq(settingsSummaryText(parseTradeSettings({
+    bandLo: 0.7, bandHi: 0.95, betPct: 0.02, cashFloorPct: 0.5, maxPositions: 10, stopDrop: 0.15
+  })), "밴드 0.70–0.95 · 건당 평가금 2% · 현금 50% 유지 · 최대 10건 · 손절 진입가 −0.15, 그 외 만기 보유",
+    "summary: changed settings reflected");
+  eq(settingsSummaryText(parseTradeSettings({ betPct: 0.005, cashFloorPct: 0.125 })),
+    "밴드 0.60–0.90 · 건당 평가금 0.5% · 현금 12.5% 유지 · 최대 70건 · 손절 진입가 −0.25, 그 외 만기 보유",
+    "summary: fractional percents trimmed");
+  // 해석 단계의 폴백(밴드 쌍 역전 → 쌍째 기본값)도 요약에 그대로 드러난다
+  eq(settingsSummaryText(parseTradeSettings({ bandLo: 0.95, bandHi: 0.9 })), LEGACY_SUMMARY,
+    "summary: invalid band pair falls back to defaults");
+  // 뷰어가 실제로 쓰는 BM 경유 경로
+  eq(typeof globalThis.window.BM?.settingsSummaryText, "function",
+    "summary: BM exposes settingsSummaryText");
+  eq(typeof globalThis.window.BM?.parseTradeSettings, "function",
+    "summary: BM exposes parseTradeSettings");
+  eq(globalThis.window.BM.settingsSummaryText(globalThis.window.BM.parseTradeSettings({ stopDrop: 0.2 })),
+    "밴드 0.60–0.90 · 건당 평가금 1% · 현금 30% 유지 · 최대 70건 · 손절 진입가 −0.20, 그 외 만기 보유",
+    "summary: BM path renders changed stopDrop");
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  eq(html.includes('id="settingsSummary"'), true, "summary: footer span exists");
+  eq(html.includes("function renderSettingsSummary()"), true, "summary: renderer exists");
+  eq(html.includes("BM.settingsSummaryText(BM.parseTradeSettings(readSettingsObject()))"), true,
+    "summary: renderer uses parsed saved settings");
+  eq(html.includes("renderTradeSettings();\n      renderSettingsSummary();"), true,
+    "summary: refresh renders summary");
+  eq(html.includes("syncGroupForm(name, true);\n      renderSettingsSummary();"), true,
+    "summary: save re-renders summary immediately");
 }
 
 console.log(`book tests: ${passed} passed, ${failed} failed`);

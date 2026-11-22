@@ -792,6 +792,18 @@ export function parseTradeSettings(raw) {
 }
 
 /**
+ * 연동 화면 하단 요약 — 저장된 설정의 해석 결과(parseTradeSettings)로
+ * 만든다. 기본값이면 기존 고정 문구와 글자까지 같아야 한다. 기온 값은
+ * 요약에 넣지 않는다.
+ */
+export function settingsSummaryText(cfg) {
+  const c = cfg || DEFAULT_TRADE_SETTINGS;
+  const price = (v) => v.toFixed(2);
+  const pct = (v) => String(parseFloat((v * 100).toFixed(2)));
+  return `밴드 ${price(c.bandLo)}–${price(c.bandHi)} · 건당 평가금 ${pct(c.betPct)}% · 현금 ${pct(c.cashFloorPct)}% 유지 · 최대 ${c.maxPositions}건 · 손절 진입가 −${price(c.stopDrop)}, 그 외 만기 보유`;
+}
+
+/**
  * 뷰어 설정(bm_settings) 해석 — { tempNoEnabled, tempNoBandLo, tempNoBandHi,
  * tempEntryHourUtc, tempNoReserveSlots }.
  * 토글은 정확히 true일 때만 켜진 것으로 보고, 밴드 하한은 (0, 상한]
@@ -939,14 +951,29 @@ export function scanTempCandidates(events, heldSlugs, boughtSlugs, settings, now
   return out;
 }
 
+/**
+ * 조회 날짜 집합의 기준 키 — nowMs가 속한 UTC 날짜 (ISO). 조회 범위가
+ * 오늘+내일(UTC)이라 기준 날짜가 바뀌면 집합 자체가 달라진다.
+ */
+export function tempFetchDayKey(nowMs) {
+  return new Date(nowMs).toISOString().slice(0, 10);
+}
+
 // 오늘+내일 기온 이벤트 조회 — 도시별 슬러그 직접 조회라 사이클마다
 // 전수 호출하지 않게 15분 캐시를 둔다. 도시별 실패는 그 도시만
 // 건너뛰고, 전부 실패한 조회는 캐시하지 않아 다음 사이클에 다시
 // 시도한다. 후보 생성(scanTempCandidates)은 창 판정으로 당일 이벤트만
-// 쓰므로, 내일 이벤트는 예약 홀드 판정에만 쓰인다.
-let tempEventsCache = { atMs: 0, events: null };
+// 쓰므로, 내일 이벤트는 예약 홀드 판정에만 쓰인다. 캐시는 기준 UTC
+// 날짜가 같은 동안만 유효하다 — 자정을 넘기면 날짜 집합이 달라져
+// 전날 캐시가 새 집합(오늘·내일)을 덮지 않게 무효화한다.
+let tempEventsCache = { atMs: 0, dayKey: "", events: null };
 async function fetchTempEvents(nowMs) {
-  if (tempEventsCache.events && nowMs - tempEventsCache.atMs < TEMP_NO_CACHE_MS) {
+  const dayKey = tempFetchDayKey(nowMs);
+  if (
+    tempEventsCache.events &&
+    tempEventsCache.dayKey === dayKey &&
+    nowMs - tempEventsCache.atMs < TEMP_NO_CACHE_MS
+  ) {
     return tempEventsCache.events;
   }
   const slugs = tempEventSlugsForFetch(nowMs);
@@ -968,7 +995,7 @@ async function fetchTempEvents(nowMs) {
     // (v0.3.39 감사 E). 부분 실패(일부 도시 성공)는 성공으로 취급한다.
     return null;
   }
-  tempEventsCache = { atMs: nowMs, events };
+  tempEventsCache = { atMs: nowMs, dayKey, events };
   return events;
 }
 
@@ -3620,6 +3647,8 @@ window.BM = {
   stop,
   sizing,
   betUsdFor,
+  parseTradeSettings,
+  settingsSummaryText,
   checkForUpdate,
   startUpdate,
   hostMode,

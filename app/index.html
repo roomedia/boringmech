@@ -404,7 +404,7 @@
   </div>
 
   <footer>
-    밴드 0.60–0.90 · 건당 평가금 1% · 현금 30% 유지 · 최대 70건 · 손절 진입가 −0.25, 그 외 만기 보유<br>
+    <span id="settingsSummary">밴드 0.60–0.90 · 건당 평가금 1% · 현금 30% 유지 · 최대 70건 · 손절 진입가 −0.25, 그 외 만기 보유</span><br>
     <a href="https://github.com/roomedia/boringmech">github.com/roomedia/boringmech</a> · MIT
   </footer>
 </div>
@@ -839,6 +839,16 @@
       for (var g in TRADE_GROUPS) syncGroupForm(g, false);
     }
 
+    // 하단 요약은 폼 값이 아니라 저장된 설정의 해석 결과로 그린다 —
+    // 설정을 바꾸면 요약도 바뀐 값으로 보여야 한다.
+    function renderSettingsSummary(){
+      var el = $('settingsSummary');
+      if (!el) return;
+      try {
+        el.textContent = BM.settingsSummaryText(BM.parseTradeSettings(readSettingsObject()));
+      } catch (e) {}
+    }
+
     function saveTradeGroup(name){
       var g = TRADE_GROUPS[name];
       var err = $(g.err);
@@ -865,6 +875,7 @@
       }
       writeSettingsObject(patch);
       syncGroupForm(name, true);
+      renderSettingsSummary();
     }
 
     // 설정 폼 상태 — 카드별 baseline은 마지막으로 저장본과 동기화된 폼 값.
@@ -1230,6 +1241,7 @@
       } catch (e) { view = 'link'; }
       if (view === 'link') {
         showLink();
+        renderSettingsSummary();
         // 저장분은 있는데 열 수 없으면(복호화 실패 등) 그 사실을 드러낸다
         if (hasKey) $('linkErr').textContent = '저장된 키를 복호화하지 못했습니다 — 개인키를 다시 입력해 연동하세요.';
         return;
@@ -1242,6 +1254,7 @@
       renderRelayer();
       renderTempSettings();
       renderTradeSettings();
+      renderSettingsSummary();
       renderShadow();
       renderBattery();
     }
