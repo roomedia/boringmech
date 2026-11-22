@@ -84,10 +84,11 @@ public class NativeCycleTest {
         String snapCache;
         String updateInfo;
         long selfReloadMs = 0;
+        long nowMsOverride = 0;
 
         @Override public boolean isRunning(int g) { return running && g == gen; }
         @Override public int generation() { return gen; }
-        @Override public long nowMs() { return NOW; }
+        @Override public long nowMs() { return nowMsOverride != 0 ? nowMsOverride : NOW; }
         @Override public void log(String body) { logs.add(body); }
         @Override public void beatHeartbeat(int cycle) {}
         @Override public void beatProgress(int cycle) {}
@@ -640,6 +641,91 @@ public class NativeCycleTest {
                 bought.contains("highest-temperature-in-seoul-on-november-15-2026-7c")
                         && bought.contains("highest-temperature-in-seoul-on-november-15-2026-8c"));
         check("reserve2: 메인은 못 삼", !bought.contains("test-buy-market"));
+    }
+
+    /** 기온 이벤트 무대 — endDate만 바꿔 올린다 (후보 검증 무대는 걸지 않는다). */
+    private static void tempStageEndOnly(FakeNet net, String endDate) {
+        String eventSlug = "highest-temperature-in-seoul-on-november-15-2026";
+        Map<String, Object> tm = new LinkedHashMap<>();
+        tm.put("slug", eventSlug + "-7c");
+        tm.put("question", "Will the highest temperature in Seoul be 7°C on November 15?");
+        tm.put("groupItemTitle", "7°C");
+        tm.put("active", true);
+        tm.put("closed", false);
+        tm.put("endDate", endDate);
+        tm.put("outcomePrices", "[\"0.03\",\"0.97\"]");
+        tm.put("feeType", "weather_fees");
+        tm.put("feeSchedule", jmap("{\"rate\":0.05}"));
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("slug", eventSlug);
+        ev.put("endDate", endDate);
+        ev.put("markets", new ArrayList<>(List.of(tm)));
+        net.tempEvents = new ArrayList<>(List.of(ev));
+    }
+
+    /**
+     * 창 대기 예약: 창이 열리기 전(03:00Z, 창 06:00~12:00)에는 기온
+     * 후보가 없어도 오늘 창이 열릴 이벤트가 있으면 메인이 마지막
+     * 슬롯을 먹지 않는다 — 미룬 메인을 같은 사이클에 다시 태우지도
+     * 않는다.
+     */
+    private static void tempReserveUpcomingWindowDefersMain() {
+        FakeEnv env = new FakeEnv();
+        env.nowMsOverride = Instant.parse("2026-11-15T03:00:00Z").toEpochMilli();
+        FakeNet net = new FakeNet();
+        net.cash = 12; // 슬롯 1
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        tempStageEndOnly(net, "2026-11-15T12:00:00Z");
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("reserve upcoming: 결과 OK", r == NativeCycle.Result.OK);
+        check("reserve upcoming: 주문 없음", t.posts == 0);
+        check("reserve upcoming: 메인은 못 삼",
+                !env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+        check("reserve upcoming: 예약 로그", env.logged("기온 예약 — 오늘 진입 창이 열릴 이벤트"));
+    }
+
+    /** 창 대기 예약: 창이 지난 이벤트만 있으면 연기하지 않고 메인이 산다. */
+    private static void tempReservePastWindowNoDefer() {
+        FakeEnv env = new FakeEnv(); // NOW = 12:00Z, 이벤트 창은 06:00~11:00로 지났다
+        FakeNet net = new FakeNet();
+        net.cash = 12; // 슬롯 1
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        tempStageEndOnly(net, "2026-11-15T11:00:00Z");
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("reserve past: 결과 OK", r == NativeCycle.Result.OK);
+        check("reserve past: 메인이 슬롯 획득", t.posts == 1
+                && env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+        check("reserve past: 예약 로그 없음", !env.logged("기온 예약 — 오늘 진입 창"));
+    }
+
+    /** 창 대기 예약: 예약 슬롯 0이면 창이 남아 있어도 메인이 산다. */
+    private static void tempReserveZeroUpcomingNoDefer() {
+        FakeEnv env = new FakeEnv();
+        env.nowMsOverride = Instant.parse("2026-11-15T03:00:00Z").toEpochMilli();
+        FakeNet net = new FakeNet();
+        net.cash = 12; // 슬롯 1
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        tempStageEndOnly(net, "2026-11-15T12:00:00Z");
+        env.durable.put("bm_settings",
+                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"tempNoReserveSlots\":0}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("reserve zero upcoming: 결과 OK", r == NativeCycle.Result.OK);
+        check("reserve zero upcoming: 메인이 슬롯 획득", t.posts == 1
+                && env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
     }
 
     /** 손절 판정 경계 — 폭 파라미터와 결정 구간 설정값 (JS book 테스트와 같은 케이스). */
@@ -1839,6 +1925,9 @@ public class NativeCycleTest {
         tempStopLossUntaggedApplies();
         tempStopLossNoRecordApplies();
         tempReserveTwoSlots();
+        tempReserveUpcomingWindowDefersMain();
+        tempReservePastWindowNoDefer();
+        tempReserveZeroUpcomingNoDefer();
         tradeSettingsParse();
         stopLossVerdictDrops();
         stopLossPath();

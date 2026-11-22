@@ -1380,9 +1380,12 @@ public final class NativeCycle {
         // 기온 No 페이드 — 설정이 켜졌을 때만 별도 스캔을 붙인다. 후보는
         // 같은 선정 패스(슬롯·검증 캡 공유)를 타고, 메인 후보와 slug가
         // 겹치면 메인 쪽이 이긴다. 기온 스캔 통계는 요약에 섞지 않는다.
+        // 조회한 이벤트 목록은 아래 예약 판정(창 대기)도 함께 쓴다.
+        List<Object> tempEventsList = null;
         if (tempSettings.enabled) {
             try {
                 List<Object> events = tempEvents(env.nowMs());
+                tempEventsList = events;
                 Set<String> mainSlugs = new HashSet<>();
                 for (ScanFilter.Candidate c : candidates) {
                     mainSlugs.add(c.slug);
@@ -1405,15 +1408,24 @@ public final class NativeCycle {
         int unfilledCount = 0;
         int failedCount = 0;
         // 선정 드라이버 — 기온 슬롯 예약 (JS runCycle과 같은 규칙). 토글이
-        // 켜졌고 기온 후보가 있을 때만, 메인 후보는 슬롯 reserveSlots개와
-        // 검증 reserveSlots건을 기온 몫으로 남겨 둔 지점에서 뒤로
-        // 미루고(deferredMain), 기온 후보를 먼저 처리한 뒤 남은 슬롯·검증
-        // 캡으로 미룬 메인을 다시 탄다. 예약은 하한이라 기온이 남은 슬롯을
-        // 더 쓰는 것도, 기온이 없거나 못 사면 메인이 전부를 쓰는 것도
-        // 그대로 된다. 예약이 없으면 미루는 후보가 없어 기존 단일 패스와
-        // 동일하다.
+        // 켜졌고 기온 후보가 있거나 오늘 진입 창이 열릴 기온 이벤트가
+        // 있을 때, 메인 후보는 슬롯 reserveSlots개와 검증 reserveSlots건을
+        // 기온 몫으로 남겨 둔 지점에서 뒤로 미루고(deferredMain), 기온
+        // 후보를 먼저 처리한 뒤 남은 슬롯·검증 캡으로 미룬 메인을 다시
+        // 탄다. 창은 이벤트 당일 entryHourUtc에 열리므로, 후보 존재에만
+        // 예약을 걸면 창이 열리기 전에 메인이 마지막 슬롯까지 먹어
+        // 예약이 지킬 자리가 없어진다. 예약은 하한이라 기온이 남은
+        // 슬롯을 더 쓰는 것도, 기온이 못 사면 메인이 전부를 쓰는 것도
+        // 그대로 된다. 단, 창 대기 예약(후보 없이 창만 남은 경우)은
+        // 미룬 메인을 다시 타지 않는다 — 다시 태우면 같은 사이클에
+        // 예약 슬롯까지 먹어 창이 열릴 때 남는 자리가 없다. 예약이
+        // 없으면 미루는 후보가 없어 기존 단일 패스와 동일하다.
+        boolean tempHasCandidates = candidates.stream()
+                .anyMatch(c -> TempNo.STRATEGY.equals(c.strategy));
         boolean tempReserve = tempSettings.enabled
-                && candidates.stream().anyMatch(c -> TempNo.STRATEGY.equals(c.strategy));
+                && (tempHasCandidates
+                    || TempNo.hasUpcomingWindow(tempEventsList, env.nowMs(),
+                            tempSettings.entryHourUtc));
         List<ScanFilter.Candidate> worklist = candidates;
         List<ScanFilter.Candidate> deferredMain = new ArrayList<>();
         boolean firstPass = true;
@@ -1575,11 +1587,15 @@ public final class NativeCycle {
                 guard.releaseSubmitLock(cand.slug);
             }
             }
-            if (budgetOut || !firstPass || deferredMain.isEmpty()) {
+            if (budgetOut || !firstPass || deferredMain.isEmpty() || !tempHasCandidates) {
                 break;
             }
             firstPass = false;
             worklist = deferredMain;
+        }
+        if (tempReserve && !tempHasCandidates && !deferredMain.isEmpty()) {
+            log("기온 예약 — 오늘 진입 창이 열릴 이벤트가 있어 메인 " + deferredMain.size()
+                    + "건을 미루고 슬롯을 남깁니다");
         }
         log(summarizeCycle(candidates.size(), verified, rejects, filledCount, unfilledCount, failedCount, scanStats));
     }

@@ -620,6 +620,29 @@ export function tempWindowOpen(nowMs, endMs, entryHourUtc = TEMP_NO_ENTRY_HOUR_U
   return startMs <= nowMs && nowMs < endMs;
 }
 
+/**
+ * 오늘 진입 창이 열리는 기온 이벤트 존재 판정 — 이벤트의 창 시작
+ * (endDate 날짜의 entryHourUtc)이 endDate보다 먼저이고, 아직 endDate가
+ * 지나지 않았으면 그 이벤트의 창은 오늘 열리거나 열려 있다. 예약
+ * 연기를 기온 후보 존재에만 걸면 창이 열리기 전에는 후보가 없어
+ * 메인이 마지막 슬롯까지 먹어 버리므로, 드라이버는 이 판정으로도
+ * 예약을 건다 (네이티브 TempNo.hasUpcomingWindow와 같은 규칙).
+ */
+export function tempHasUpcomingWindow(events, nowMs, entryHourUtc = TEMP_NO_ENTRY_HOUR_UTC) {
+  if (!Number.isFinite(nowMs)) return false;
+  for (const ev of events || []) {
+    if (!ev || !isTempNoSlug(ev.slug)) continue;
+    const endMs = Date.parse(ev.endDate || "");
+    if (!Number.isFinite(endMs)) continue;
+    const d = new Date(endMs);
+    const startMs = Date.UTC(
+      d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), entryHourUtc,
+    );
+    if (startMs < endMs && nowMs < endMs) return true;
+  }
+  return false;
+}
+
 // ── 매매 설정 (bm_settings) ──────────────────────────────────
 // 매매 판단 수치는 전부 설정으로 바꿀 수 있다. 기본값은 기존 하드코딩
 // 상수와 같고, 범위를 벗어난 값은 필드 단위로 기본값으로 되돌린다
@@ -808,11 +831,13 @@ export function effectiveTempReserveSlots(reserveSlots, maxPositions) {
 }
 
 /**
- * 기온 슬롯 예약 판정 — 예약이 켜졌을 때(토글 ON + 기온 후보 존재) 메인
- * 후보를 뒤로 미룰지 정하는 순수 함수. 메인 후보는 슬롯 reserveSlots개와
- * 검증 reserveSlots건을 기온 몫으로 남겨 둔 지점부터 미룬다. 기온 후보
- * 자체는 미루지 않는다 (예약은 하한이지 상한이 아니다). reserveSlots가
- * 0이면 예약이 없어 아무것도 미루지 않는다.
+ * 기온 슬롯 예약 판정 — 예약이 켜졌을 때(토글 ON + 기온 후보 존재,
+ * 또는 오늘 진입 창이 열릴 이벤트 존재) 메인 후보를 뒤로 미룰지
+ * 정하는 순수 함수. 예약 활성 자체는 드라이버가 정한다. 메인 후보는
+ * 슬롯 reserveSlots개와 검증 reserveSlots건을 기온 몫으로 남겨 둔
+ * 지점부터 미룬다. 기온 후보 자체는 미루지 않는다 (예약은 하한이지
+ * 상한이 아니다). reserveSlots가 0이면 예약이 없어 아무것도 미루지
+ * 않는다.
  */
 export function tempReserveDefersMain(strategy, slotsLeft, verified, reserveSlots = TEMP_NO_DEFAULT_RESERVE_SLOTS, verifyCap = VERIFY_CAP) {
   if (strategy === "temp_no") return false;
@@ -2183,9 +2208,11 @@ async function runCycle(gen) {
   // 선정 패스(슬롯·검증 캡 공유)를 타고, 메인 후보와 slug가 겹치면
   // 메인 쪽이 이긴다 (excludeSlugs). 기온 스캔 통계는 요약에 섞지 않는다.
   const tempSettings = parseTempSettings(durableRead(LS.settings));
+  let tempEventsList = null;
   if (tempSettings.enabled) {
     try {
       const events = await fetchTempEvents(Date.now());
+      tempEventsList = events;
       const mainSlugs = new Set(candidates.map((c) => c.slug));
       const tempCands = scanTempCandidates(
         events, snap.heldSlugs, boughtAll, tempSettings, Date.now(), null, mainSlugs,
@@ -2338,15 +2365,22 @@ async function runCycle(gen) {
     }
     return false;
   };
-  // 선정 드라이버 — 기온 슬롯 예약 (토글 ON이고 기온 후보가 있을 때만).
-  // 메인 후보는 슬롯 reserveSlots개와 검증 reserveSlots건을 기온 몫으로
-  // 남겨 둔 지점에서 뒤로 미루고(deferredMain), 기온 후보를 먼저 처리한
-  // 뒤 남은 슬롯·검증 캡으로 미룬 메인을 다시 탄다. 예약은 하한이라
-  // 기온이 남은 슬롯을 더 쓰는 것도, 기온이 없거나 못 사면 메인이 전부를
-  // 쓰는 것도 그대로 된다. 예약이 없으면 미루는 후보가 없어 기존 단일
-  // 패스와 동일하다.
+  // 선정 드라이버 — 기온 슬롯 예약 (토글 ON이고 기온 후보가 있거나,
+  // 오늘 진입 창이 열릴 기온 이벤트가 있을 때). 창은 이벤트 당일
+  // entryHourUtc에 열리므로, 후보 존재에만 예약을 걸면 창이 열리기
+  // 전에 메인이 마지막 슬롯까지 먹어 예약이 지킬 자리가 없어진다.
+  // 메인 후보는 슬롯 reserveSlots개와 검증 reserveSlots건을 기온
+  // 몫으로 남겨 둔 지점에서 뒤로 미루고(deferredMain), 기온 후보를
+  // 먼저 처리한 뒤 남은 슬롯·검증 캡으로 미룬 메인을 다시 탄다.
+  // 예약은 하한이라 기온이 남은 슬롯을 더 쓰는 것도, 기온이 못 사면
+  // 메인이 전부를 쓰는 것도 그대로 된다. 단, 창 대기 예약(후보 없이
+  // 창만 남은 경우)은 미룬 메인을 다시 타지 않는다 — 다시 태우면
+  // 같은 사이클에 예약 슬롯까지 먹어 창이 열릴 때 남는 자리가 없다.
+  // 예약이 없으면 미루는 후보가 없어 기존 단일 패스와 동일하다.
+  const tempHasCandidates = candidates.some((c) => c.strategy === "temp_no");
   const tempReserve = tempSettings.enabled
-    && candidates.some((c) => c.strategy === "temp_no");
+    && (tempHasCandidates
+      || tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc));
   // 예약 실효값은 전체 포지션 상한으로 제한한다 (감사 축 3).
   const tempReserveSlots = effectiveTempReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions);
   const deferredMain = [];
@@ -2364,7 +2398,12 @@ async function runCycle(gen) {
   // 예산 소진으로 끊긴 패스는 미룬 메인을 다시 타지 않는다 — 예산은
   // 단조라 재주행이 즉시 같은 지점에서 끊기고, 네이티브 드라이버와
   // 동일하게 요약 로그까지 그대로 진행한다 (감사 패리티 수리).
-  if (!aborted && !budgetOut) {
+  // 창 대기 예약(기온 후보 없음)도 다시 타지 않는다 — 예약 슬롯을
+  // 이 사이클에 메인이 먹지 않게 남겨 두는 것이 그 예약의 목적이다.
+  if (tempReserve && !tempHasCandidates && deferredMain.length) {
+    log(`기온 예약 — 오늘 진입 창이 열릴 이벤트가 있어 메인 ${deferredMain.length}건을 미루고 슬롯을 남깁니다`);
+  }
+  if (!aborted && !budgetOut && tempHasCandidates) {
     for (const cand of deferredMain) {
       if (!state.running || gen !== state.gen) { aborted = true; break; }
       if (slotsLeft < 1 || verified >= tradeCfg.verifyCap) break;

@@ -19,6 +19,7 @@ const {
   markBought,
   boughtStrategyOf,
   tempReserveDefersMain,
+  tempHasUpcomingWindow,
   effectiveTempReserveSlots,
   TEMP_NO_CITIES,
 } = await import("../src/engine.js");
@@ -328,6 +329,28 @@ eq(
   eq(tempReserveDefersMain(undefined, 9, CAP - 3, 3), true, "reserve 3: verified cap-3 → defer");
   eq(tempReserveDefersMain("temp_no", 3, CAP - 3, 3), false, "reserve 3: temp is never deferred");
 
+  // 창 대기 판정 (네이티브 TempNo.hasUpcomingWindow와 같은 경계) —
+  // 이벤트 endDate 2026-11-15T12:00Z, 진입 창은 당일 06:00~12:00 UTC
+  const evUpcoming = [{ slug: "highest-temperature-in-seoul-on-november-15-2026", endDate: "2026-11-15T12:00:00Z" }];
+  const T_PRE = Date.parse("2026-11-15T03:00:00Z");
+  const T_OPEN = Date.parse("2026-11-15T08:00:00Z");
+  const T_PAST = Date.parse("2026-11-15T13:00:00Z");
+  eq(tempHasUpcomingWindow(evUpcoming, T_PRE), true, "upcoming: pre-window event → true");
+  eq(tempHasUpcomingWindow(evUpcoming, T_OPEN), true, "upcoming: window open → true");
+  eq(tempHasUpcomingWindow(evUpcoming, T_PAST), false, "upcoming: past event only → false");
+  eq(tempHasUpcomingWindow([], T_PRE), false, "upcoming: empty events → false");
+  eq(tempHasUpcomingWindow(null, T_PRE), false, "upcoming: null events → false");
+  eq(
+    tempHasUpcomingWindow([{ slug: "some-other-event", endDate: "2026-11-15T12:00:00Z" }], T_PRE),
+    false,
+    "upcoming: non-temp slug → false",
+  );
+  eq(
+    tempHasUpcomingWindow([{ slug: "highest-temperature-in-seoul-on-november-15-2026", endDate: "not-a-date" }], T_PRE),
+    false,
+    "upcoming: bad endDate → false",
+  );
+
   // 구조 가드 — runCycle 드라이버가 예약 판정과 미룬 메인 재주행을 실제로 쓴다
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
@@ -348,14 +371,19 @@ eq(
     "reserve guard: deferred main gets a second pass",
   );
   eq(
-    cycleSrc.includes('candidates.some((c) => c.strategy === "temp_no")'),
+    cycleSrc.includes('const tempHasCandidates = candidates.some((c) => c.strategy === "temp_no")'),
     true,
-    "reserve guard: reserve activates only with temp candidates present",
+    "reserve guard: driver tracks temp candidate presence",
   );
   eq(
-    cycleSrc.includes("if (!aborted && !budgetOut)"),
+    cycleSrc.includes("|| tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc))"),
     true,
-    "reserve guard: budget-exhausted pass skips deferred pass (native parity)",
+    "reserve guard: reserve also activates on upcoming window",
+  );
+  eq(
+    cycleSrc.includes("if (!aborted && !budgetOut && tempHasCandidates)"),
+    true,
+    "reserve guard: deferred pass runs only with temp candidates (upcoming-window reserve keeps slots)",
   );
 }
 

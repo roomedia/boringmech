@@ -331,6 +331,33 @@ public class TempNoTest {
                     !TempNo.reserveDefersMain(null, 9, cap - 4, cap, 3));
         }
 
+        // ── 창 대기 판정 (JS tempHasUpcomingWindow와 같은 경계) ──────
+        // 이벤트 endDate 2026-11-18T12:00Z, 진입 창은 당일 06:00~12:00 UTC.
+        {
+            long beforeWindow = Instant.parse("2026-11-18T03:00:00Z").toEpochMilli();
+            long afterWindow = Instant.parse("2026-11-18T13:00:00Z").toEpochMilli();
+            List<Object> ev = eventOf(marketJson("7°C", "0.97"));
+            check("upcoming: pre-window event → true",
+                    TempNo.hasUpcomingWindow(ev, beforeWindow, TempNo.ENTRY_HOUR_UTC));
+            check("upcoming: window open → true",
+                    TempNo.hasUpcomingWindow(ev, AT_7AM, TempNo.ENTRY_HOUR_UTC));
+            check("upcoming: past event only → false",
+                    !TempNo.hasUpcomingWindow(ev, afterWindow, TempNo.ENTRY_HOUR_UTC));
+            check("upcoming: empty events → false",
+                    !TempNo.hasUpcomingWindow(new ArrayList<>(), beforeWindow,
+                            TempNo.ENTRY_HOUR_UTC));
+            check("upcoming: null events → false",
+                    !TempNo.hasUpcomingWindow(null, beforeWindow, TempNo.ENTRY_HOUR_UTC));
+            List<Object> nonTemp = jlist("[{\"slug\":\"some-other-event\","
+                    + "\"endDate\":\"2026-11-18T12:00:00Z\",\"markets\":[]}]");
+            check("upcoming: non-temp slug → false",
+                    !TempNo.hasUpcomingWindow(nonTemp, beforeWindow, TempNo.ENTRY_HOUR_UTC));
+            List<Object> badEnd = jlist("[{\"slug\":\"" + EVENT_SLUG + "\","
+                    + "\"endDate\":\"not-a-date\",\"markets\":[]}]");
+            check("upcoming: bad endDate → false",
+                    !TempNo.hasUpcomingWindow(badEnd, beforeWindow, TempNo.ENTRY_HOUR_UTC));
+        }
+
         // ── 검증 분기 (밴드·창) ──
         {
             Object page = jlist("[{\"slug\":\"" + EVENT_SLUG + "-7c\",\"active\":true,"

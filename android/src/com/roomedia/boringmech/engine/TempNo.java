@@ -72,12 +72,14 @@ public final class TempNo {
     }
 
     /**
-     * 기온 슬롯 예약 판정 — 예약이 켜졌을 때(토글 ON + 기온 후보 존재)
-     * 메인 후보를 뒤로 미룰지 정하는 순수 함수 (JS tempReserveDefersMain과
-     * 같은 규칙). 메인 후보는 슬롯 reserveSlots개와 검증 reserveSlots건을
-     * 기온 몫으로 남겨 둔 지점부터 미룬다. 기온 후보 자체는 미루지 않는다
-     * (예약은 하한이지 상한이 아니다). reserveSlots가 0이면 예약이 없어
-     * 아무것도 미루지 않는다.
+     * 기온 슬롯 예약 판정 — 예약이 켜졌을 때(토글 ON + 기온 후보 존재,
+     * 또는 오늘 진입 창이 열릴 이벤트 존재) 메인 후보를 뒤로 미룰지
+     * 정하는 순수 함수 (JS tempReserveDefersMain과 같은 규칙). 예약
+     * 활성 자체는 드라이버(NativeCycle)가 정한다. 메인 후보는 슬롯
+     * reserveSlots개와 검증 reserveSlots건을 기온 몫으로 남겨 둔
+     * 지점부터 미룬다. 기온 후보 자체는 미루지 않는다 (예약은 하한이지
+     * 상한이 아니다). reserveSlots가 0이면 예약이 없어 아무것도
+     * 미루지 않는다.
      */
     /**
      * 기온 예약 슬롯의 실효값 — 예약이 전체 포지션 상한을 넘으면 메인이
@@ -148,9 +150,42 @@ public final class TempNo {
 
     /** 진입 창 — 시작 시각(UTC 시)을 설정값으로 받는 판정. */
     public static boolean windowOpen(long nowMs, long endMs, int entryHourUtc) {
+        return windowStartMs(endMs, entryHourUtc) <= nowMs && nowMs < endMs;
+    }
+
+    /** 진입 창 시작 시각 — endDate의 UTC 날짜에 entryHourUtc시. */
+    public static long windowStartMs(long endMs, int entryHourUtc) {
         LocalDate day = Instant.ofEpochMilli(endMs).atZone(ZoneOffset.UTC).toLocalDate();
-        long startMs = day.atTime(entryHourUtc, 0).toInstant(ZoneOffset.UTC).toEpochMilli();
-        return startMs <= nowMs && nowMs < endMs;
+        return day.atTime(entryHourUtc, 0).toInstant(ZoneOffset.UTC).toEpochMilli();
+    }
+
+    /**
+     * 오늘 진입 창이 열리는 기온 이벤트 존재 판정 — 이벤트의 창
+     * 시작이 endDate보다 먼저이고 아직 endDate가 지나지 않았으면 그
+     * 이벤트의 창은 오늘 열리거나 열려 있다 (JS tempHasUpcomingWindow와
+     * 같은 규칙). 예약 연기를 기온 후보 존재에만 걸면 창이 열리기
+     * 전에는 후보가 없어 메인이 마지막 슬롯까지 먹어 버리므로,
+     * 드라이버는 이 판정으로도 예약을 건다. 창이 지난 이벤트만
+     * 있으면 false다.
+     */
+    public static boolean hasUpcomingWindow(List<Object> events, long nowMs, int entryHourUtc) {
+        if (events == null) {
+            return false;
+        }
+        for (Object ev : events) {
+            Object slugRaw = Js.field(ev, "slug");
+            if (!isTempSlug(slugRaw instanceof String ? (String) slugRaw : null)) {
+                continue;
+            }
+            Long endMs = parseEndMs(Js.field(ev, "endDate"));
+            if (endMs == null) {
+                continue;
+            }
+            if (windowStartMs(endMs, entryHourUtc) < endMs && nowMs < endMs) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 뷰어 설정(bm_settings) 해석 결과. */
