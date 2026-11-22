@@ -1,6 +1,9 @@
 # STATUS: v0.3.39 출시
 
-- 상태: running
+- 상태: awaiting
+- 릴리스: https://github.com/roomedia/boringmech/releases/tag/v0.3.39 (APK boringmech-v0.3.39.apk 첨부 확인)
+- 출시 커밋: fc9e0b2 (roomedia 단독 저자), 태그 v0.3.39, main 푸시 완료
+- 남은 것: 서명 경로 실기기 검증 (동호 몫). 설치 후 실제 서명 제출 1회가 성공 로그로 확인되면 게이트가 닫힌다.
 - 시작: 2026-11-23
 - 범위: 출시 전 전면 감사 4축 → 수리·가드 테스트 → 버전 범프 → 검증 전수 → 커밋·태그·GitHub 릴리스. 서명 경로 실기기 검증은 동호 몫이라 미검증 표기를 유지한다.
 - 변경분: 설정 화면 UX 수정 (3ef273f), 기온 예약 슬롯 구멍 수리 (1e8f82d)
@@ -16,4 +19,4 @@
   - [완료] 2. 감사 발견 수리 + 가드 테스트 (6건 + 경화 1건, JS·JVM 전 슈트 통과)
   - [완료] 3. 버전 범프 0.3.39 (version-code 42) + 번들 재생성 (APP_VERSION=0.3.39)
   - [완료] 4. 검증 전수 통과: JS book 445·temp 146·bundle 6, JVM NativeCycle 276·TempNo 126·ExternalWatchdog 15·RestartGuard 7·SubmitGuard 21·WatchdogLogic 35·StageDeadline 19, 골든 1차 38/38·2차 200·3차 178·4차 215, APK 빌드 + DEX GATE PASSED, 축소 스모크 PASSED
-  - [진행] 5. 커밋·태그·GitHub 릴리스
+  - [완료] 5. 커밋·태그·GitHub 릴리스
