@@ -210,8 +210,16 @@ public class NativeCycleTest {
             return cash;
         }
 
+        /** 호출 횟수 — 첫 호출(선정) 뒤 다른 북을 돌려주는 재확인 테스트용. */
+        int orderBookCalls = 0;
+        final Map<String, Object> booksAfterFirst = new HashMap<>();
+
         @Override
         public Object orderBook(String tokenId) {
+            orderBookCalls++;
+            if (orderBookCalls > 1 && booksAfterFirst.containsKey(tokenId)) {
+                return booksAfterFirst.get(tokenId);
+            }
             return books.get(tokenId);
         }
 
@@ -273,6 +281,10 @@ public class NativeCycleTest {
         int gets = 0;
         int orderSeq = 0;
         boolean postMatched = false;
+        /** true면 제출이 전송 실패({error} 응답)로 돌아오지만 주문은 접수된 상태로 남는다. */
+        boolean postTransportFail = false;
+        /** 열린 주문 행의 original_size — 신원 대조 테스트용 (기본은 계획 수량과 같은 5). */
+        String identitySize = "5";
         /** ok: 취소 확정 / residual: 거부+잔류 / gone: 거부지만 조회하면 없음. */
         String cancelMode = "ok";
         final List<String> openIds = new ArrayList<>();
@@ -282,6 +294,9 @@ public class NativeCycleTest {
             posts++;
             String id = "ord-" + (++orderSeq);
             openIds.add(id);
+            if (postTransportFail) {
+                return new RawHttp.Raw(0, "", "Network Error");
+            }
             String status = postMatched ? "matched" : "live";
             String amounts = postMatched
                     ? "\"makingAmount\":\"0.05\",\"takingAmount\":\"5\""
@@ -296,14 +311,19 @@ public class NativeCycleTest {
             gets++;
             StringBuilder rows = new StringBuilder();
             for (String id : openIds) {
-                if (url.contains("id=") && !url.contains("id=" + id)) {
+                boolean byId = url.contains("&id=") || url.contains("?id=");
+                if (byId && !url.contains("id=" + id)) {
                     continue;
                 }
                 if (rows.length() > 0) {
                     rows.append(",");
                 }
                 rows.append("{\"id\":\"").append(id)
-                        .append("\",\"asset_id\":\"111\",\"price\":\"0.01\"}");
+                        .append("\",\"asset_id\":\"111\",\"price\":\"0.01\"")
+                        .append(",\"side\":\"BUY\",\"original_size\":\"").append(identitySize)
+                        .append("\",\"size_matched\":\"0\",\"order_type\":\"GTC\"")
+                        .append(",\"expiration\":\"0\",\"created_at\":").append(NOW / 1000)
+                        .append(",\"maker_address\":\"").append(FUNDER).append("\"}");
             }
             return new RawHttp.Raw(200, "{\"data\":[" + rows + "],\"next_cursor\":\"LTE=\"}", null);
         }
@@ -1452,7 +1472,8 @@ public class NativeCycleTest {
                 "{\"active\":true,\"closed\":false,\"acceptingOrders\":true,"
                         + "\"slug\":\"opt-market\",\"volume\":100000,"
                         + "\"clobTokenIds\":\"[\\\"111\\\"]\"}")));
-        net.books.put("111", jmap("{\"min_order_size\":5,\"tick_size\":\"0.01\"}"));
+        net.books.put("111", jmap("{\"min_order_size\":5,\"tick_size\":\"0.01\","
+                + "\"asks\":[{\"price\":\"0.5\",\"size\":\"100\"}]}"));
     }
 
     private static void orderPathHappy() {
@@ -1534,6 +1555,59 @@ public class NativeCycleTest {
         check("orderpath gone: 거부여도 조회로 없음 확인", env.logged("취소 재확인 — 열린 주문에 없어"));
         check("orderpath gone: 측정은 완료", env.logged("주문 경로 측정 종료 (done)"));
         check("orderpath gone: 오류 알림 없음", env.errorNotifications.isEmpty());
+    }
+
+    /** 감사 F2/F3 — 전송 실패 {error} 응답은 결과 불명으로 가르고, 신원이
+     *  일치하는 자기 주문만 정리한다. */
+    private static void orderPathUnknownPostReconciles() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        orderPathStage(net);
+        OrderPathTransport t = new OrderPathTransport();
+        t.postTransportFail = true;
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        env.durable.put("bm_settings", "{\"orderTestRounds\":1}");
+        env.durable.put("bm_orderpath_test_req", "{\"ts\":" + NOW + "}");
+        c.runIteration(1);
+        check("orderpath unknown: 결과 불명 로그", env.logged("제출 결과 불명"));
+        check("orderpath unknown: 잔류 주문 정리됨", env.logged("잔류 주문을 찾아 취소했습니다"));
+        check("orderpath unknown: 제출 2회 (반복 1 + 동시성 1)", t.posts == 2);
+        check("orderpath unknown: 취소 2회", t.deletes == 2);
+        check("orderpath unknown: 열린 주문 없음", t.openIds.isEmpty());
+        check("orderpath unknown: 측정은 완료", env.logged("주문 경로 측정 종료 (done)"));
+    }
+
+    /** 감사 F3 — 가격만 같고 수량이 다른 남의 주문은 건드리지 않는다. */
+    private static void orderPathUnknownPostForeignUntouched() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        orderPathStage(net);
+        OrderPathTransport t = new OrderPathTransport();
+        t.postTransportFail = true;
+        t.identitySize = "10";
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        env.durable.put("bm_settings", "{\"orderTestRounds\":1}");
+        env.durable.put("bm_orderpath_test_req", "{\"ts\":" + NOW + "}");
+        c.runIteration(1);
+        check("orderpath foreign: 취소 시도 없음", t.deletes == 0);
+        check("orderpath foreign: 남의 주문 그대로", t.openIds.size() == 2);
+        check("orderpath foreign: 정리 로그 없음", !env.logged("잔류 주문을 찾아 취소했습니다"));
+    }
+
+    /** 감사 F1 — 선정 뒤 호가가 테스트 가격 이하로 내려오면 제출하지 않는다. */
+    private static void orderPathUnsafeBookAborts() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        orderPathStage(net);
+        net.booksAfterFirst.put("111", jmap("{\"min_order_size\":5,\"tick_size\":\"0.01\","
+                + "\"asks\":[{\"price\":\"0.01\",\"size\":\"100\"}]}"));
+        OrderPathTransport t = new OrderPathTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        env.durable.put("bm_settings", "{\"orderTestRounds\":3}");
+        env.durable.put("bm_orderpath_test_req", "{\"ts\":" + NOW + "}");
+        c.runIteration(1);
+        check("orderpath unsafe: 제출 없음", t.posts == 0);
+        check("orderpath unsafe: 중단 사유", env.logged("주문 경로 측정 종료 (unsafe_abort)"));
     }
 
     private static void orderPathStaleRequest() {
@@ -2496,6 +2570,9 @@ public class NativeCycleTest {
         orderPathFillAborts();
         orderPathResidualAborts();
         orderPathCancelRefusedButGone();
+        orderPathUnknownPostReconciles();
+        orderPathUnknownPostForeignUntouched();
+        orderPathUnsafeBookAborts();
         orderPathStaleRequest();
         manualSellSettledAggregation();
         manualSellStale();

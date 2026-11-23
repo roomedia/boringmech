@@ -187,6 +187,53 @@ public class OrderPathFeatureTest {
         check("pure: 빈 목록", !OrderPathTest.openOrderPresent(List.of(), "x"));
         check("pure: null 목록", !OrderPathTest.openOrderPresent(null, "x"));
 
+        // 호가 안전 판정 (감사 F1) — 최저 매도호가가 0.01보다 위에 있을 때만 안전
+        Object bookSafe = j("{\"asks\":[{\"price\":\"0.50\",\"size\":\"10\"},{\"price\":\"0.20\",\"size\":\"5\"}]}");
+        check("pure: bestAsk는 최소값", OrderPathTest.bestAsk(bookSafe) == 0.20);
+        check("pure: bestAsk 안전", OrderPathTest.isSafeTestBook(bookSafe));
+        Object bookAt = j("{\"asks\":[{\"price\":\"0.01\",\"size\":\"10\"}]}");
+        check("pure: bestAsk 0.01은 체결 가능이라 unsafe", !OrderPathTest.isSafeTestBook(bookAt));
+        Object bookBelow = j("{\"asks\":[{\"price\":\"0.001\",\"size\":\"10\"}]}");
+        check("pure: bestAsk 0.001은 unsafe", !OrderPathTest.isSafeTestBook(bookBelow));
+        Object bookZeroSize = j("{\"asks\":[{\"price\":\"0.001\",\"size\":\"0\"},{\"price\":\"0.30\",\"size\":\"3\"}]}");
+        check("pure: 수량 0 호가는 건너뜀", OrderPathTest.bestAsk(bookZeroSize) == 0.30);
+        check("pure: 호가 없으면 unsafe", !OrderPathTest.isSafeTestBook(j("{\"asks\":[]}")));
+        check("pure: 북이 없으면 unsafe", !OrderPathTest.isSafeTestBook(null));
+
+        // 결과 불명 판정 (감사 F2) — 전송 실패 {error}는 unknown, 명시 거부는 아님
+        check("pure: 전송 실패는 unknown", OrderPathTest.isUnknownPostResponse(
+                j("{\"error\":\"Network Error\"}")));
+        check("pure: 5xx는 unknown", OrderPathTest.isUnknownPostResponse(
+                j("{\"error\":\"boom\",\"status\":503}")));
+        check("pure: 4xx 거부는 unknown 아님", !OrderPathTest.isUnknownPostResponse(
+                j("{\"error\":\"bad\",\"status\":400}")));
+        check("pure: live는 unknown 아님", !OrderPathTest.isUnknownPostResponse(
+                j("{\"success\":true,\"status\":\"live\"}")));
+
+        // 자기 주문 신원 대조 (감사 F3) — 전부 일치할 때만 인정
+        long postStart = 1_700_000_000_000L;
+        Object own = j("{\"id\":\"o1\",\"side\":\"BUY\",\"asset_id\":\"111\",\"price\":\"0.01\","
+                + "\"original_size\":\"5\",\"size_matched\":\"0\",\"order_type\":\"GTC\","
+                + "\"expiration\":\"0\",\"created_at\":1700000000,"
+                + "\"maker_address\":\"" + FUNDER + "\"}");
+        check("pure: 신원 일치면 자기 주문", OrderPathTest.isOwnTestOrder(own, "111", 5, postStart, FUNDER));
+        Object wrongSize = j("{\"id\":\"o2\",\"side\":\"BUY\",\"asset_id\":\"111\",\"price\":\"0.01\","
+                + "\"original_size\":\"10\",\"size_matched\":\"0\",\"order_type\":\"GTC\","
+                + "\"expiration\":\"0\",\"created_at\":1700000000}");
+        check("pure: 수량 다르면 남의 주문", !OrderPathTest.isOwnTestOrder(wrongSize, "111", 5, postStart, FUNDER));
+        Object oldOrder = j("{\"id\":\"o3\",\"side\":\"BUY\",\"asset_id\":\"111\",\"price\":\"0.01\","
+                + "\"original_size\":\"5\",\"size_matched\":\"0\",\"order_type\":\"GTC\","
+                + "\"expiration\":\"0\",\"created_at\":1699999000}");
+        check("pure: 제출 전 생성은 남의 주문", !OrderPathTest.isOwnTestOrder(oldOrder, "111", 5, postStart, FUNDER));
+        Object sellOrder = j("{\"id\":\"o4\",\"side\":\"SELL\",\"asset_id\":\"111\",\"price\":\"0.01\","
+                + "\"original_size\":\"5\",\"size_matched\":\"0\",\"order_type\":\"GTC\","
+                + "\"expiration\":\"0\",\"created_at\":1700000000}");
+        check("pure: 매도는 남의 주문", !OrderPathTest.isOwnTestOrder(sellOrder, "111", 5, postStart, FUNDER));
+        Object matchedOrder = j("{\"id\":\"o5\",\"side\":\"BUY\",\"asset_id\":\"111\",\"price\":\"0.01\","
+                + "\"original_size\":\"5\",\"size_matched\":\"1\",\"order_type\":\"GTC\","
+                + "\"expiration\":\"0\",\"created_at\":1700000000}");
+        check("pure: 일부 체결은 자기 주문 아님", !OrderPathTest.isOwnTestOrder(matchedOrder, "111", 5, postStart, FUNDER));
+
         // 통계 — 중앙값은 하위 중앙, p90은 nearest-rank
         long[] empty = OrderPathTest.summarizeMs(List.of());
         check("pure: 통계 빈 표본", empty[0] == 0 && empty[1] == 0 && empty[2] == 0 && empty[3] == 0);

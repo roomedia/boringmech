@@ -97,7 +97,11 @@ const {
   isOrderPathTestStale,
   pickOrderPathTestMarkets,
   planOrderPathTestSize,
+  orderPathTestBestAsk,
+  isSafeOrderPathTestBook,
   isOrderPathTestFill,
+  isOrderPathTestUnknown,
+  orderPathTestIsOwnOrder,
   orderPathTestOrderIdOf,
   orderPathTestResponseStatus,
   orderPathTestCancelConfirmed,
@@ -1565,6 +1569,33 @@ eq(parseTradeSettings({ tempStopDrop: 0.2 }).tempStopDrop, 0.2, "trade settings:
   eq(planOrderPathTestSize(5), 5, "orderpath: size passthrough");
   eq(planOrderPathTestSize(0), null, "orderpath: size 0 null");
   eq(planOrderPathTestSize(undefined), null, "orderpath: size missing null");
+
+  // 호가 안전 판정 (감사 F1) — 네이티브 isSafeTestBook과 동일
+  eq(orderPathTestBestAsk({ asks: [{ price: "0.50", size: "10" }, { price: "0.20", size: "5" }] }), 0.2, "orderpath: bestAsk min");
+  eq(isSafeOrderPathTestBook({ asks: [{ price: "0.20", size: "5" }] }), true, "orderpath: book safe");
+  eq(isSafeOrderPathTestBook({ asks: [{ price: "0.01", size: "10" }] }), false, "orderpath: ask at price unsafe");
+  eq(isSafeOrderPathTestBook({ asks: [{ price: "0.001", size: "10" }] }), false, "orderpath: ask below unsafe");
+  eq(isSafeOrderPathTestBook({ asks: [] }), false, "orderpath: no asks unsafe");
+  eq(isSafeOrderPathTestBook(null), false, "orderpath: no book unsafe");
+
+  // 결과 불명 판정 (감사 F2)
+  eq(isOrderPathTestUnknown({ error: "Network Error" }), true, "orderpath: transport error unknown");
+  eq(isOrderPathTestUnknown({ error: "boom", status: 503 }), true, "orderpath: 5xx unknown");
+  eq(isOrderPathTestUnknown({ error: "bad", status: 400 }), false, "orderpath: 4xx not unknown");
+  eq(isOrderPathTestUnknown({ success: true, status: "live" }), false, "orderpath: live not unknown");
+
+  // 자기 주문 신원 대조 (감사 F3)
+  const ownCtx = { assetKey: "111", size: 5, postStartMs: 1700000000000, funder: "0xFUNDER" };
+  const ownRow = {
+    id: "o1", side: "BUY", asset_id: "111", price: "0.01", original_size: "5",
+    size_matched: "0", order_type: "GTC", expiration: "0", created_at: 1700000000,
+    maker_address: "0xFUNDER",
+  };
+  eq(orderPathTestIsOwnOrder(ownRow, ownCtx), true, "orderpath: own order match");
+  eq(orderPathTestIsOwnOrder({ ...ownRow, original_size: "10" }, ownCtx), false, "orderpath: wrong size foreign");
+  eq(orderPathTestIsOwnOrder({ ...ownRow, created_at: 1699999000 }, ownCtx), false, "orderpath: old order foreign");
+  eq(orderPathTestIsOwnOrder({ ...ownRow, side: "SELL" }, ownCtx), false, "orderpath: sell foreign");
+  eq(orderPathTestIsOwnOrder({ ...ownRow, size_matched: "1" }, ownCtx), false, "orderpath: matched foreign");
 
   eq(isOrderPathTestFill({ success: true, status: "live", orderID: "x" }), false, "orderpath: live not fill");
   eq(isOrderPathTestFill({ success: true, status: "matched" }), true, "orderpath: matched fill");

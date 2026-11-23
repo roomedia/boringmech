@@ -32,6 +32,12 @@ public final class OrderPathTest {
     public static final int CONCURRENCY_MARKETS = 5;
     /** 요청 신선도 상한 — 수동 매도와 같은 600초. */
     public static final long MAX_REQUEST_AGE_MS = 600_000L;
+    /**
+     * 측정 1회의 총 실행 상한 — 엔진 스레드를 독점하는 측정 때문에
+     * 다음 사이클(손절 포함)이 무기한 밀리지 않게 한다. 이미 제출된
+     * 주문의 취소 정리는 이 상한과 무관하게 끝까지 수행한다.
+     */
+    public static final long MAX_RUN_MS = 600_000L;
 
     /** 뷰어 측정 요청 1건. */
     public static final class Request {
@@ -160,6 +166,40 @@ public final class OrderPathTest {
         return Double.isFinite(minOrderSize) && minOrderSize > 0 ? minOrderSize : Double.NaN;
     }
 
+    /**
+     * 오더북의 최저 매도호가 — 수량이 양수인 호가만 본다. 호가가
+     * 없으면 NaN이다.
+     */
+    public static double bestAsk(Object book) {
+        Object asks = Js.field(book, "asks");
+        if (!(asks instanceof List)) {
+            return Double.NaN;
+        }
+        double best = Double.NaN;
+        for (Object row : (List<?>) asks) {
+            double price = Js.fieldNum(row, "price");
+            double size = Js.fieldNum(row, "size");
+            if (!Double.isFinite(price) || !Double.isFinite(size) || price <= 0 || size <= 0) {
+                continue;
+            }
+            if (Double.isNaN(best) || price < best) {
+                best = price;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * 테스트 주문이 북에 닿는 순간 체결되지 않을 북인가 — 최저
+     * 매도호가가 테스트 가격보다 strictly 위에 있어야 한다. 호가가
+     * 없거나 0.01 이하이면, 0.01 지정가 매수는 즉시 체결될 수 있어
+     * "체결 불가" 전제가 성립하지 않는다 (v0.3.41 감사 F1).
+     */
+    public static boolean isSafeTestBook(Object book) {
+        double ask = bestAsk(book);
+        return Double.isFinite(ask) && ask > TEST_PRICE;
+    }
+
     // ── 응답 판정 ──
 
     /** 제출 응답의 status 문자열 (없으면 빈 문자열, 소문자). */
@@ -189,6 +229,69 @@ public final class OrderPathTest {
     /** 지연 접수 — 체결은 아니지만 뒤늦게 체결될 수 있어 즉시 취소·확인이 필요하다. */
     public static boolean isDelayedResponse(Object resp) {
         return responseStatus(resp).equals("delayed");
+    }
+
+    /**
+     * 제출 결과가 불명인가 — postOrder는 전송 실패를 예외가 아니라
+     * {error}(status 없음·0·5xx) 응답으로 돌려준다. 운영 경로와 같은
+     * JudgeFill 기준으로 unknown이면, 주문이 접수됐을 수 있어 열린
+     * 주문 확인으로 넘어가야 한다 (v0.3.41 감사 F2).
+     */
+    public static boolean isUnknownPostResponse(Object resp) {
+        JudgeFill.Verdict v = JudgeFill.judgeFill(resp);
+        return !v.filled && "unknown".equals(v.kind);
+    }
+
+    /**
+     * 열린 주문 행이 이 측정이 낸 테스트 주문인가 — 결과 불명 제출의
+     * 정리는 자산+가격만으로 남의 주문(예: 사용자가 웹으로 건 동일
+     * 가격 주문)을 취소하면 안 되므로, 행의 신원이 전부 일치할 때만
+     * 자기 주문으로 인정한다: BUY·자산·가격·원수량(계획 수량)·
+     * 미체결(size_matched 0)·GTC·만료 0·제출 이후 생성 (v0.3.41 감사 F3).
+     * created_at은 epoch 초다. maker_address가 있으면 funder와도 대조한다.
+     */
+    public static boolean isOwnTestOrder(Object row, String assetKey, double size,
+                                         long postStartMs, String funder) {
+        if (row == null || assetKey == null) {
+            return false;
+        }
+        if (!"BUY".equalsIgnoreCase(Js.str(Js.field(row, "side")))) {
+            return false;
+        }
+        Object asset = Js.field(row, "asset_id");
+        if (asset == Js.UNDEFINED || asset == null || !assetKey.equals(Js.str(asset))) {
+            return false;
+        }
+        double price = Js.fieldNum(row, "price");
+        if (!Double.isFinite(price) || Math.abs(price - TEST_PRICE) >= 1e-9) {
+            return false;
+        }
+        double orig = Js.fieldNum(row, "original_size");
+        if (!Double.isFinite(orig) || Math.abs(orig - size) >= 1e-9) {
+            return false;
+        }
+        double matched = Js.fieldNum(row, "size_matched");
+        if (!Double.isFinite(matched) || matched != 0) {
+            return false;
+        }
+        Object type = Js.field(row, "order_type");
+        if (type != Js.UNDEFINED && type != null && !"GTC".equalsIgnoreCase(Js.str(type))) {
+            return false;
+        }
+        Object exp = Js.field(row, "expiration");
+        if (exp != Js.UNDEFINED && exp != null && !"0".equals(Js.str(exp))) {
+            return false;
+        }
+        double created = Js.fieldNum(row, "created_at");
+        if (!Double.isFinite(created) || created < (postStartMs / 1000.0) - 5) {
+            return false;
+        }
+        Object maker = Js.field(row, "maker_address");
+        if (funder != null && maker != Js.UNDEFINED && maker != null
+                && !funder.equalsIgnoreCase(Js.str(maker))) {
+            return false;
+        }
+        return true;
     }
 
     /** 취소 응답이 이 주문의 취소를 확정했는가 ({canceled: [...]} 포함 여부). */
