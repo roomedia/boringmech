@@ -122,6 +122,12 @@ public final class TempNo {
         if (!tempHold) {
             return false;
         }
+        // 베팅액이 없으면 차선도 없다 — sizing의 bet=0 가드를 차선이
+        // 우회하면 0원 제출 시도가 결과 불명으로 처리돼 slug만 기매수로
+        // 남는다 (JS tempReserveLaneAllows와 같은 규칙).
+        if (!(bet > 0)) {
+            return false;
+        }
         if (laneLeft <= 0) {
             return false;
         }

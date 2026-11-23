@@ -1344,6 +1344,7 @@ public final class NativeCycle {
                     tempSettings.reserveSlots, tradeCfg.maxPositions);
             boolean lanePossible = tempSettings.enabled && reserveEffPre > 0
                     && snap.openCount < tradeCfg.maxPositions
+                    && snap.bet > 0
                     && snap.cash >= snap.bet + tradeCfg.reserveUsd;
             if (!lanePossible) {
                 log("슬롯 없음 — 이번 사이클 매수 없음");

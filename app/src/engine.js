@@ -904,6 +904,10 @@ export function tempReserveBlocksMain(strategy, slotsLeft, verified, reserveSlot
 export function tempReserveLaneAllows({ strategy, tempHold, laneLeft, positionsUsed, maxPositions, cashLeft, bet, reserveUsd }) {
   if (strategy !== "temp_no") return false;
   if (!tempHold) return false;
+  // 베팅액이 없으면 차선도 없다 — sizing의 bet=0 가드(베팅액이 없으면
+  // 슬롯도 없다)를 차선이 우회하면 0원 제출 시도가 결과 불명으로
+  // 처리돼 slug만 기매수로 남는다 (v0.3.40 감사 축 4).
+  if (!(bet > 0)) return false;
   if (!(laneLeft > 0)) return false;
   if (!(positionsUsed < maxPositions)) return false;
   return cashLeft >= bet + reserveUsd;
@@ -2295,6 +2299,7 @@ async function runCycle(gen) {
     const reserveEffPre = effectiveTempReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions);
     const lanePossible = tempSettings.enabled && reserveEffPre > 0
       && snap.openCount < tradeCfg.maxPositions
+      && snap.bet > 0
       && snap.cash >= snap.bet + tradeCfg.reserveUsd;
     if (!lanePossible) {
       log("슬롯 없음 — 이번 사이클 매수 없음");

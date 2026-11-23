@@ -13,5 +13,5 @@
     "bundle": "node bundle.mjs",
     "test": "node test/book.test.mjs && node test/temp.test.mjs && node test/bundle.test.mjs"
   },
-  "version": "0.3.39"
+  "version": "0.3.40"
 }

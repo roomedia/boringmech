@@ -357,6 +357,8 @@ public class TempNoTest {
                     !TempNo.reserveLaneAllows(TempNo.STRATEGY, true, 0, 0, 70, 10, 3, 2.5));
             check("lane: positions full → deny",
                     !TempNo.reserveLaneAllows(TempNo.STRATEGY, true, 1, 70, 70, 10, 3, 2.5));
+            check("lane: bet 0 → deny (sizing bet=0 가드 우회 차단)",
+                    !TempNo.reserveLaneAllows(TempNo.STRATEGY, true, 1, 0, 70, 100, 0, 2.5));
         }
 
         // ── 창 대기 판정 (JS tempHasUpcomingWindow와 같은 경계) ──────

@@ -484,6 +484,7 @@ eq(
   eq(tempReserveLaneAllows({ ...base, tempHold: false }), false, "lane: hold off → deny");
   eq(tempReserveLaneAllows({ ...base, laneLeft: 0 }), false, "lane: lane exhausted → deny");
   eq(tempReserveLaneAllows({ ...base, positionsUsed: 70 }), false, "lane: positions full → deny");
+  eq(tempReserveLaneAllows({ ...base, bet: 0, cashLeft: 100 }), false, "lane: bet 0 → deny (sizing bet=0 가드 우회 차단)");
 
   // 구조 가드 — 드라이버가 슬롯 소진 뒤 차선으로 기온만 더 시도하고,
   // 슬롯 0 조기 반환도 차선 가능성을 먼저 보는지 확인한다.
