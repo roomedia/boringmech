@@ -1,6 +1,8 @@
 # v0.3.44 출시 상태
 
-- 상태: running
+- 상태: awaiting (출시 완료, 설치는 동호 직접)
+- 릴리스: https://github.com/roomedia/boringmech/releases/tag/v0.3.44 (APK 첨부 확인)
+- 출시 커밋: 5dadbeb (roomedia 단독 저자, main 푸시 완료)
 - 변경: 제보 payload에 settings 키 첨부 (bm_settings 실효값 전체, 엔진과 같은 원본)
 - 단계:
   1. [완료] 코드 대조 — sendReport (index.html:1446), 설정 원본 경로 readSettingsObject (localStorage → AndroidBridge.getDurable('bm_settings'), 설정 화면과 동일), 엔진 해석 BM.parseTradeSettings + 기온은 parseTempSettings (BM 미노출이라 뷰어 readTempSettings와 규칙 대조 완료)
@@ -19,5 +21,5 @@
      - 골든: 1차 48/48 · 2차 200 · 3차 178 · 4차 215 ALL PASS (전부 v0.3.43과 동일)
   5. [완료] APK 빌드, DEX 게이트 PASSED, 축소 스모크 PASSED
      - 출하 APK 직접 대조: versionCode 47 / 0.3.44, assets/index.html에 payload.settings 배선 존재, assets/engine.js에 effectiveSettingsSummary 존재
-  6. [진행] GitHub 릴리스 게시 (설치 없음)
+  6. [완료] GitHub 릴리스 게시 (설치 없음)
 - 미검증: 제보 settings 첨부는 실기기 미검증. 설치 후 첫 제보에 settings 키가 실리는지가 검증 지점이다. 서명 경로는 이번 변경과 무관하다 (주문·서명 코드 무변경).
