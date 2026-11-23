@@ -13,6 +13,11 @@
 창 밖이면 즉시 종료한다. 무인 실행은 훅이 15분 간격으로 이 스크립트를
 부르는 형태다.
 
+선정 단계에서 가격 사유 (밴드 밖)로 탈락한 시장은 scan_drop 레코드로
+개별 기록도 남긴다 (패스당 상한 MAX_BAND_DROP_RECORDS, 초과 시
+scan_drop_truncated 레코드로 생략 개수를 명시). 집계 카운트
+(scan_drops)는 기존 그대로다.
+
 사용법:
   scanner.py                 실제 시계로 1패스 (창 밖이면 즉시 종료)
   scanner.py --now 2026-11-22T07:00:00Z   시뮬레이션 시각 (드라이 패스)
@@ -66,6 +71,10 @@ ASK_ABOVE_SIGNAL = 0.05
 
 DEFAULT_BET = 5.0  # 앱 최소 사이징 (깊이 임계는 max($10, bet)라 $10으로 같다)
 FETCH_TIMEOUT = 75  # 이 VM 출구 프록시가 느려 요청당 40초 걸린 실측이 있다
+# 선정 단계 가격 탈락 개별 기록의 패스당 상한 — 실측 최대 242건/패스
+# (2026-11-22)라 현 규모에서는 전수 기록되고, 비정상 폭증만 막는다.
+# 초과분은 잘라낸 개수를 별도 레코드로 남긴다.
+MAX_BAND_DROP_RECORDS = 500
 
 
 class ProviderBlocked(Exception):
@@ -177,8 +186,15 @@ def parse_prices(raw):
     return out
 
 
-def scan_candidates(events, now_ms, stats):
-    """scanTempCandidates 복제 — held/bought는 페이퍼라 빈 집합."""
+def scan_candidates(events, now_ms, stats, drop_records=None):
+    """scanTempCandidates 복제 — held/bought는 페이퍼라 빈 집합.
+
+    가격 사유 탈락 (temp_band_out)은 카운트만으로는 역방향 유입
+    (스냅샷은 밴드 밖, ask는 밴드 안)을 분리할 수 없어, drop_records가
+    주어지면 slug·스냅샷 가격 쌍 (Gamma outcomePrices [Yes, No])을
+    개별 기록으로도 남긴다 (Q17 분석 후속). 선정 단계에서는 오더북을
+    조회하지 않으므로 ask는 없고, 후단 verdict와 slug로 조인해 본다.
+    """
     def drop(reason):
         stats[reason] = stats.get(reason, 0) + 1
 
@@ -212,6 +228,18 @@ def scan_candidates(events, now_ms, stats):
             price = prices[1]  # No 가격
             if price < BAND_LO or price > BAND_HI:
                 drop("temp_band_out")
+                if drop_records is not None:
+                    drop_records.append({
+                        "slug": m.get("slug") or "",
+                        "title": m.get("groupItemTitle"),
+                        "reason": "temp_band_out",
+                        "side": "below_lo" if price < BAND_LO else "above_hi",
+                        "priceYes": prices[0],
+                        "priceNo": price,
+                        "bandLo": BAND_LO,
+                        "bandHi": BAND_HI,
+                        "endDate": m.get("endDate") or ev.get("endDate") or "",
+                    })
                 continue
             out.append({
                 "slug": m.get("slug") or "",
@@ -434,11 +462,22 @@ def run_pass(now_ms, bet, out_dir, simulated):
                     events.append(ev)
 
         stats = {}
-        candidates = scan_candidates(events, now_ms, stats)
+        drop_records = []
+        candidates = scan_candidates(events, now_ms, stats, drop_records)
+        kept_drops = drop_records[:MAX_BAND_DROP_RECORDS]
+        omitted_drops = len(drop_records) - len(kept_drops)
         emit({"type": "pass_start", "now": stamp.isoformat(),
               "events_fetched": len(events),
               "event_fetch_failures": fetch_failures,
-              "scan_drops": stats, "candidates": len(candidates)})
+              "scan_drops": stats, "candidates": len(candidates),
+              "band_drop_records": len(kept_drops),
+              "band_drop_records_omitted": omitted_drops})
+        for d in kept_drops:
+            emit({"type": "scan_drop", **d})
+        if omitted_drops:
+            emit({"type": "scan_drop_truncated", "reason": "temp_band_out",
+                  "omitted": omitted_drops,
+                  "cap": MAX_BAND_DROP_RECORDS})
         for c in candidates:
             emit({"type": "candidate", **c})
 
