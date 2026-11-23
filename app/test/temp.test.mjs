@@ -21,6 +21,7 @@ const {
   tempReserveBlocksMain,
   tempHasUpcomingWindow,
   tempEventSlugsForFetch,
+  tempFetchDayKey,
   buyLimitPrice,
   effectiveTempReserveSlots,
   TEMP_NO_CITIES,
@@ -593,6 +594,37 @@ eq(effectiveTempReserveSlots(0, 70), 0, "audit6: zero reserve kept");
     cycleSrc.includes("&& (tempFetchFailed"),
     true,
     "auditE: total failure keeps the reserve",
+  );
+}
+
+
+// ── Q6 — 기온 조회 캐시 자정 경계 ────────────────────────────
+// 캐시는 기준 UTC 날짜가 같은 동안만 유효하다. 날짜가 바뀌면 15분이
+// 안 지났어도 전날 캐시가 새 날짜 집합(오늘+내일)을 덮지 않는다.
+{
+  eq(tempFetchDayKey(Date.UTC(2026, 10, 15, 23, 55)), "2026-11-15", "daykey: before midnight");
+  eq(tempFetchDayKey(Date.UTC(2026, 10, 16, 0, 5)), "2026-11-16", "daykey: after midnight");
+  eq(tempFetchDayKey(Date.UTC(2026, 10, 16, 0, 0)), "2026-11-16", "daykey: midnight belongs to new day");
+  eq(tempFetchDayKey(Date.UTC(2026, 10, 15, 12, 0)), "2026-11-15", "daykey: midday");
+  // fetchTempEvents는 비공개라 배선을 소스 구조로 확인한다
+  // (네이티브 쪽은 NativeCycleTest가 동작으로 검증한다).
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+  const fetchSrc = src.slice(src.indexOf("async function fetchTempEvents"), src.indexOf("function roundTick"));
+  eq(
+    fetchSrc.includes("const dayKey = tempFetchDayKey(nowMs);"),
+    true,
+    "midnight guard: fetch computes the day key",
+  );
+  eq(
+    fetchSrc.includes("tempEventsCache.dayKey === dayKey"),
+    true,
+    "midnight guard: cache hit requires same day key",
+  );
+  eq(
+    fetchSrc.includes("tempEventsCache = { atMs: nowMs, dayKey, events };"),
+    true,
+    "midnight guard: cache store records the day key",
   );
 }
 

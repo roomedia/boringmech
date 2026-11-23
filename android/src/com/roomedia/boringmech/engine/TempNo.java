@@ -134,6 +134,15 @@ public final class TempNo {
     }
 
     /**
+     * 조회 날짜 집합의 기준 키 — nowMs가 속한 UTC 날짜 (ISO). 조회
+     * 범위가 오늘+내일(UTC)이라 기준 날짜가 바뀌면 집합 자체가
+     * 달라진다 (JS tempFetchDayKey와 같은 규칙).
+     */
+    public static String fetchDayKey(long nowMs) {
+        return Instant.ofEpochMilli(nowMs).atZone(ZoneOffset.UTC).toLocalDate().toString();
+    }
+
+    /**
      * 조회 범위 슬러그 — 오늘과 내일(UTC) 날짜의 전체 도시 이벤트
      * 슬러그. 후보 생성은 창 안(당일)에서만 일어나지만, 예약 홀드는
      * 내일 이벤트가 전날 저녁부터 보여야 걸리므로 조회 범위만 이틀치로

@@ -188,9 +188,10 @@ public final class NativeCycle {
     /** slug → Gamma feeType 캐시 — 손절 판정의 Gamma 조회에서 채워지고 스냅샷의 수수료율 표시에 쓰인다. */
     private final Map<String, String> feeTypeBySlug = new HashMap<>();
 
-    /** 기온 이벤트 조회 캐시 — 사이클마다 도시 전수를 호출하지 않게 15분 유지한다. */
+    /** 기온 이벤트 조회 캐시 — 사이클마다 도시 전수를 호출하지 않게 15분 유지한다. 기준 UTC 날짜가 바뀌면 무효화한다. */
     private List<Object> tempEventsCache;
     private long tempEventsCacheAtMs;
+    private String tempEventsCacheDayKey;
 
     private List<Object> lastOpenRows = new ArrayList<>();
     private List<Object> lastWinRows;
@@ -1355,10 +1356,14 @@ public final class NativeCycle {
      * 건너뛰므로 돌아온 목록(빈 목록 포함)을 그대로 캐시한다. 단,
      * 전 도시 실패(null)는 캐시하지 않아 다음 사이클에 다시 시도한다
      * (JS fetchTempEvents와 같은 규칙). 조회 범위만 이틀치이고 후보
-     * 생성은 창 판정으로 당일 이벤트만 쓴다.
+     * 생성은 창 판정으로 당일 이벤트만 쓴다. 캐시는 기준 UTC 날짜가
+     * 같은 동안만 유효하다 — 자정을 넘기면 날짜 집합이 달라져 전날
+     * 캐시가 새 집합을 덮지 않게 무효화한다.
      */
     private List<Object> tempEvents(long nowMs) throws Exception {
-        if (tempEventsCache != null && nowMs - tempEventsCacheAtMs < TempNo.CACHE_MS) {
+        String dayKey = TempNo.fetchDayKey(nowMs);
+        if (tempEventsCache != null && dayKey.equals(tempEventsCacheDayKey)
+                && nowMs - tempEventsCacheAtMs < TempNo.CACHE_MS) {
             return tempEventsCache;
         }
         List<Object> events = net.fetchTempEvents(TempNo.eventSlugsForFetch(nowMs));
@@ -1370,6 +1375,7 @@ public final class NativeCycle {
         }
         tempEventsCache = events;
         tempEventsCacheAtMs = nowMs;
+        tempEventsCacheDayKey = dayKey;
         return events;
     }
 

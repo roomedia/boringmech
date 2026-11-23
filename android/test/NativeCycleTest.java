@@ -456,6 +456,41 @@ public class NativeCycleTest {
         check("temp allfail: 캐시하지 않아 재조회", net.tempEventsCalls == 2);
     }
 
+    /**
+     * 캐시 자정 경계: 기준 UTC 날짜가 바뀌면 15분이 안 지났어도 전날
+     * 캐시를 버리고 새 날짜 집합(오늘+내일)으로 다시 조회한다. 같은
+     * 날짜 집합 안에서는 종전대로 캐시를 쓴다.
+     */
+    private static void tempCacheExpiresAtUtcMidnight() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.markets = new ArrayList<>();
+        tempStage(net);
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        // 자정 5분 전 (11-15) — 첫 조회는 11-15·11-16 집합.
+        env.nowMsOverride = Instant.parse("2026-11-15T23:55:00Z").toEpochMilli();
+        c.runIteration(1);
+        check("temp midnight: 첫 조회 1회", net.tempEventsCalls == 1);
+        check("temp midnight: 첫 집합은 15·16일", net.lastTempSlugs != null
+                && net.lastTempSlugs.contains("highest-temperature-in-seoul-on-november-15-2026")
+                && net.lastTempSlugs.contains("highest-temperature-in-seoul-on-november-16-2026"));
+        // 자정 5분 뒤 (11-16) — 캐시 나이 10분 < 15분이지만 날짜가
+        // 바뀌었으므로 새 집합(16·17일)으로 다시 조회한다.
+        env.nowMsOverride = Instant.parse("2026-11-16T00:05:00Z").toEpochMilli();
+        c.runIteration(1);
+        check("temp midnight: 자정 경계에서 재조회", net.tempEventsCalls == 2);
+        check("temp midnight: 새 집합은 16·17일", net.lastTempSlugs != null
+                && net.lastTempSlugs.contains("highest-temperature-in-seoul-on-november-16-2026")
+                && net.lastTempSlugs.contains("highest-temperature-in-seoul-on-november-17-2026")
+                && !net.lastTempSlugs.contains("highest-temperature-in-seoul-on-november-15-2026"));
+        // 같은 날짜 집합 안 (00:10) — 캐시를 그대로 쓴다.
+        env.nowMsOverride = Instant.parse("2026-11-16T00:10:00Z").toEpochMilli();
+        c.runIteration(1);
+        check("temp midnight: 같은 집합에서는 캐시 유지", net.tempEventsCalls == 2);
+    }
+
     private static void tempOffByDefault() {
         FakeEnv env = new FakeEnv();
         FakeNet net = new FakeNet();
@@ -2159,6 +2194,7 @@ public class NativeCycleTest {
         buyPath();
         tempBuyPath();
         tempFetchAllFailNotCached();
+        tempCacheExpiresAtUtcMidnight();
         tempOffByDefault();
         tempReserveSlotGoesToTemp();
         tempReserveMainOnlyUsesAllSlots();
