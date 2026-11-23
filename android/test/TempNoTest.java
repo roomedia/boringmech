@@ -340,6 +340,25 @@ public class TempNoTest {
                     !TempNo.reserveBlocksMain(null, 9, cap - 4, cap, 3));
         }
 
+        // ── 예약 차선 판정 (JS tempReserveLaneAllows와 같은 경계) ──
+        {
+            // 기준: bet $3, 예비금 $2.5 → 현금이 5.5 이상이면 차선 허용
+            check("lane: temp + hold + cash enough → allow",
+                    TempNo.reserveLaneAllows(TempNo.STRATEGY, true, 1, 0, 70, 10, 3, 2.5));
+            check("lane: cash exactly bet+reserve → allow",
+                    TempNo.reserveLaneAllows(TempNo.STRATEGY, true, 1, 0, 70, 5.5, 3, 2.5));
+            check("lane: cash below bet+reserve → deny",
+                    !TempNo.reserveLaneAllows(TempNo.STRATEGY, true, 1, 0, 70, 5.49, 3, 2.5));
+            check("lane: main strategy → deny",
+                    !TempNo.reserveLaneAllows(null, true, 1, 0, 70, 10, 3, 2.5));
+            check("lane: hold off → deny",
+                    !TempNo.reserveLaneAllows(TempNo.STRATEGY, false, 1, 0, 70, 10, 3, 2.5));
+            check("lane: lane exhausted → deny",
+                    !TempNo.reserveLaneAllows(TempNo.STRATEGY, true, 0, 0, 70, 10, 3, 2.5));
+            check("lane: positions full → deny",
+                    !TempNo.reserveLaneAllows(TempNo.STRATEGY, true, 1, 70, 70, 10, 3, 2.5));
+        }
+
         // ── 창 대기 판정 (JS tempHasUpcomingWindow와 같은 경계) ──────
         // 이벤트 endDate 2026-11-18T12:00Z, 진입 창은 당일 06:00~12:00 UTC.
         {
@@ -464,6 +483,33 @@ public class TempNoTest {
                     tempCand, 5, gamma, books, AT_7AM, TradeSettings.defaults(), 9);
             check("verify temp entry hour 9 rejects at 07:00",
                     !hour9Res.ok && "end_out_of_range".equals(hour9Res.reason));
+
+            // 최소 수량 검사 — 기온은 유저 설정 금액이 정본이라 bet $3
+            // (추정 약 3주 < min_order_size 5)에서도 탈락하지 않는다.
+            CandidateVerifier.Result tempMinRes = CandidateVerifier.verifyCandidate(
+                    tempCand, 3, gamma, books, AT_7AM);
+            check("verify temp bet $3 passes min size", tempMinRes.ok);
+
+            // 메인은 같은 금액에서 기존대로 최소 수량에 걸린다.
+            Object mainLowPage = jlist("[{\"slug\":\"some-main-market\",\"active\":true,"
+                    + "\"closed\":false,\"endDate\":\"2026-12-01T12:00:00Z\","
+                    + "\"outcomePrices\":\"[0.25,0.75]\",\"clobTokenIds\":\"[\\\"t0\\\",\\\"t1\\\"]\"}]");
+            Object mainLowBook = JsonText.parse("{\"asks\":[{\"price\":0.75,\"size\":100}],"
+                    + "\"bids\":[{\"price\":0.74,\"size\":100}],\"tick_size\":\"0.001\","
+                    + "\"min_order_size\":5,\"neg_risk\":false}");
+            CandidateVerifier.BookSource mainLowBooks = new CandidateVerifier.BookSource() {
+                @Override public Object getOrderBook(String tokenId) { return mainLowBook; }
+                @Override public double getTickSize(String tokenId) { return 0.001; }
+            };
+            ScanFilter.Candidate mainLowCand = new ScanFilter.Candidate(
+                    "some-main-market", "q", "no", 0.75, "2026-12-01T12:00:00Z");
+            CandidateVerifier.Result mainMinRes = CandidateVerifier.verifyCandidate(
+                    mainLowCand, 3, slug -> mainLowPage, mainLowBooks, AT_7AM);
+            check("verify main bet $3 still rejects below min size",
+                    !mainMinRes.ok && "below_min_order_size".equals(mainMinRes.reason));
+            CandidateVerifier.Result mainMin5Res = CandidateVerifier.verifyCandidate(
+                    mainLowCand, 5, slug -> mainLowPage, mainLowBooks, AT_7AM);
+            check("verify main bet $5 passes min size", mainMin5Res.ok);
 
             // 메인 밴드를 설정으로 넓히면 같은 호가도 통과한다
             TradeSettings wideCfg = TradeSettings.parse("{\"bandHi\":0.99}");

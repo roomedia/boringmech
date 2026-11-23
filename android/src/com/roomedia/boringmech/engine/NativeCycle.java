@@ -1337,8 +1337,19 @@ public final class NativeCycle {
             }
         }
         if (snap.slots < 1) {
-            log("슬롯 없음 — 이번 사이클 매수 없음");
-            return;
+            // sizing 슬롯이 0이어도 예약 차선이 성립할 가능성이 있으면
+            // 스캔까지 진행한다 — 홀드가 비워 둔 자리는 기온이 실제로
+            // 쓸 수 있어야 한다 (JS runCycle과 같은 규칙).
+            int reserveEffPre = TempNo.effectiveReserveSlots(
+                    tempSettings.reserveSlots, tradeCfg.maxPositions);
+            boolean lanePossible = tempSettings.enabled && reserveEffPre > 0
+                    && snap.openCount < tradeCfg.maxPositions
+                    && snap.cash >= snap.bet + tradeCfg.reserveUsd;
+            if (!lanePossible) {
+                log("슬롯 없음 — 이번 사이클 매수 없음");
+                return;
+            }
+            log("슬롯 없음 — 기온 예약 차선으로 진입을 시도합니다");
         }
         if (BoughtReconcile.boughtCorrupted(env.durableRead("bm_bought"))) {
             log("기매수 기록 손상 감지 — 이번 사이클 매수를 건너뜁니다 (재매수 방벽 보호)");
@@ -1453,6 +1464,10 @@ public final class NativeCycle {
                 && (tempFetchFailed
                     || TempNo.hasUpcomingWindow(tempEventsList, env.nowMs(),
                             tempSettings.entryHourUtc, snap.heldSlugs, boughtAll));
+        // 예약 차선 회계 — sizing 슬롯 밖에서 쓴 자리·현금을 따로 센다.
+        int laneLeft = tempHold ? reserveEff : 0;
+        int positionsUsed = snap.openCount;
+        double cashLeft = snap.cash;
         List<ScanFilter.Candidate> heldMain = new ArrayList<>();
         for (ScanFilter.Candidate cand : candidates) {
             if (!env.isRunning(gen)) {
@@ -1464,8 +1479,19 @@ public final class NativeCycle {
                 heldMain.add(cand);
                 continue;
             }
-            if (slotsLeft < 1 || verified >= tradeCfg.verifyCap) {
+            if (verified >= tradeCfg.verifyCap) {
                 break;
+            }
+            boolean viaLane = false;
+            if (slotsLeft < 1) {
+                // sizing 슬롯이 소진된 뒤에는 예약 차선으로 기온 후보만
+                // 더 시도한다 (JS 선정 드라이버와 같은 규칙).
+                if (TempNo.reserveLaneAllows(cand.strategy, tempHold, laneLeft, positionsUsed,
+                        tradeCfg.maxPositions, cashLeft, snap.bet, tradeCfg.reserveUsd)) {
+                    viaLane = true;
+                } else {
+                    continue;
+                }
             }
             env.beatProgress(cycle);
             verified++;
@@ -1522,7 +1548,9 @@ public final class NativeCycle {
                     } catch (Exception e) {
                         failedCount++;
                         markBought(cand.slug, cand.strategy);
-                        slotsLeft--;
+                        if (viaLane) { laneLeft--; } else { slotsLeft--; }
+                        positionsUsed++;
+                        cashLeft -= snap.bet;
                         String m = msg(e);
                         log("주문 결과 불명 " + cand.slug + ": " + slice(m, 120) + " — 중복 방지 기록"
                                 + (TempNo.STRATEGY.equals(cand.strategy) ? " · 전략 temp_no" : ""));
@@ -1540,7 +1568,9 @@ public final class NativeCycle {
                     if (!verdict.filled && "unknown".equals(verdict.kind)) {
                         failedCount++;
                         markBought(cand.slug, cand.strategy);
-                        slotsLeft--;
+                        if (viaLane) { laneLeft--; } else { slotsLeft--; }
+                        positionsUsed++;
+                        cashLeft -= snap.bet;
                         log("주문 결과 불명 " + cand.slug + ": " + slice(verdict.error == null ? "" : verdict.error, 120)
                                 + " — 중복 방지 기록"
                                 + (TempNo.STRATEGY.equals(cand.strategy) ? " · 전략 temp_no" : ""));
@@ -1568,7 +1598,9 @@ public final class NativeCycle {
                         unfilledCount++;
                         if ("delayed".equals(verdict.status)) {
                             markBought(cand.slug, cand.strategy);
-                            slotsLeft--;
+                            if (viaLane) { laneLeft--; } else { slotsLeft--; }
+                            positionsUsed++;
+                            cashLeft -= snap.bet;
                             log("미체결(지연 접수) " + cand.slug + " — 뒤늦은 체결에 대비해 기록하고 슬롯을 소모합니다"
                                     + (TempNo.STRATEGY.equals(cand.strategy) ? " · 전략 temp_no" : ""));
                         } else {
@@ -1582,7 +1614,9 @@ public final class NativeCycle {
                     markBought(cand.slug, cand.strategy);
                     sessionFills++;
                     filledCount++;
-                    slotsLeft--;
+                    if (viaLane) { laneLeft--; } else { slotsLeft--; }
+                    positionsUsed++;
+                    cashLeft -= snap.bet;
                     Object making = Js.field(resp, "makingAmount");
                     Object taking = Js.field(resp, "takingAmount");
                     boolean hasFillPrice = Js.truthy(making) && Js.truthy(taking);
@@ -1592,6 +1626,7 @@ public final class NativeCycle {
                     log("매수 " + cand.slug + " · $" + n(snap.bet) + " @ " + n(detail.limitPrice) + fill
                             + " · 상태 " + (Js.truthy(respStatus) ? Js.str(respStatus) : "matched")
                             + (TempNo.STRATEGY.equals(cand.strategy) ? " · 전략 temp_no" : "")
+                            + (viaLane ? " · 예약 차선" : "")
                             + (TempNo.STRATEGY.equals(cand.strategy) && cand.feeRate != null
                                     ? " · 수수료율 " + n(cand.feeRate) : ""));
                     // 응답에 실제 체결 수량·가격이 있을 때만 본문에 넣는다.

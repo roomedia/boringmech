@@ -892,6 +892,24 @@ export function tempReserveBlocksMain(strategy, slotsLeft, verified, reserveSlot
 }
 
 /**
+ * 기온 예약 차선 판정 — sizing 슬롯이 소진된 뒤에도 기온 후보가 예약
+ * 몫으로 진입을 시도할 수 있는지 정하는 순수 함수. 홀드가 비워 둔
+ * 슬롯은 실제로 쓸 수 있어야 한다: sizing 슬롯은 (현금 − 현금 하한)
+ * ÷ 건당 금액이라, 현금 하한에 여유액이 건당 금액보다 적으면 슬롯이
+ * 0이 돼 홀드가 지킬 자리 자체가 사라진다. 차선은 현금 하한 비율을
+ * 넘겨 쓰되 예비금(reserveUsd)은 건드리지 않고, 전체 포지션 상한과
+ * 예약 개수를 넘지 않는다. 금액은 유저 설정 건당 금액 그대로다
+ * (네이티브 TempNo.reserveLaneAllows와 같은 규칙).
+ */
+export function tempReserveLaneAllows({ strategy, tempHold, laneLeft, positionsUsed, maxPositions, cashLeft, bet, reserveUsd }) {
+  if (strategy !== "temp_no") return false;
+  if (!tempHold) return false;
+  if (!(laneLeft > 0)) return false;
+  if (!(positionsUsed < maxPositions)) return false;
+  return cashLeft >= bet + reserveUsd;
+}
+
+/**
  * 기온 이벤트 목록 → No 페이드 후보. 후보는 메인 후보와 같은 선정
  * 패스(슬롯·검증 캡 공유)를 타며, excludeSlugs(메인 후보 slug)와
  * 겹치면 메인 쪽이 이긴다. 정렬은 만기 가까운 순, 동률은 No 가격
@@ -1650,7 +1668,10 @@ async function verifyCandidate(cand, bet, cfg = DEFAULT_TRADE_SETTINGS, entryHou
   // 최소 주문 수량 검사용 추정치 — 실제 주식수는 시장가 주문이 금액에서 역산한다
   const estShares = bet / limitPrice;
   const minSize = Number(book.min_order_size || 0);
-  if (estShares < minSize) return reject("below_min_order_size");
+  // 기온 후보는 시장가 주문 금액(유저 설정 건당 금액)이 정본이라 수량
+  // 하한으로 탈락시키지 않는다 — 금액을 기본 최소액 아래로 낮추면 추정
+  // 수량이 min_order_size 아래로 떨어져 기온 진입이 전건 막혔다.
+  if (!isTemp && estShares < minSize) return reject("below_min_order_size");
   return {
     ok: true,
     tokenId,
@@ -2267,9 +2288,19 @@ async function runCycle(gen) {
       log(`보유 대조 경고: 체결 기록 ${state.sessionFills}건인데 포지션은 ${found}건만 확인됨`);
     }
   }
+  const tempSettings = parseTempSettings(durableRead(LS.settings));
   if (snap.slots < 1) {
-    log("슬롯 없음 — 이번 사이클 매수 없음");
-    return;
+    // sizing 슬롯이 0이어도 예약 차선이 성립할 가능성이 있으면 스캔까지
+    // 진행한다 — 홀드가 비워 둔 자리는 기온이 실제로 쓸 수 있어야 한다.
+    const reserveEffPre = effectiveTempReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions);
+    const lanePossible = tempSettings.enabled && reserveEffPre > 0
+      && snap.openCount < tradeCfg.maxPositions
+      && snap.cash >= snap.bet + tradeCfg.reserveUsd;
+    if (!lanePossible) {
+      log("슬롯 없음 — 이번 사이클 매수 없음");
+      return;
+    }
+    log("슬롯 없음 — 기온 예약 차선으로 진입을 시도합니다");
   }
   // 기매수 기록이 손상된 사이클은 매수를 건너뛴다 — 빈 기록으로 읽어
   // 닫힌 종목을 다시 사는 것보다 한 사이클 쉬는 게 안전하다.
@@ -2291,7 +2322,6 @@ async function runCycle(gen) {
   // 기온 No 페이드 — 설정이 켜졌을 때만 별도 스캔을 붙인다. 후보는 같은
   // 선정 패스(슬롯·검증 캡 공유)를 타고, 메인 후보와 slug가 겹치면
   // 메인 쪽이 이긴다 (excludeSlugs). 기온 스캔 통계는 요약에 섞지 않는다.
-  const tempSettings = parseTempSettings(durableRead(LS.settings));
   let tempEventsList = null;
   // 기온 이벤트 조회 전수 실패 여부 — 실패와 "오늘 이벤트 없음"을
   // 구분해, 전수 실패 사이클은 예약을 유지하는 쪽으로 판정한다
@@ -2320,6 +2350,10 @@ async function runCycle(gen) {
   }
   state.lastScan = { stats: scanStats, fetched: markets.length, ts: Date.now() };
   let slotsLeft = snap.slots;
+  // 예약 차선 회계 — sizing 슬롯 밖에서 쓴 자리·현금을 따로 센다.
+  let laneLeft = 0;
+  let positionsUsed = snap.openCount;
+  let cashLeft = snap.cash;
   let verified = 0;
   const rejects = {};
   let filledCount = 0;
@@ -2330,7 +2364,15 @@ async function runCycle(gen) {
   };
   // 후보 1건 처리 — true를 돌려주면 사이클을 즉시 중단한다 (아래 본문의
   // 중단 지점). 호출 순서와 예산 판정은 선정 드라이버가 맡는다.
-  const attemptCandidate = async (cand) => {
+  const attemptCandidate = async (cand, viaLane = false) => {
+    // 자리를 소모하는 결과(체결·결과 불명·지연 접수)마다 한 번씩 센다.
+    // 차선 매수는 sizing 슬롯 대신 예약 차선을 소모한다.
+    const consumeSlot = () => {
+      if (viaLane) laneLeft -= 1;
+      else slotsLeft -= 1;
+      positionsUsed += 1;
+      cashLeft -= snap.bet;
+    };
     beatProgress();
     verified += 1;
     let detail;
@@ -2391,7 +2433,7 @@ async function runCycle(gen) {
         // 슬롯이 남아 같은 사이클에 추가 매수가 나가면 사이징 상한을 넘는다)
         failedCount += 1;
         markBought(cand.slug, cand.strategy);
-        slotsLeft -= 1;
+        consumeSlot();
         const msg = String(e.message ?? e);
         log(`주문 결과 불명 ${cand.slug}: ${msg.slice(0, 120)} — 중복 방지 기록${cand.strategy === "temp_no" ? " · 전략 temp_no" : ""}`);
         if (isFailsafe(msg)) {
@@ -2407,7 +2449,7 @@ async function runCycle(gen) {
         // 체결됐을 수 있는 것으로 취급한다.
         failedCount += 1;
         markBought(cand.slug, cand.strategy);
-        slotsLeft -= 1;
+        consumeSlot();
         log(`주문 결과 불명 ${cand.slug}: ${String(verdict.error || "").slice(0, 120)} — 중복 방지 기록${cand.strategy === "temp_no" ? " · 전략 temp_no" : ""}`);
         return false;
       }
@@ -2431,7 +2473,7 @@ async function runCycle(gen) {
         unfilledCount += 1;
         if (verdict.status === "delayed") {
           markBought(cand.slug, cand.strategy);
-          slotsLeft -= 1;
+          consumeSlot();
           log(`미체결(지연 접수) ${cand.slug} — 뒤늦은 체결에 대비해 기록하고 슬롯을 소모합니다${cand.strategy === "temp_no" ? " · 전략 temp_no" : ""}`);
         } else {
           log(`미체결 ${cand.slug} · 응답 status: ${resp.status ?? "(없음)"} · 응답 원문: ${JSON.stringify(resp).slice(0, 200)}`);
@@ -2441,11 +2483,11 @@ async function runCycle(gen) {
       markBought(cand.slug, cand.strategy);
       state.sessionFills += 1;
       filledCount += 1;
-      slotsLeft -= 1;
+      consumeSlot();
       const fill = resp.makingAmount && resp.takingAmount
         ? ` 체결가 ${round2(Number(resp.makingAmount) / Number(resp.takingAmount))}`
         : "";
-      log(`매수 ${cand.slug} · $${snap.bet} @ ${detail.limitPrice}${fill} · 상태 ${resp.status ?? "matched"}${cand.strategy === "temp_no" ? " · 전략 temp_no" : ""}${cand.strategy === "temp_no" && cand.feeRate != null ? ` · 수수료율 ${cand.feeRate}` : ""}`);
+      log(`매수 ${cand.slug} · $${snap.bet} @ ${detail.limitPrice}${fill} · 상태 ${resp.status ?? "matched"}${cand.strategy === "temp_no" ? " · 전략 temp_no" : ""}${viaLane ? " · 예약 차선" : ""}${cand.strategy === "temp_no" && cand.feeRate != null ? ` · 수수료율 ${cand.feeRate}` : ""}`);
       notifyMoney(
         "매수 체결",
         `건당 $${snap.bet} · 체결가 ${resp.makingAmount && resp.takingAmount ? round2(Number(resp.makingAmount) / Number(resp.takingAmount)) : detail.limitPrice}`,
@@ -2477,6 +2519,7 @@ async function runCycle(gen) {
     && tempReserveSlots > 0
     && (tempFetchFailed
       || tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc, snap.heldSlugs, boughtAll));
+  laneLeft = tempHold ? tempReserveSlots : 0;
   const heldMain = [];
   let aborted = false;
   for (const cand of candidates) {
@@ -2485,8 +2528,19 @@ async function runCycle(gen) {
       heldMain.push(cand);
       continue;
     }
-    if (slotsLeft < 1 || verified >= tradeCfg.verifyCap) break;
-    if (await attemptCandidate(cand)) { aborted = true; break; }
+    if (verified >= tradeCfg.verifyCap) break;
+    if (slotsLeft >= 1) {
+      if (await attemptCandidate(cand, false)) { aborted = true; break; }
+      continue;
+    }
+    // sizing 슬롯이 소진된 뒤에는 예약 차선으로 기온 후보만 더 시도한다.
+    if (tempReserveLaneAllows({
+      strategy: cand.strategy, tempHold, laneLeft, positionsUsed,
+      maxPositions: tradeCfg.maxPositions, cashLeft, bet: snap.bet,
+      reserveUsd: tradeCfg.reserveUsd,
+    })) {
+      if (await attemptCandidate(cand, true)) { aborted = true; break; }
+    }
   }
   if (tempHold && heldMain.length) {
     if (tempFetchFailed) {

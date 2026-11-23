@@ -19,6 +19,7 @@ const {
   markBought,
   boughtStrategyOf,
   tempReserveBlocksMain,
+  tempReserveLaneAllows,
   tempHasUpcomingWindow,
   tempEventSlugsForFetch,
   tempFetchDayKey,
@@ -469,6 +470,50 @@ eq(
   );
 }
 
+// ── 예약 차선 판정 (네이티브 TempNo.reserveLaneAllows와 같은 경계) ──
+{
+  // 기준: bet $3, 예비금 $2.5 → 현금이 5.5 이상이면 차선 허용
+  const base = {
+    strategy: "temp_no", tempHold: true, laneLeft: 1,
+    positionsUsed: 0, maxPositions: 70, cashLeft: 10, bet: 3, reserveUsd: 2.5,
+  };
+  eq(tempReserveLaneAllows(base), true, "lane: temp + hold + cash enough → allow");
+  eq(tempReserveLaneAllows({ ...base, cashLeft: 5.5 }), true, "lane: cash exactly bet+reserve → allow");
+  eq(tempReserveLaneAllows({ ...base, cashLeft: 5.49 }), false, "lane: cash below bet+reserve → deny");
+  eq(tempReserveLaneAllows({ ...base, strategy: undefined }), false, "lane: main strategy → deny");
+  eq(tempReserveLaneAllows({ ...base, tempHold: false }), false, "lane: hold off → deny");
+  eq(tempReserveLaneAllows({ ...base, laneLeft: 0 }), false, "lane: lane exhausted → deny");
+  eq(tempReserveLaneAllows({ ...base, positionsUsed: 70 }), false, "lane: positions full → deny");
+
+  // 구조 가드 — 드라이버가 슬롯 소진 뒤 차선으로 기온만 더 시도하고,
+  // 슬롯 0 조기 반환도 차선 가능성을 먼저 보는지 확인한다.
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+  const cycleSrc = src.slice(src.indexOf("async function runCycle"));
+  eq(
+    cycleSrc.includes("tempReserveLaneAllows({"),
+    true,
+    "lane guard: driver attempts lane after slots exhausted",
+  );
+  eq(
+    cycleSrc.includes("기온 예약 차선으로 진입을 시도합니다"),
+    true,
+    "lane guard: slots-0 early return yields to lane possibility",
+  );
+  eq(
+    cycleSrc.includes("laneLeft = tempHold ? tempReserveSlots : 0;"),
+    true,
+    "lane guard: lane budget is the reserve count while hold is on",
+  );
+  // 최소 수량 검사 — 기온만 제외되고 메인은 기존대로 걸린다
+  const verifySrc = src.slice(src.indexOf("async function verifyCandidate"), src.indexOf("export function summarizeCycle"));
+  eq(
+    verifySrc.includes('if (!isTemp && estShares < minSize) return reject("below_min_order_size");'),
+    true,
+    "lane guard: min order size skips temp only",
+  );
+}
+
 // ── 기온 전용 손절 배선 (구조 가드) ──────────────────────────
 // checkStopLossPosition이 태그 판정으로 폭을 고르고, 두 번의 판정 모두에
 // 그 폭을 넘기는지 소스로 확인한다 (판정 자체의 경계는 book 테스트가 본다).
@@ -596,7 +641,6 @@ eq(effectiveTempReserveSlots(0, 70), 0, "audit6: zero reserve kept");
     "auditE: total failure keeps the reserve",
   );
 }
-
 
 // ── Q6 — 기온 조회 캐시 자정 경계 ────────────────────────────
 // 캐시는 기준 UTC 날짜가 같은 동안만 유효하다. 날짜가 바뀌면 15분이

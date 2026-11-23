@@ -680,6 +680,104 @@ public class NativeCycleTest {
         check("reserve2: 메인은 못 삼", !bought.contains("test-buy-market"));
     }
 
+    /** 차선: sizing 슬롯 0이어도 예약이 있으면 기온이 유저 설정 금액($3)으로 진입한다. */
+    private static void tempLaneBuysAtUserAmount() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 10;            // 평가 $30 · 현금 하한 $9 · 여유액 $1 → sizing 슬롯 0
+        net.positionsValue = 20;
+        net.markets = new ArrayList<>();
+        tempStage(net);
+        env.durable.put("bm_settings",
+                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"betMinUsd\":3}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        String tempSlug = "highest-temperature-in-seoul-on-november-15-2026-7c";
+        check("lane $3: 결과 OK", r == NativeCycle.Result.OK);
+        check("lane $3: 건당 $3 · 슬롯 0", env.logged("건당 $3 · 슬롯 0"));
+        check("lane $3: 차선 진입 로그", env.logged("기온 예약 차선으로 진입을 시도합니다"));
+        check("lane $3: 주문 1회", t.posts == 1);
+        check("lane $3: 기온 매수 + 차선 표기",
+                env.durable.getOrDefault("bm_bought", "").contains(tempSlug)
+                        && env.logged("· 예약 차선"));
+    }
+
+    /** 차선: 예약 0개면 슬롯 0에서 기존대로 스캔 자체를 건너뛴다. */
+    private static void tempLaneOffWhenReserveZero() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 10;
+        net.positionsValue = 20;
+        net.markets = new ArrayList<>();
+        tempStage(net);
+        env.durable.put("bm_settings",
+                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"betMinUsd\":3,\"tempNoReserveSlots\":0}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("lane off: 결과 OK", r == NativeCycle.Result.OK);
+        check("lane off: 슬롯 없음 반환", env.logged("슬롯 없음 — 이번 사이클 매수 없음"));
+        check("lane off: 이벤트 조회 없음", net.tempEventsCalls == 0);
+        check("lane off: 주문 없음", t.posts == 0);
+    }
+
+    /** 차선: 남은 현금이 건당 + 예비금에 못 미치면 차선도 서지 않는다. */
+    private static void tempLaneNeedsCashAboveReserve() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 5.5;           // 건당 $3 + 예비금 $2.87 = $5.87에 못 미친다
+        net.positionsValue = 20;
+        net.markets = new ArrayList<>();
+        tempStage(net);
+        env.durable.put("bm_settings",
+                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"betMinUsd\":3}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("lane cash: 결과 OK", r == NativeCycle.Result.OK);
+        check("lane cash: 슬롯 없음 반환", env.logged("슬롯 없음 — 이번 사이클 매수 없음"));
+        check("lane cash: 주문 없음", t.posts == 0);
+    }
+
+    /** 차선: 예약 1개면 슬롯 0에서 기온 2건 중 1건만 차선으로 산다. */
+    private static void tempLaneLimitedToReserveCount() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 10;
+        net.positionsValue = 20;
+        net.markets = new ArrayList<>();
+        tempStageTwo(net);
+        env.durable.put("bm_settings",
+                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"betMinUsd\":3}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        String bought = env.durable.getOrDefault("bm_bought", "");
+        check("lane count: 결과 OK", r == NativeCycle.Result.OK);
+        check("lane count: 주문 1회", t.posts == 1);
+        check("lane count: 첫 기온만 매수",
+                bought.contains("highest-temperature-in-seoul-on-november-15-2026-7c")
+                        && !bought.contains("highest-temperature-in-seoul-on-november-15-2026-8c"));
+    }
+
+    /** 최소 수량은 메인에서 기존대로다 — bet $3으로 낮춰도 메인 후보는 탈락한다. */
+    private static void mainStillRejectsBelowMinSizeAtLowBet() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 12;            // 평가 $12 → 건당 = max($3, 1%) = $3
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        env.durable.put("bm_settings", "{\"betMinUsd\":3}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("main min: 결과 OK", r == NativeCycle.Result.OK);
+        check("main min: 주문 없음", t.posts == 0);
+        check("main min: 최소수량미달 탈락", env.logged("최소수량미달"));
+    }
+
     /** 기온 이벤트 무대 — endDate만 바꿔 올린다 (후보 검증 무대는 걸지 않는다). */
     private static void tempStageEndOnly(FakeNet net, String endDate) {
         String eventSlug = "highest-temperature-in-seoul-on-november-15-2026";
@@ -2207,6 +2305,11 @@ public class NativeCycleTest {
         tempStopLossUntaggedApplies();
         tempStopLossNoRecordApplies();
         tempReserveTwoSlots();
+        tempLaneBuysAtUserAmount();
+        tempLaneOffWhenReserveZero();
+        tempLaneNeedsCashAboveReserve();
+        tempLaneLimitedToReserveCount();
+        mainStillRejectsBelowMinSizeAtLowBet();
         tempReserveUpcomingWindowHoldsMain();
         tempReservePastWindowNoHold();
         tempReserveZeroUpcomingNoHold();

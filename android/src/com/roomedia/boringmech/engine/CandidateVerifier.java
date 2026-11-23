@@ -182,7 +182,11 @@ public final class CandidateVerifier {
         // 최소 주문 수량 검사용 추정치 — 실제 주식수는 시장가 주문이 금액에서 역산한다
         double estShares = bet / limitPrice;
         double minSize = Js.numOrZero(Js.field(book, "min_order_size"));
-        if (estShares < minSize) {
+        // 기온 후보는 시장가 주문 금액(유저 설정 건당 금액)이 정본이라
+        // 수량 하한으로 탈락시키지 않는다 — 금액을 기본 최소액 아래로
+        // 낮추면 추정 수량이 min_order_size 아래로 떨어져 기온 진입이
+        // 전건 막혔다 (JS verifyCandidate와 같은 규칙).
+        if (!isTemp && estShares < minSize) {
             return Result.reject("below_min_order_size");
         }
         return Result.ok(

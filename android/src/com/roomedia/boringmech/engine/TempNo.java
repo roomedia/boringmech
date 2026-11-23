@@ -103,6 +103,35 @@ public final class TempNo {
     }
 
     /**
+     * 기온 예약 차선 판정 — sizing 슬롯이 소진된 뒤에도 기온 후보가
+     * 예약 몫으로 진입을 시도할 수 있는지 정하는 순수 함수 (JS
+     * tempReserveLaneAllows와 같은 규칙). 홀드가 비워 둔 슬롯은 실제로
+     * 쓸 수 있어야 한다: sizing 슬롯은 (현금 − 현금 하한) ÷ 건당
+     * 금액이라, 현금 하한에 여유액이 건당 금액보다 적으면 슬롯이 0이
+     * 돼 홀드가 지킬 자리 자체가 사라진다. 차선은 현금 하한 비율을
+     * 넘겨 쓰되 예비금(reserveUsd)은 건드리지 않고, 전체 포지션
+     * 상한과 예약 개수를 넘지 않는다. 금액은 유저 설정 건당 금액
+     * 그대로다.
+     */
+    public static boolean reserveLaneAllows(String strategy, boolean tempHold, int laneLeft,
+                                            int positionsUsed, int maxPositions,
+                                            double cashLeft, double bet, double reserveUsd) {
+        if (!STRATEGY.equals(strategy)) {
+            return false;
+        }
+        if (!tempHold) {
+            return false;
+        }
+        if (laneLeft <= 0) {
+            return false;
+        }
+        if (positionsUsed >= maxPositions) {
+            return false;
+        }
+        return cashLeft >= bet + reserveUsd;
+    }
+
+    /**
      * 정확한 정수 기온 판정 — groupItemTitle이 정수 기온만으로 된 것만
      * ("3°C"·"72°F"). "6°C or below"·"21°C or higher" 꼬리 버킷과
      * "50-51°F" 구간 버킷은 제외한다.
