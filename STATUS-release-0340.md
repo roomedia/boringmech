@@ -1,7 +1,9 @@
 # STATUS: v0.3.40 출시
 
-- 상태: running
+- 상태: awaiting
 - 시작: 2026-11-23 12:05 KST
+- 출시 완료: 2026-11-23, 릴리스 https://github.com/roomedia/boringmech/releases/tag/v0.3.40, 출시 커밋 879fdcb, APK 자산 boringmech-v0.3.40.apk 첨부 확인
+- 잔여: S25 설치는 동호가 직접 한다 (지시 변경). 설치 후 실제 서명 제출 1회 성공 로그가 확인되기 전까지 v0.3.40의 서명 경로는 실기기 미검증 상태다.
 - 범위: 미출시 변경 4건 (09ed3d3 홀드 전환, c4c6fcb 연동 요약 설정 반영, 5ebc08d 자정 캐시 날짜 키, 37b82de 기온 예약 차선)을 RELEASE-AUDIT 정본대로 전면 감사 후 v0.3.40 (versionCode 43)으로 출시, S25 설치까지.
 
 ## 단계
@@ -11,7 +13,7 @@
 - [완료] 3. 전 슈트 통과 확인 (JS book 458·temp 173·bundle 10, JVM NativeCycle 315·TempNo 143·SubmitGuard 21·ExternalWatchdog 15·RestartGuard 7·WatchdogLogic 35·StageDeadline 19, 골든 1차 38/38·2차 200·3차 178·4차 215)
 - [완료] 4. 버전 범프 0.3.40 / versionCode 43 + 번들 재생성
 - [완료] 5. APK 빌드 + 출하 dex 게이트 + 축소 스모크 (DEX GATE PASSED, shrunk smoke PASSED)
-- [진행] 6. 출시 커밋 + 푸시 + GitHub 릴리스 v0.3.40
+- [완료] 6. 출시 커밋 (879fdcb) + 푸시 (원격 main 대조) + GitHub 릴리스 v0.3.40 (게시·자산 확인)
 - [제외] 7. S25 설치 — 동호 지시 변경 (2026-11-23): 설치는 동호가 직접 한다. 자원 점유 포함 이 절차는 수행하지 않는다. 마감은 GitHub 릴리스 게시와 APK 준비까지.
 
 ## 감사 발견
