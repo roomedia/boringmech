@@ -11,6 +11,11 @@
 가격 외 사유 탈락은 레코드를 만들지 않으며, 패스당 상한 초과 시
 scan_drop_truncated로 생략 개수가 명시되는지도 본다.
 
+추가 가드 (Q24 후속): above_hi 탈락 중 상한 근처 시장은 표본
+오더북 프로브가 scan_probe 레코드로 찍히는가 — bestAsk·bestBid와
+밴드 안 여부, 패스당 상한, 조회 실패 기록, 본 흐름 (후보·판정)에
+영향이 없는지를 본다.
+
 실행: python3 test_scanner.py (네트워크 없음, 종료 코드 0 = 통과)
 """
 import json
@@ -42,7 +47,8 @@ EVENT = {"slug": SEOUL_SLUG, "endDate": END_ISO, "markets": [
     market("temp-seoul-26c-b", "26°C", [0.15, 0.85]),
     # 선정 단계 가격 탈락: 하한 아래 (No 0.75), 상한 위 (No 0.999)
     market("temp-seoul-24c-lo", "24°C", [0.25, 0.75]),
-    market("temp-seoul-27c-hi", "27°C", [0.001, 0.999]),
+    market("temp-seoul-27c-hi", "27°C", [0.001, 0.999],
+           clobTokenIds=json.dumps(["tok-yes-hi", "tok-no-hi"])),
     # 가격 외 사유 탈락: 비활성 — scan_drop 레코드를 만들면 안 된다
     market("temp-seoul-28c-off", "28°C", [0.15, 0.85], active=False),
 ]}
@@ -138,8 +144,71 @@ def main():
     assert ps2["band_drop_records_omitted"] == 1, ps2
     assert ps2["scan_drops"]["temp_band_out"] == 2, ps2
 
+    # 표본 프로브: above_hi 상한 근처 (0.999, 초과분 0.001) 시장만
+    # scan_probe로 찍히고, 스냅샷은 밴드 밖인데 ask (0.85)는 밴드
+    # 안인 역방향 유입이 inBand로 드러나야 한다
+    probes = [r for r in recs if r.get("type") == "scan_probe"]
+    assert len(probes) == 1, probes
+    pr = probes[0]
+    assert pr["slug"] == "temp-seoul-27c-hi", pr
+    assert pr["ok"] is True and pr["priceNo"] == 0.999, pr
+    assert pr["bestAsk"] == 0.85 and pr["bestBid"] == 0.84, pr
+    assert pr["inBand"] is True, pr
+    assert ps["scan_probes_eligible"] == 1, ps
+    assert ps["scan_probes_planned"] == 1, ps
+    summ = next(r for r in recs if r.get("type") == "summary")
+    assert summ["probes"] == 1 and summ["probe_in_band"] == 1, summ
+    # 프로브가 본 흐름을 바꾸지 않는다 — 후보는 여전히 2건뿐이다
+    assert summ["candidates"] == 2, summ
+    assert not [c for c in recs if c.get("type") == "candidate"
+                and c["slug"] == "temp-seoul-27c-hi"], recs
+
+    # 표본 선정 상한: 초과분이 작은 순으로 MAX_PROBES_PER_PASS까지
+    many = [{"slug": f"s{i}", "title": "t", "priceYes": 0.0,
+             "priceNo": round(0.9981 + i * 0.0001, 6), "tokenId": "tok",
+             "endDate": END_ISO} for i in range(15)]
+    picked = scanner.select_probe_targets(many)
+    assert len(picked) == scanner.MAX_PROBES_PER_PASS == 10, picked
+    assert picked[0]["priceNo"] == min(t["priceNo"] for t in many), picked
+    orig_pcap = scanner.MAX_PROBES_PER_PASS
+    scanner.MAX_PROBES_PER_PASS = 1
+    try:
+        assert len(scanner.select_probe_targets(many)) == 1
+    finally:
+        scanner.MAX_PROBES_PER_PASS = orig_pcap
+
+    # 근접 구간 밖 (초과분 > 0.002)과 below_lo는 표본 대상이 아니다
+    far_stats, far_targets = {}, []
+    far_event = {"slug": SEOUL_SLUG, "endDate": END_ISO, "markets": [
+        market("temp-seoul-far", "30°C", [0.0, 1.001]),
+        market("temp-seoul-lo2", "31°C", [0.25, 0.75]),
+    ]}
+    scanner.scan_candidates([far_event], NOW_MS, far_stats, [], far_targets)
+    assert far_targets == [], far_targets
+    assert far_stats.get("temp_band_out") == 2, far_stats
+
+    # 조회 실패는 실패 레코드로 남는다 (토큰 없음, 네트워크 오류)
+    rec_no_tok = scanner.probe_book(
+        {"slug": "x", "title": "t", "priceYes": 0.0, "priceNo": 0.999,
+         "tokenId": None, "endDate": END_ISO})
+    assert rec_no_tok["ok"] is False, rec_no_tok
+    assert rec_no_tok["reason"] == "probe_no_token", rec_no_tok
+    orig_fetch = scanner.fetch_json
+    def boom(url):
+        raise RuntimeError("net down")
+    scanner.fetch_json = boom
+    try:
+        rec_err = scanner.probe_book(
+            {"slug": "y", "title": "t", "priceYes": 0.0, "priceNo": 0.999,
+             "tokenId": "tok-y", "endDate": END_ISO})
+    finally:
+        scanner.fetch_json = orig_fetch
+    assert rec_err["ok"] is False and rec_err["reason"] == "probe_error", rec_err
+    assert "net down" in rec_err["error"], rec_err
+
     print("PASS: requeryPrice recorded on mismatch and pass verdicts")
     print("PASS: scan_drop records for band-out drops, cap truncation noted")
+    print("PASS: scan_probe records near-cap above_hi sample, cap and failure noted")
     return 0
 
 

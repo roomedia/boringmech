@@ -18,6 +18,13 @@
 scan_drop_truncated 레코드로 생략 개수를 명시). 집계 카운트
 (scan_drops)는 기존 그대로다.
 
+선정에서 above_hi로 탈락한 시장 중 스냅샷 No 가격이 상한에서 가까운
+구간 (초과분 PROBE_NEAR_HI_EXCESS 이내)인 것은 패스당 최대
+MAX_PROBES_PER_PASS개까지 표본으로 오더북을 조회해 scan_probe
+레코드로 남긴다 — 스냅샷은 밴드 밖인데 ask는 밴드 안인 역방향 유입을
+재기 위해서다 (Q24 후속). 프로브는 관측 전용이라 후보에 넣지 않고
+본 선정·판정 흐름을 바꾸지 않는다.
+
 사용법:
   scanner.py                 실제 시계로 1패스 (창 밖이면 즉시 종료)
   scanner.py --now 2026-11-22T07:00:00Z   시뮬레이션 시각 (드라이 패스)
@@ -75,6 +82,12 @@ FETCH_TIMEOUT = 75  # 이 VM 출구 프록시가 느려 요청당 40초 걸린 �
 # (2026-11-22)라 현 규모에서는 전수 기록되고, 비정상 폭증만 막는다.
 # 초과분은 잘라낸 개수를 별도 레코드로 남긴다.
 MAX_BAND_DROP_RECORDS = 500
+# 역방향 유입 표본 프로브 — above_hi 탈락 중 스냅샷 No 가격의 상한
+# 초과분이 이 값 이내인 시장만 표본 대상이다. 가격 상한이 1.0이라
+# above_hi 초과분은 최대 0.002이고, 사실상 상한 근처 전수가 대상이
+# 되므로 패스당 개수 상한이 실질적인 비용 제한이다.
+PROBE_NEAR_HI_EXCESS = 0.002
+MAX_PROBES_PER_PASS = 10
 
 
 class ProviderBlocked(Exception):
@@ -186,7 +199,23 @@ def parse_prices(raw):
     return out
 
 
-def scan_candidates(events, now_ms, stats, drop_records=None):
+def no_token_id(m):
+    """마켓에서 No 토큰 id를 뽑는다 (verify_candidate의 토큰 선택 복제).
+    v2는 positionIds[1], v1은 clobTokenIds JSON의 [1]. 없으면 None."""
+    pos_ids = m.get("positionIds")
+    if m.get("version") == "v2" and isinstance(pos_ids, list) and len(pos_ids) >= 2:
+        return str(pos_ids[1])
+    try:
+        tokens = json.loads(m.get("clobTokenIds") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(tokens, list) and len(tokens) >= 2:
+        return str(tokens[1])
+    return None
+
+
+def scan_candidates(events, now_ms, stats, drop_records=None,
+                    probe_targets=None):
     """scanTempCandidates 복제 — held/bought는 페이퍼라 빈 집합.
 
     가격 사유 탈락 (temp_band_out)은 카운트만으로는 역방향 유입
@@ -240,6 +269,19 @@ def scan_candidates(events, now_ms, stats, drop_records=None):
                         "bandHi": BAND_HI,
                         "endDate": m.get("endDate") or ev.get("endDate") or "",
                     })
+                # 역방향 유입 표본 대상 수집 — above_hi이고 상한
+                # 초과분이 PROBE_NEAR_HI_EXCESS 이내인 시장만. 토큰이
+                # 없어도 대상에 넣어 프로브 단계에서 실패로 기록한다.
+                if (probe_targets is not None and price > BAND_HI
+                        and price - BAND_HI <= PROBE_NEAR_HI_EXCESS + 1e-9):
+                    probe_targets.append({
+                        "slug": m.get("slug") or "",
+                        "title": m.get("groupItemTitle"),
+                        "priceYes": prices[0],
+                        "priceNo": price,
+                        "tokenId": no_token_id(m),
+                        "endDate": m.get("endDate") or ev.get("endDate") or "",
+                    })
                 continue
             out.append({
                 "slug": m.get("slug") or "",
@@ -255,6 +297,51 @@ def scan_candidates(events, now_ms, stats, drop_records=None):
             })
     out.sort(key=lambda c: (c["endDate"], -c["price"]))
     return out
+
+
+def select_probe_targets(targets):
+    """표본 선정 — 상한 초과분이 작은 (스냅샷가가 상한에 가까운)
+    순으로 정렬해 패스당 상한까지만 고른다."""
+    ordered = sorted(targets, key=lambda t: t["priceNo"])
+    return ordered[:MAX_PROBES_PER_PASS]
+
+
+def probe_book(target):
+    """표본 시장의 오더북을 조회해 scan_probe 레코드를 만든다 (관측
+    전용, 후보·판정에 영향 없음). 조회 실패는 ok=False 레코드로
+    남긴다. 공급자 차단 (429/401/403)은 패스 전체 중단 규칙을 따라
+    그대로 올린다."""
+    rec = {"type": "scan_probe", "slug": target["slug"],
+           "title": target.get("title"),
+           "priceYes": target["priceYes"], "priceNo": target["priceNo"],
+           "bandHi": BAND_HI,
+           "excess": round(target["priceNo"] - BAND_HI, 6),
+           "ok": False, "bestAsk": None, "bestBid": None,
+           "bestAskSize": None, "inBand": None}
+    try:
+        token_id = target.get("tokenId")
+        if not token_id:
+            rec["reason"] = "probe_no_token"
+            return rec
+        book = fetch_json(CLOB_HOST + "/book?" +
+                          urllib.parse.urlencode({"token_id": token_id}))
+        asks = sorted(book_side(book, "asks"))
+        bids = sorted(book_side(book, "bids"), reverse=True)
+        rec["bestBid"] = bids[0][0] if bids else None
+        if not asks:
+            rec["reason"] = "no_asks"
+            return rec
+        rec["ok"] = True
+        rec["bestAsk"] = asks[0][0]
+        rec["bestAskSize"] = asks[0][1]
+        rec["inBand"] = BAND_LO <= asks[0][0] <= BAND_HI
+        return rec
+    except ProviderBlocked:
+        raise
+    except Exception as e:
+        rec["reason"] = "probe_error"
+        rec["error"] = str(e)[:160]
+        return rec
 
 
 def round_tick(price, tick):
@@ -463,7 +550,10 @@ def run_pass(now_ms, bet, out_dir, simulated):
 
         stats = {}
         drop_records = []
-        candidates = scan_candidates(events, now_ms, stats, drop_records)
+        probe_targets = []
+        candidates = scan_candidates(events, now_ms, stats, drop_records,
+                                     probe_targets)
+        probes = select_probe_targets(probe_targets)
         kept_drops = drop_records[:MAX_BAND_DROP_RECORDS]
         omitted_drops = len(drop_records) - len(kept_drops)
         emit({"type": "pass_start", "now": stamp.isoformat(),
@@ -471,13 +561,22 @@ def run_pass(now_ms, bet, out_dir, simulated):
               "event_fetch_failures": fetch_failures,
               "scan_drops": stats, "candidates": len(candidates),
               "band_drop_records": len(kept_drops),
-              "band_drop_records_omitted": omitted_drops})
+              "band_drop_records_omitted": omitted_drops,
+              "scan_probes_eligible": len(probe_targets),
+              "scan_probes_planned": len(probes)})
         for d in kept_drops:
             emit({"type": "scan_drop", **d})
         if omitted_drops:
             emit({"type": "scan_drop_truncated", "reason": "temp_band_out",
                   "omitted": omitted_drops,
                   "cap": MAX_BAND_DROP_RECORDS})
+        # 표본 프로브는 관측 전용 — 후보·판정과 분리해 따로 남긴다.
+        probe_in_band = 0
+        for t in probes:
+            prec = probe_book(t)
+            if prec.get("inBand"):
+                probe_in_band += 1
+            emit(prec)
         for c in candidates:
             emit({"type": "candidate", **c})
 
@@ -515,6 +614,7 @@ def run_pass(now_ms, bet, out_dir, simulated):
                    "passed": passed, "failed": len(candidates) - passed,
                    "pass_rate": (passed / len(candidates)) if candidates else None,
                    "reject_counts": reject_counts,
+                   "probes": len(probes), "probe_in_band": probe_in_band,
                    "spreads": spread_stats(spread_pairs),
                    "duration_s": round(time.time() - t0, 2)}
         emit(summary)
