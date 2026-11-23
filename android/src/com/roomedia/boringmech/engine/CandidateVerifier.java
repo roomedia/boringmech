@@ -40,9 +40,11 @@ public final class CandidateVerifier {
         public final double estShares;
         public final String tickSize;
         public final boolean negRisk;
+        /** 상한 근처 탈락 메모 — 기온 ask_out_of_band 중 상한 근처일 때만 붙고 그 외에는 null. */
+        public final String note;
 
         private Result(boolean ok, String reason, String tokenId, double limitPrice,
-                       double estShares, String tickSize, boolean negRisk) {
+                       double estShares, String tickSize, boolean negRisk, String note) {
             this.ok = ok;
             this.reason = reason;
             this.tokenId = tokenId;
@@ -50,15 +52,20 @@ public final class CandidateVerifier {
             this.estShares = estShares;
             this.tickSize = tickSize;
             this.negRisk = negRisk;
+            this.note = note;
         }
 
         static Result reject(String reason) {
-            return new Result(false, reason, null, 0, 0, null, false);
+            return new Result(false, reason, null, 0, 0, null, false, null);
+        }
+
+        static Result reject(String reason, String note) {
+            return new Result(false, reason, null, 0, 0, null, false, note);
         }
 
         static Result ok(String tokenId, double limitPrice, double estShares,
                          String tickSize, boolean negRisk) {
-            return new Result(true, null, tokenId, limitPrice, estShares, tickSize, negRisk);
+            return new Result(true, null, tokenId, limitPrice, estShares, tickSize, negRisk, null);
         }
     }
 
@@ -164,7 +171,10 @@ public final class CandidateVerifier {
         double bestAsk = asks.get(0)[0];
         double bestBid = bids.get(0)[0];
         if (bestAsk < bandLo || bestAsk > bandHi) {
-            return Result.reject("ask_out_of_band");
+            // 상한 바로 위에서 걸린 기온 후보만 가격 쌍 메모를 붙인다 —
+            // 호출자가 로그 한 줄로 남긴다 (그 외 탈락은 카운트만).
+            return Result.reject("ask_out_of_band",
+                    TempNo.nearCapRejectNote(cand.strategy, cand.slug, cand.price, bestAsk, bandHi));
         }
         // 신호가보다 크게 비싸진 호가는 사지 않는다.
         if (bestAsk > cand.price + cfg.askAboveSignal) {

@@ -913,6 +913,24 @@ export function tempReserveLaneAllows({ strategy, tempHold, laneLeft, positionsU
   return cashLeft >= bet + reserveUsd;
 }
 
+/** 상한 근처 판정 여유 — bestAsk가 밴드 상한을 이만큼까지만 넘으면 가격 쌍을 남긴다. */
+export const NEAR_CAP_BAND_EPS = 0.01;
+
+/**
+ * 기온 상한 근처 탈락 메모 — ask_out_of_band 탈락 중 밴드 상한 바로
+ * 위에서 걸린 기온 후보만 스냅샷가·bestAsk 쌍을 로그로 남기기 위한
+ * 순수 함수. 상한 구조(스냅샷 0.998 vs ask 0.999)를 앱 로그로 확인하려는
+ * 것이고, 그 외 탈락은 지금처럼 사유별 카운트만 남긴다 — 조건을 넓히면
+ * 로그가 폭증한다 (네이티브 TempNo.nearCapRejectNote와 같은 규칙).
+ */
+export function tempNearCapRejectNote({ strategy, slug, snapshot, bestAsk, bandHi }) {
+  if (strategy !== "temp_no") return null;
+  if (!Number.isFinite(bestAsk) || !Number.isFinite(bandHi)) return null;
+  if (!(bestAsk > bandHi)) return null;
+  if (bestAsk - bandHi > NEAR_CAP_BAND_EPS + 1e-9) return null;
+  return `기온 상한 근처 탈락 ${slug} · 스냅샷 ${snapshot} · bestAsk ${bestAsk} · 밴드 상한 ${bandHi}`;
+}
+
 /**
  * 기온 이벤트 목록 → No 페이드 후보. 후보는 메인 후보와 같은 선정
  * 패스(슬롯·검증 캡 공유)를 타며, excludeSlugs(메인 후보 slug)와
@@ -1661,7 +1679,16 @@ async function verifyCandidate(cand, bet, cfg = DEFAULT_TRADE_SETTINGS, entryHou
   if (!bids.length) return reject("no_bids");
   const bestAsk = asks[0].price;
   const bestBid = bids[0].price;
-  if (bestAsk < bandLo || bestAsk > bandHi) return reject("ask_out_of_band");
+  if (bestAsk < bandLo || bestAsk > bandHi) {
+    const r = reject("ask_out_of_band");
+    // 상한 바로 위에서 걸린 기온 후보만 가격 쌍 메모를 붙인다 —
+    // 호출자가 로그 한 줄로 남긴다 (그 외 탈락은 카운트만).
+    const note = tempNearCapRejectNote({
+      strategy: cand.strategy, slug: cand.slug, snapshot: cand.price, bestAsk, bandHi,
+    });
+    if (note) r.note = note;
+    return r;
+  }
   // 신호가보다 크게 비싸진 호가는 사지 않는다 — 슬리피지 상한이 호가
   // 기준뿐이면 신호 0.75를 0.90에 사는 경로가 정상으로 통과한다.
   if (bestAsk > cand.price + cfg.askAboveSignal) return reject("ask_above_signal");
@@ -2390,6 +2417,7 @@ async function runCycle(gen) {
     }
     if (!detail.ok) {
       tallyReject(detail.reason);
+      if (detail.note) log(detail.note);
       return false;
     }
     if (!state.running || gen !== state.gen) return true;

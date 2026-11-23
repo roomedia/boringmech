@@ -1,5 +1,6 @@
 package com.roomedia.boringmech.engine;
 
+import com.roomedia.boringmech.crypto.JsNumber;
 import com.roomedia.boringmech.write.ManualSell;
 
 import java.time.Instant;
@@ -135,6 +136,35 @@ public final class TempNo {
             return false;
         }
         return cashLeft >= bet + reserveUsd;
+    }
+
+    /** 상한 근처 판정 여유 — bestAsk가 밴드 상한을 이만큼까지만 넘으면 가격 쌍을 남긴다. */
+    public static final double NEAR_CAP_EPS = 0.01;
+
+    /**
+     * 기온 상한 근처 탈락 메모 — ask_out_of_band 탈락 중 밴드 상한 바로
+     * 위에서 걸린 기온 후보만 스냅샷가·bestAsk 쌍을 로그로 남기기 위한
+     * 순수 함수 (JS tempNearCapRejectNote와 같은 규칙). 상한 구조
+     * (스냅샷 0.998 vs ask 0.999)를 앱 로그로 확인하려는 것이고, 그 외
+     * 탈락은 사유별 카운트만 남긴다 — 조건을 넓히면 로그가 폭증한다.
+     */
+    public static String nearCapRejectNote(String strategy, String slug, double snapshot,
+                                           double bestAsk, double bandHi) {
+        if (!STRATEGY.equals(strategy)) {
+            return null;
+        }
+        if (!Double.isFinite(bestAsk) || !Double.isFinite(bandHi)) {
+            return null;
+        }
+        if (!(bestAsk > bandHi)) {
+            return null;
+        }
+        if (bestAsk - bandHi > NEAR_CAP_EPS + 1e-9) {
+            return null;
+        }
+        return "기온 상한 근처 탈락 " + slug + " · 스냅샷 " + JsNumber.toString(snapshot)
+                + " · bestAsk " + JsNumber.toString(bestAsk)
+                + " · 밴드 상한 " + JsNumber.toString(bandHi);
     }
 
     /**

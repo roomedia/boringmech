@@ -20,6 +20,7 @@ const {
   boughtStrategyOf,
   tempReserveBlocksMain,
   tempReserveLaneAllows,
+  tempNearCapRejectNote,
   tempHasUpcomingWindow,
   tempEventSlugsForFetch,
   tempFetchDayKey,
@@ -512,6 +513,43 @@ eq(
     verifySrc.includes('if (!isTemp && estShares < minSize) return reject("below_min_order_size");'),
     true,
     "lane guard: min order size skips temp only",
+  );
+}
+
+// ── 상한 근처 탈락 메모 (네이티브 TempNo.nearCapRejectNote와 같은 경계) ──
+{
+  const base = { strategy: "temp_no", slug: "mkt-7c", snapshot: 0.998, bestAsk: 0.999, bandHi: 0.998 };
+  eq(
+    tempNearCapRejectNote(base),
+    "기온 상한 근처 탈락 mkt-7c · 스냅샷 0.998 · bestAsk 0.999 · 밴드 상한 0.998",
+    "nearcap: ask 1틱 위 → 메모",
+  );
+  eq(
+    tempNearCapRejectNote({ ...base, bestAsk: 0.91, bandHi: 0.9 }),
+    "기온 상한 근처 탈락 mkt-7c · 스냅샷 0.998 · bestAsk 0.91 · 밴드 상한 0.9",
+    "nearcap: 정확히 0.01 위 → 메모",
+  );
+  eq(tempNearCapRejectNote({ ...base, bestAsk: 0.95, bandHi: 0.9 }), null, "nearcap: 0.05 위 → 무메모");
+  eq(tempNearCapRejectNote({ ...base, bestAsk: 0.79 }), null, "nearcap: 하한 아래 탈락 → 무메모");
+  eq(tempNearCapRejectNote({ ...base, bestAsk: 0.998 }), null, "nearcap: 밴드 안 (탈락 아님) → 무메모");
+  eq(tempNearCapRejectNote({ ...base, strategy: undefined }), null, "nearcap: 메인 후보 → 무메모");
+  eq(tempNearCapRejectNote({ ...base, bestAsk: NaN }), null, "nearcap: NaN → 무메모");
+
+  // 구조 가드 — 검증기가 메모를 붙이고 호출자가 로그로 남기는 배선
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+  const verifySrc = src.slice(src.indexOf("async function verifyCandidate"), src.indexOf("export function summarizeCycle"));
+  eq(
+    verifySrc.includes("tempNearCapRejectNote({"),
+    true,
+    "nearcap guard: verifier attaches note",
+  );
+  eq(verifySrc.includes("if (note) r.note = note;"), true, "nearcap guard: note only when present");
+  const cycleSrc = src.slice(src.indexOf("async function runCycle"));
+  eq(
+    cycleSrc.includes("if (detail.note) log(detail.note);"),
+    true,
+    "nearcap guard: driver logs note",
   );
 }
 

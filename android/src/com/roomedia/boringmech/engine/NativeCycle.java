@@ -1507,6 +1507,9 @@ public final class NativeCycle {
             }
             if (!detail.ok) {
                 tally(rejects, detail.reason);
+                if (detail.note != null) {
+                    log(detail.note);
+                }
                 continue;
             }
             if (!env.isRunning(gen)) {

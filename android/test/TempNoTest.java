@@ -480,6 +480,37 @@ public class TempNoTest {
             check("verify temp ask 0.999 rejects",
                     !richRes.ok && "ask_out_of_band".equals(richRes.reason));
 
+            // 상한 근처 탈락 메모 — 상한 0.998 바로 위 ask 0.999는 가격
+            // 쌍 메모가 붙고, 메인과 조건 밖 탈락에는 붙지 않는다.
+            check("nearcap: temp ask 0.999 over cap 0.998 carries note",
+                    ("기온 상한 근처 탈락 " + EVENT_SLUG + "-7c · 스냅샷 0.97"
+                            + " · bestAsk 0.999 · 밴드 상한 0.998").equals(richRes.note));
+            check("nearcap: main reject carries no note", mainRes.note == null);
+            ScanFilter.Candidate tempNarrowCand = new ScanFilter.Candidate(
+                    EVENT_SLUG + "-7c", "q", "no", 0.97, "2026-11-18T12:00:00Z",
+                    TempNo.STRATEGY, 0.80, 0.90, 0.05);
+            CandidateVerifier.Result farRes = CandidateVerifier.verifyCandidate(
+                    tempNarrowCand, 5, gamma, books, AT_7AM);
+            check("nearcap: temp ask 0.97 over cap 0.90 (gap 0.07) no note",
+                    !farRes.ok && "ask_out_of_band".equals(farRes.reason) && farRes.note == null);
+            Object lowBook = JsonText.parse("{\"asks\":[{\"price\":0.75,\"size\":100}],"
+                    + "\"bids\":[{\"price\":0.74,\"size\":100}],\"tick_size\":\"0.001\","
+                    + "\"min_order_size\":5,\"neg_risk\":true}");
+            CandidateVerifier.BookSource lowBooks = new CandidateVerifier.BookSource() {
+                @Override public Object getOrderBook(String tokenId) { return lowBook; }
+                @Override public double getTickSize(String tokenId) { return 0.001; }
+            };
+            CandidateVerifier.Result lowRes = CandidateVerifier.verifyCandidate(
+                    tempCand, 5, gamma, lowBooks, AT_7AM);
+            check("nearcap: temp ask below bandLo no note",
+                    !lowRes.ok && "ask_out_of_band".equals(lowRes.reason) && lowRes.note == null);
+            check("nearcap: exactly 0.01 over cap → note",
+                    TempNo.nearCapRejectNote(TempNo.STRATEGY, "s", 0.9, 0.91, 0.9) != null);
+            check("nearcap: main strategy → null",
+                    TempNo.nearCapRejectNote(null, "s", 0.998, 0.999, 0.998) == null);
+            check("nearcap: NaN ask → null",
+                    TempNo.nearCapRejectNote(TempNo.STRATEGY, "s", 0.998, Double.NaN, 0.998) == null);
+
             // 진입 시작 시각 설정 — 07:00에 시작 9시면 창 밖이다
             CandidateVerifier.Result hour9Res = CandidateVerifier.verifyCandidate(
                     tempCand, 5, gamma, books, AT_7AM, TradeSettings.defaults(), 9);
