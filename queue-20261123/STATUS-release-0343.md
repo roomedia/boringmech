@@ -1,6 +1,8 @@
 # v0.3.43 출시 상태
 
-- 상태: running
+- 상태: awaiting (출시 완료, 설치는 동호 직접)
+- 릴리스: https://github.com/roomedia/boringmech/releases/tag/v0.3.43 (APK 첨부 확인)
+- 출시 커밋: b737394 (roomedia 단독 저자, main 푸시 완료)
 - 시작: 2026-11-24 01:05 KST
 - 변경 1: 수동 매도 확인 팝업에 실제 매도가 (팝업 오픈 시점 주문장 최고 매수호가)와 예상 수령액 표시. 조회 실패 시 스냅샷가 참고가 + 체결가 변동 가능 문구, 매도는 막지 않음. 체결 로직 무변경.
 - 변경 2 (범위 추가, 동호 확정): 주문 경로 측정 기능 제거. 설정 카드·측정 시작 버튼, bm_orderpath_test_req 소비 경로 (NativeCycle.processOrderPathTest), OrderPathTest 루틴, bm_orderpath_test_status 표시를 제거. ClobWriteClient의 createLimitOrder·cancelOrder·getOpenOrders (JS 패리티 포함)와 사이클 단계별 소요 기록은 유지.
@@ -22,5 +24,7 @@
      - JS: book 466 · temp 183 · bundle 10 · html-guard 9 · sellquote 30
      - JVM: NativeCycle 315 · ClobWrite 33 · TempNo 150 · SubmitGuard 21 · Watchdog 35 · StageDeadline 19 · ExternalWatchdog 15 · RestartGuard 7
      - 골든: 1차 48/48 · 2차 200 · 3차 178 · 4차 215 ALL PASS (전부 v0.3.42와 동일)
-  5. [진행 중] APK 빌드, DEX 게이트, 축소 스모크
-  6. [대기] GitHub 릴리스 게시 (설치 없음)
+  5. [완료] APK 빌드, DEX 게이트 PASSED, 축소 스모크 PASSED
+     - 출하 APK 직접 대조: versionCode 46 / 0.3.43, assets에 측정 버튼·요청 키·루틴 잔존 0건, 실제 매도가 행 존재
+  6. [완료] GitHub 릴리스 게시 (설치 없음)
+- 미검증: 매도 팝업의 주문장 조회 표시는 실기기 미검증. 설치 후 첫 수동 매도 확인 팝업이 검증 지점이다.
