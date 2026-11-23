@@ -1485,8 +1485,10 @@ eq(parseTradeSettings({ tempStopDrop: 0.2 }).tempStopDrop, 0.2, "trade settings:
     eq(html.includes(`id="btn${card}Saved" disabled`), true, `ux2: ${card} revert-to-saved button exists`);
     eq(html.includes(`id="btn${card}Default"`), true, `ux2: ${card} revert-to-default button exists`);
   }
-  // 되돌리기는 컨펌 후 폼에만 적용된다 (저장소 쓰기는 저장 버튼 경로뿐)
-  eq(html.includes("if (!window.confirm(msg)) return;"), true, "ux2: revert asks confirm first");
+  // 되돌리기는 컨펌 후 폼에만 적용된다 (저장소 쓰기는 저장 버튼 경로뿐).
+  // 컨펌은 인페이지 팝업(askConfirm)이 정본이다 — window.confirm은 기기
+  // WebView에서 항상 false라 무반응이 된다 (v0.3.42, html-guard가 잔존 차단).
+  eq(html.includes("askConfirm(msg, '되돌리기', false, function(){"), true, "ux2: revert asks confirm first");
   eq(html.includes("function revertGroup(name, toDefault)"), true, "ux2: revert handler exists");
   // 화면을 떠날 때 저장 안 한 변경이 있으면 한 번 묻는다
   eq(html.includes("window.addEventListener('beforeunload'"), true, "ux1: beforeunload guard exists");

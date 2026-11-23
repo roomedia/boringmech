@@ -419,6 +419,17 @@
     </div>
   </div>
 
+  <div class="overlay hidden" id="confirmOverlay">
+    <div class="sheet">
+      <h2>확인</h2>
+      <p class="note" id="confirmText" style="margin:12px 0"></p>
+      <div class="stack">
+        <button class="btn" id="btnConfirmOk">확인</button>
+        <button class="btn ghost" id="btnConfirmCancel">취소</button>
+      </div>
+    </div>
+  </div>
+
   <div class="overlay hidden" id="sellOverlay">
     <div class="sheet">
       <h2>매도 확인</h2>
@@ -638,6 +649,27 @@
     // 제출 불가"의 구조적 보장이다. 엔진이 다음 사이클에 요청을
     // 소비해 손절과 같은 경로(FOK)로 제출한다.
     var pendingSell = null;
+
+    // ── 공용 확인 팝업 ───────────────────────────────────────────
+    // window.confirm은 WebChromeClient를 설정하지 않은 기기 WebView에서
+    // 대화상자 없이 항상 false를 반환한다 (v0.3.41 측정 시작 무반응
+    // 결함). 확인이 필요한 경로는 전부 이 인페이지 팝업을 거친다 —
+    // 수동 매도 확인 팝업과 같은 결이다.
+    var pendingConfirm = null;
+
+    function askConfirm(text, okLabel, danger, onOk){
+      pendingConfirm = onOk;
+      $('confirmText').textContent = text;
+      var okBtn = $('btnConfirmOk');
+      okBtn.textContent = okLabel || '확인';
+      okBtn.className = danger ? 'btn danger' : 'btn';
+      $('confirmOverlay').classList.remove('hidden');
+    }
+
+    function closeConfirmPopup(){
+      pendingConfirm = null;
+      $('confirmOverlay').classList.add('hidden');
+    }
 
     function fmtPrice(p){
       return (p == null || !isFinite(p)) ? '—' : Number(p).toFixed(3);
@@ -1034,13 +1066,14 @@
     // 되돌리기는 폼만 되돌린다 — 확정은 저장 버튼으로 따로 한다.
     function revertGroup(name, toDefault){
       var msg = toDefault ? '기본값으로 되돌릴까요?' : '저장본으로 되돌릴까요?';
-      if (!window.confirm(msg)) return;
-      var vals = toDefault ? groupDefaultValues(name)
-        : (formBaseline[name] || groupSavedValues(name));
-      groupFields(name).forEach(function(f){ setFieldFormValue(f, vals[f.key]); });
-      var err = $(SET_GROUPS[name].err);
-      if (err) err.textContent = '';
-      updateSettingsUI();
+      askConfirm(msg, '되돌리기', false, function(){
+        var vals = toDefault ? groupDefaultValues(name)
+          : (formBaseline[name] || groupSavedValues(name));
+        groupFields(name).forEach(function(f){ setFieldFormValue(f, vals[f.key]); });
+        var err = $(SET_GROUPS[name].err);
+        if (err) err.textContent = '';
+        updateSettingsUI();
+      });
     }
 
     // 숫자 직접 입력 — 큰 숫자를 누르면 시트가 열리고, 대상 컨트롤의
@@ -1487,12 +1520,17 @@
       setTimeout(function(){ btn.textContent = '구리에게 제보'; }, 3000);
     });
     $('btnUnlink').addEventListener('click', function(){
-      if (anySettingsDirty()
-          && !window.confirm('저장하지 않은 설정 변경이 있습니다. 연동을 해제할까요?')) return;
-      BM.unlink();
-      hasKey = false;
-      intentOn = false;
-      showLink();
+      var doUnlink = function(){
+        BM.unlink();
+        hasKey = false;
+        intentOn = false;
+        showLink();
+      };
+      if (anySettingsDirty()) {
+        askConfirm('저장하지 않은 설정 변경이 있습니다. 연동을 해제할까요?', '연동 해제', true, doUnlink);
+      } else {
+        doUnlink();
+      }
     });
     $('btnRelayerSave').addEventListener('click', function(){
       $('relayerErr').textContent = '';
@@ -1558,26 +1596,27 @@
     // 측정 시작 제출은 이 핸들러가 유일한 경로다 — 엔진이 사이클이
     // 끝난 idle 구간에서 요청을 한 번만 소비해 실행한다.
     $('btnOrderTestStart').addEventListener('click', function(){
-      var msg = $('orderTestMsg');
-      if (!window.confirm('주문 경로 측정을 시작할까요? 가격 0.01에 최소 수량 지정가를 걸었다 즉시 취소하며 왕복 시간을 잽니다.')) return;
-      var ok = false;
-      try {
-        if (window.AndroidBridge && AndroidBridge.putDurable) {
-          AndroidBridge.putDurable('bm_orderpath_test_req', JSON.stringify({ ts: Date.now() }));
-          ok = true;
-        }
-      } catch (e) {}
-      msg.style.display = '';
-      if (ok) {
-        var hb = bridgeHeartbeat();
-        if (!hb || Date.now() - hb > 180000) {
-          msg.textContent = '요청은 보냈지만 엔진이 멈춰 있습니다 — 재개가 10분을 넘기면 만료됩니다.';
+      askConfirm('주문 경로 측정을 시작할까요? 가격 0.01에 최소 수량 지정가를 걸었다 즉시 취소하며 왕복 시간을 잽니다.', '측정 시작', false, function(){
+        var msg = $('orderTestMsg');
+        var ok = false;
+        try {
+          if (window.AndroidBridge && AndroidBridge.putDurable) {
+            AndroidBridge.putDurable('bm_orderpath_test_req', JSON.stringify({ ts: Date.now() }));
+            ok = true;
+          }
+        } catch (e) {}
+        msg.style.display = '';
+        if (ok) {
+          var hb = bridgeHeartbeat();
+          if (!hb || Date.now() - hb > 180000) {
+            msg.textContent = '요청은 보냈지만 엔진이 멈춰 있습니다 — 재개가 10분을 넘기면 만료됩니다.';
+          } else {
+            msg.textContent = '측정 요청을 보냈습니다 — 사이클이 끝난 뒤 실행되고 결과는 최근 로그와 이 카드에 남습니다.';
+          }
         } else {
-          msg.textContent = '측정 요청을 보냈습니다 — 사이클이 끝난 뒤 실행되고 결과는 최근 로그와 이 카드에 남습니다.';
+          msg.textContent = '요청 전송 실패 — 앱을 다시 열고 시도하세요.';
         }
-      } else {
-        msg.textContent = '요청 전송 실패 — 앱을 다시 열고 시도하세요.';
-      }
+      });
     });
     Object.keys(SET_GROUPS).forEach(function(name){
       $(SET_GROUPS[name].toSaved).addEventListener('click', function(){ revertGroup(name, false); });
@@ -1632,6 +1671,15 @@
     $('btnSellCancel').addEventListener('click', closeSellPopup);
     $('sellOverlay').addEventListener('click', function(e){
       if (e.target === $('sellOverlay')) closeSellPopup();
+    });
+    $('btnConfirmOk').addEventListener('click', function(){
+      var cb = pendingConfirm;
+      closeConfirmPopup();
+      if (cb) cb();
+    });
+    $('btnConfirmCancel').addEventListener('click', closeConfirmPopup);
+    $('confirmOverlay').addEventListener('click', function(e){
+      if (e.target === $('confirmOverlay')) closeConfirmPopup();
     });
 
     refresh();
