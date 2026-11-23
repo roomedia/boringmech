@@ -850,6 +850,27 @@ export function parseTempSettings(raw) {
   return { enabled: o.tempNoEnabled === true, bandLo, bandHi, entryHourUtc, reserveSlots };
 }
 
+/**
+ * 제보 첨부용 실효 설정 요약 — bm_settings 원본을 엔진과 같은 해석
+ * (parseTradeSettings·parseTempSettings)으로 푼 평면 객체. 키 이름은
+ * 저장 키와 같게 맞춰 원격에서 저장값과 1:1로 대조할 수 있게 한다.
+ * 기온 필드는 parseTempSettings의 반환 키를 저장 키 이름으로 되돌려
+ * 붙인다. 해석 함수들이 방어적이라 어떤 입력에도 던지지 않고
+ * 기본값으로 떨어진다.
+ */
+export function effectiveSettingsSummary(raw) {
+  const trade = parseTradeSettings(raw);
+  const temp = parseTempSettings(raw);
+  return {
+    ...trade,
+    tempNoEnabled: temp.enabled,
+    tempNoBandLo: temp.bandLo,
+    tempNoBandHi: temp.bandHi,
+    tempEntryHourUtc: temp.entryHourUtc,
+    tempNoReserveSlots: temp.reserveSlots,
+  };
+}
+
 // 테이커 수수료율 — feeType 카테고리 매핑(네이티브 ManualSell의
 // feeRateForFeeType와 같은 표)이 1순위, 판정 불가면 시장의
 // feeSchedule rate를 쓴다. 기온은 weather 카테고리라 0.05다.
@@ -3802,6 +3823,7 @@ window.BM = {
   sizing,
   betUsdFor,
   parseTradeSettings,
+  effectiveSettingsSummary,
   settingsSummaryText,
   checkForUpdate,
   startUpdate,

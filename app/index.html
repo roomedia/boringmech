@@ -1465,6 +1465,15 @@
         var ns = window.AndroidBridge && AndroidBridge.getNativeState && AndroidBridge.getNativeState();
         if (ns) payload.native = JSON.parse(ns);
       } catch (e) {}
+      // 실효 설정 요약 — 기온 토글·밴드·건당 하한 같은 현재값은 로그와
+      // 스냅샷 어디에도 없어 원격 대조가 불가능했다 (2026-11-24).
+      // 원본은 설정 화면과 같은 경로(readSettingsObject = bm_settings
+      // durable), 해석은 엔진과 같은 함수로 푼 실효값이다. 실패하면
+      // settings만 빠지고 제보 자체는 그대로 나간다.
+      try {
+        var eff = BM.effectiveSettingsSummary && BM.effectiveSettingsSummary(readSettingsObject());
+        if (eff) payload.settings = eff;
+      } catch (e) {}
       payload.logs = readLogs();
       for (var attempt = 0; attempt < 2; attempt++){
         try {
