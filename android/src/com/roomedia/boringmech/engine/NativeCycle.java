@@ -7,6 +7,7 @@ import com.roomedia.boringmech.crypto.Redeem;
 import com.roomedia.boringmech.write.ClobWriteClient;
 import com.roomedia.boringmech.write.JudgeFill;
 import com.roomedia.boringmech.write.ManualSell;
+import com.roomedia.boringmech.write.OrderPathTest;
 import com.roomedia.boringmech.write.ModelJson;
 import com.roomedia.boringmech.write.RedeemSubmitter;
 import com.roomedia.boringmech.write.SignedOrder;
@@ -185,6 +186,16 @@ public final class NativeCycle {
     private int cycleErrors = 0;
     private int sessionFills = 0;
     private boolean posGapWarned = false;
+
+    // 단계별 소요 (밀리초) — 사이클 요약에만 붙는 측정값이다. 단계 진입
+    // 기록(setStage·StageDeadline 판정)은 건드리지 않는다. verify·order는
+    // 스캔 단계 안의 누적, scan은 스캔 전체 경과다.
+    private long stageMsSnapshot;
+    private long stageMsStopLoss;
+    private long stageMsScan;
+    private long stageMsVerify;
+    private long stageMsOrder;
+    private long scanStartMs;
     /** slug → Gamma feeType 캐시 — 손절 판정의 Gamma 조회에서 채워지고 스냅샷의 수수료율 표시에 쓰인다. */
     private final Map<String, String> feeTypeBySlug = new HashMap<>();
 
@@ -688,6 +699,464 @@ public final class NativeCycle {
             m.put("outcome", outcome);
             m.put("detail", detail);
             env.durableWrite(ManualSell.STATUS_KEY, ModelJson.stringify(m));
+        } catch (Exception ignored) {
+        }
+    }
+
+    // ── 주문 경로 측정 (자기 테스트) ─────────────────────────────────────
+    //
+    // 뷰어 요청은 수동 매도와 같은 규약으로 읽는 즉시 소비한다. 실행은
+    // 사이클이 끝난 idle 구간에서만 한다 — 운영 사이클과 동시에 돌지
+    // 않고, 제출은 SubmitGuard로 감싸 워치독 재로드와도 직렬화된다.
+    // 테스트 주문은 이 경로 전용 코드로만 나가고, markBought·원장·
+    // 포지션 기록에는 닿지 않는다 (장부 분리).
+
+    public void processOrderPathTest(int gen) {
+        processOrderPathTest(gen, TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY)));
+    }
+
+    /** processOrderPathTest 본체 — 설정은 호출자가 파싱한 것을 넘겨받는다. */
+    public void processOrderPathTest(int gen, TradeSettings tradeCfg) {
+        if (!env.isRunning(gen)) {
+            return;
+        }
+        String raw = env.durableRead(OrderPathTest.REQUEST_KEY);
+        if (raw == null || raw.isEmpty()) {
+            return;
+        }
+        env.durableWrite(OrderPathTest.REQUEST_KEY, "");
+        Object model;
+        try {
+            model = JsonText.parse(raw);
+        } catch (Exception e) {
+            log("주문 경로 측정 요청 형식 오류 — 버립니다");
+            saveOrderPathTestStatus("bad_format", null, null, 0);
+            return;
+        }
+        OrderPathTest.Request req = OrderPathTest.parseRequest(model);
+        if (req == null) {
+            log("주문 경로 측정 요청 형식 오류 — 버립니다");
+            saveOrderPathTestStatus("bad_format", null, null, 0);
+            return;
+        }
+        if (OrderPathTest.isStale(req, env.nowMs())) {
+            log("주문 경로 측정 요청 만료 — 오래된 요청이라 버립니다");
+            saveOrderPathTestStatus("expired", null, null, 0);
+            return;
+        }
+        runOrderPathTest(gen, tradeCfg.orderTestRounds);
+    }
+
+    /** 측정 1회의 종단 상태 — 통계·실패·중단 사유를 한 번에 넘긴다. */
+    private static final class TestRunStats {
+        final List<Long> postMs = new ArrayList<>();
+        final List<Long> cancelMs = new ArrayList<>();
+        int failures = 0;
+        String outcome = "done";
+    }
+
+    /** 제출 1건의 결과 — 왕복 시간과 중단 판정을 함께 돌려준다. */
+    private static final class TestRoundOutcome {
+        long postMs = -1;
+        long cancelMs = -1;
+        boolean failed;
+        boolean fillDetected;
+        boolean residual;
+        Object resp;
+    }
+
+    private void runOrderPathTest(int gen, int rounds) {
+        log("주문 경로 측정 시작 — 반복 " + rounds + "회 · 가격 " + n(OrderPathTest.TEST_PRICE)
+                + " 고정 · 최소 수량 · 체결 시 즉시 중단");
+        TestRunStats stats = new TestRunStats();
+        try {
+            List<Object> markets = net.fetchMarkets();
+            List<OrderPathTest.Target> picked = OrderPathTest.pickTargets(
+                    markets, OrderPathTest.CONCURRENCY_MARKETS);
+            // 대상별 최소 수량을 오더북에서 확정한다 — 못 읽는 시장은
+            // 추정으로 크기를 만들지 않고 건너뛴다.
+            List<OrderPathTest.Target> usable = new ArrayList<>();
+            Map<String, Double> sizeByAsset = new HashMap<>();
+            Map<String, String> tickByAsset = new HashMap<>();
+            for (OrderPathTest.Target t : picked) {
+                Object book = net.orderBook(t.assetKey());
+                double size = OrderPathTest.planSize(Js.numOrZero(Js.field(book, "min_order_size")));
+                if (Double.isNaN(size)) {
+                    continue;
+                }
+                usable.add(t);
+                sizeByAsset.put(t.assetKey(), size);
+                Object ts = Js.field(book, "tick_size");
+                if (Js.truthy(ts)) {
+                    tickByAsset.put(t.assetKey(), Js.str(ts));
+                }
+            }
+            if (usable.isEmpty()) {
+                log("주문 경로 측정 중단 — 대상 시장을 찾지 못했습니다");
+                stats.outcome = "no_market";
+            } else {
+                OrderPathTest.Target main = usable.get(0);
+                for (int i = 1; i <= rounds; i++) {
+                    if (!env.isRunning(gen)) {
+                        stats.outcome = "aborted_stop";
+                        break;
+                    }
+                    env.beatProgress(cycle);
+                    env.beatHeartbeat(cycle);
+                    TestRoundOutcome r = orderPathTestRound(gen, main,
+                            sizeByAsset.get(main.assetKey()), tickByAsset.get(main.assetKey()),
+                            i + "/" + rounds);
+                    if (r.postMs >= 0) {
+                        stats.postMs.add(r.postMs);
+                    }
+                    if (r.cancelMs >= 0) {
+                        stats.cancelMs.add(r.cancelMs);
+                    }
+                    if (r.failed) {
+                        stats.failures++;
+                    }
+                    if (r.fillDetected) {
+                        stats.outcome = "filled_abort";
+                        break;
+                    }
+                    if (r.residual) {
+                        stats.outcome = "residual_abort";
+                        break;
+                    }
+                }
+                if ("done".equals(stats.outcome)) {
+                    orderPathTestConcurrency(gen, usable, sizeByAsset, tickByAsset, stats);
+                }
+            }
+        } catch (Exception e) {
+            log("주문 경로 측정 오류: " + slice(msg(e), 160));
+            stats.outcome = "error";
+        }
+        long[] p = OrderPathTest.summarizeMs(stats.postMs);
+        long[] c = OrderPathTest.summarizeMs(stats.cancelMs);
+        log("주문 경로 측정 종료 (" + stats.outcome + ") — 제출 " + p[0] + "건 · 중앙값 " + p[1]
+                + "ms · p90 " + p[2] + "ms · 최대 " + p[3] + "ms · 취소 " + c[0] + "건 · 중앙값 "
+                + c[1] + "ms · p90 " + c[2] + "ms · 최대 " + c[3] + "ms · 실패 " + stats.failures + "건");
+        saveOrderPathTestStatus(stats.outcome, p, c, stats.failures);
+    }
+
+    /** 반복 구간 1회 — 지정가 제출 → 즉시 취소, 왕복 시간을 잰다. */
+    private TestRoundOutcome orderPathTestRound(int gen, OrderPathTest.Target t, double size,
+                                                String tickSize, String label) {
+        TestRoundOutcome out = new TestRoundOutcome();
+        SignedOrder signed;
+        try {
+            signed = signTestOrder(t, size, tickSize);
+        } catch (Exception e) {
+            out.failed = true;
+            log("측정 " + label + " · 서명 실패 " + t.slug + ": " + slice(msg(e), 120));
+            return out;
+        }
+        String lockKey = "orderpath:" + t.assetKey();
+        if (!guard.tryAcquireSubmitLock(lockKey, gen)) {
+            out.failed = true;
+            log("측정 " + label + " · 제출 잠금 충돌로 건너뜁니다 " + t.slug);
+            return out;
+        }
+        try {
+            if (!guard.beginSubmit(gen)) {
+                out.failed = true;
+                log("측정 " + label + " · 세대 교체로 중단합니다 " + t.slug);
+                return out;
+            }
+            try {
+                long t0 = env.nowMs();
+                Object resp;
+                try {
+                    resp = client.postOrder(signed, "GTC");
+                } catch (Exception e) {
+                    out.postMs = env.nowMs() - t0;
+                    out.failed = true;
+                    log("측정 " + label + " · 제출 결과 불명 " + t.slug + ": " + slice(msg(e), 120)
+                            + " — 열린 주문으로 확인합니다");
+                    out.residual = reconcileUnknownTestPost(t);
+                    return out;
+                }
+                out.postMs = env.nowMs() - t0;
+                if (OrderPathTest.isFillResponse(resp)) {
+                    log("체결 감지 — 주문 경로 측정을 즉시 중단합니다 · " + t.slug
+                            + " · 응답: " + slice(ModelJson.stringify(resp), 200));
+                    errorNotify(com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_TEST_FILL,
+                            "주문 경로 측정 체결 감지",
+                            t.slug + " · 체결 불가 가격에서 체결이 감지돼 측정을 중단했습니다");
+                    out.fillDetected = true;
+                    return out;
+                }
+                String orderId = OrderPathTest.orderIdOf(resp);
+                String status = OrderPathTest.responseStatus(resp);
+                if (orderId == null || orderId.isEmpty()) {
+                    out.failed = true;
+                    log("측정 " + label + " · 제출 응답에 주문 ID가 없습니다 " + t.slug
+                            + " · 상태 " + (status.isEmpty() ? "(없음)" : status)
+                            + " · 응답: " + slice(ModelJson.stringify(resp), 200));
+                    return out;
+                }
+                TestRoundOutcome cancel = cancelTestOrder(t, orderId);
+                out.cancelMs = cancel.cancelMs;
+                out.failed = cancel.failed;
+                out.residual = cancel.residual;
+                log("측정 " + label + " · " + t.slug + " · 제출 " + out.postMs + "ms · 취소 "
+                        + out.cancelMs + "ms · 상태 " + (status.isEmpty() ? "(없음)" : status)
+                        + (cancel.residual ? " · 취소 실패(잔류)" : " · 취소됨"));
+                return out;
+            } finally {
+                guard.endSubmit();
+            }
+        } finally {
+            guard.releaseSubmitLock(lockKey);
+        }
+    }
+
+    /** 동시성 구간 — 서로 다른 시장에 연속 제출하고 전부 취소한다. */
+    private void orderPathTestConcurrency(int gen, List<OrderPathTest.Target> usable,
+                                          Map<String, Double> sizeByAsset,
+                                          Map<String, String> tickByAsset,
+                                          TestRunStats stats) {
+        List<OrderPathTest.Target> five = usable.subList(0, Math.min(usable.size(),
+                OrderPathTest.CONCURRENCY_MARKETS));
+        log("주문 경로 측정 동시성 구간 — 시장 " + five.size() + "개 연속 제출");
+        List<SignedOrder> signeds = new ArrayList<>();
+        List<OrderPathTest.Target> signedTargets = new ArrayList<>();
+        for (OrderPathTest.Target t : five) {
+            try {
+                signeds.add(signTestOrder(t, sizeByAsset.get(t.assetKey()),
+                        tickByAsset.get(t.assetKey())));
+                signedTargets.add(t);
+            } catch (Exception e) {
+                stats.failures++;
+                log("동시성 · 서명 실패 " + t.slug + ": " + slice(msg(e), 120));
+            }
+        }
+        List<String> placedIds = new ArrayList<>();
+        List<OrderPathTest.Target> placedTargets = new ArrayList<>();
+        long totalT0 = env.nowMs();
+        for (int i = 0; i < signeds.size(); i++) {
+            OrderPathTest.Target t = signedTargets.get(i);
+            if (!env.isRunning(gen)) {
+                stats.outcome = "aborted_stop";
+                break;
+            }
+            env.beatProgress(cycle);
+            TestRoundOutcome r = postTestOrder(gen, t, signeds.get(i));
+            if (r.postMs >= 0) {
+                stats.postMs.add(r.postMs);
+            }
+            if (r.fillDetected) {
+                stats.outcome = "filled_abort";
+                break;
+            }
+            if (r.failed) {
+                stats.failures++;
+                if (r.residual) {
+                    stats.outcome = "residual_abort";
+                    break;
+                }
+                continue;
+            }
+            placedIds.add(OrderPathTest.orderIdOf(r.resp));
+            placedTargets.add(t);
+        }
+        log("동시성 제출 완료 — 총 " + (env.nowMs() - totalT0) + "ms · 접수 " + placedIds.size()
+                + "건");
+        for (int i = 0; i < placedIds.size(); i++) {
+            TestRoundOutcome cancel = cancelTestOrder(placedTargets.get(i), placedIds.get(i));
+            if (cancel.cancelMs >= 0) {
+                stats.cancelMs.add(cancel.cancelMs);
+            }
+            if (cancel.failed) {
+                stats.failures++;
+            }
+            if (cancel.residual && "done".equals(stats.outcome)) {
+                stats.outcome = "residual_abort";
+            }
+        }
+    }
+
+    /** 제출만 재는 공용 경로 — 동시성 구간용. 응답 모델을 결과에 실어 돌려준다. */
+    private TestRoundOutcome postTestOrder(int gen, OrderPathTest.Target t, SignedOrder signed) {
+        TestRoundOutcome out = new TestRoundOutcome();
+        String lockKey = "orderpath:" + t.assetKey();
+        if (!guard.tryAcquireSubmitLock(lockKey, gen)) {
+            out.failed = true;
+            log("동시성 · 제출 잠금 충돌로 건너뜁니다 " + t.slug);
+            return out;
+        }
+        try {
+            if (!guard.beginSubmit(gen)) {
+                out.failed = true;
+                return out;
+            }
+            try {
+                long t0 = env.nowMs();
+                Object resp;
+                try {
+                    resp = client.postOrder(signed, "GTC");
+                } catch (Exception e) {
+                    out.postMs = env.nowMs() - t0;
+                    out.failed = true;
+                    log("동시성 · 제출 결과 불명 " + t.slug + ": " + slice(msg(e), 120)
+                            + " — 열린 주문으로 확인합니다");
+                    out.residual = reconcileUnknownTestPost(t);
+                    return out;
+                }
+                out.postMs = env.nowMs() - t0;
+                out.resp = resp;
+                if (OrderPathTest.isFillResponse(resp)) {
+                    log("체결 감지 — 주문 경로 측정을 즉시 중단합니다 · " + t.slug
+                            + " · 응답: " + slice(ModelJson.stringify(resp), 200));
+                    errorNotify(com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_TEST_FILL,
+                            "주문 경로 측정 체결 감지",
+                            t.slug + " · 체결 불가 가격에서 체결이 감지돼 측정을 중단했습니다");
+                    out.fillDetected = true;
+                    return out;
+                }
+                if (OrderPathTest.orderIdOf(resp) == null) {
+                    out.failed = true;
+                    log("동시성 · 제출 응답에 주문 ID가 없습니다 " + t.slug
+                            + " · 응답: " + slice(ModelJson.stringify(resp), 200));
+                }
+                return out;
+            } finally {
+                guard.endSubmit();
+            }
+        } finally {
+            guard.releaseSubmitLock(lockKey);
+        }
+    }
+
+    /** 테스트 주문 서명 — 가격은 OrderPathTest.TEST_PRICE 고정, 수량은 최소 수량. */
+    private SignedOrder signTestOrder(OrderPathTest.Target t, double size, String tickSize)
+            throws Exception {
+        ClobWriteClient.LimitOrderRequest req =
+                new ClobWriteClient.LimitOrderRequest(t.tokenId, true, OrderPathTest.TEST_PRICE, size);
+        req.positionID = t.positionId;
+        req.tickSize = tickSize;
+        return client.createLimitOrder(req);
+    }
+
+    /**
+     * 테스트 주문 취소 + 잔류 확인. 취소가 확정되지 않으면 열린 주문
+     * 조회로 확인하고, 잔류가 보이면 1회 더 취소한다. 그래도 남으면
+     * residual로 올려 호출자가 측정을 중단하게 한다.
+     */
+    private TestRoundOutcome cancelTestOrder(OrderPathTest.Target t, String orderId) {
+        TestRoundOutcome out = new TestRoundOutcome();
+        long t0 = env.nowMs();
+        Object resp = null;
+        Exception err = null;
+        try {
+            resp = client.cancelOrder(orderId);
+        } catch (Exception e) {
+            err = e;
+        }
+        out.cancelMs = env.nowMs() - t0;
+        if (err == null && OrderPathTest.cancelConfirmed(resp, orderId)) {
+            return out;
+        }
+        String refusal = err == null ? OrderPathTest.cancelRefusal(resp, orderId) : null;
+        if (err != null) {
+            log("취소 요청 오류 " + t.slug + ": " + slice(msg(err), 120) + " — 열린 주문으로 확인합니다");
+        } else if (refusal != null) {
+            log("취소 거부 " + t.slug + ": " + refusal + " — 열린 주문으로 확인합니다");
+        }
+        if (!isTestOrderOpen(orderId)) {
+            log("취소 재확인 — 열린 주문에 없어 취소된 것으로 봅니다 · " + t.slug);
+            return out;
+        }
+        try {
+            resp = client.cancelOrder(orderId);
+        } catch (Exception e) {
+            resp = null;
+        }
+        if (resp != null && OrderPathTest.cancelConfirmed(resp, orderId)) {
+            log("재취소로 정리됨 · " + t.slug);
+            return out;
+        }
+        if (!isTestOrderOpen(orderId)) {
+            log("재취소 후 열린 주문에 없음 · " + t.slug);
+            return out;
+        }
+        out.failed = true;
+        out.residual = true;
+        log("취소 실패 — 테스트 주문이 열린 채로 남았습니다 · " + t.slug + " · 주문 " + orderId
+                + " — Polymarket에서 직접 확인해 취소하세요");
+        errorNotify(com.roomedia.boringmech.write.NotifyPolicy.KEY_ORDER_TEST_RESIDUAL,
+                "주문 경로 측정 취소 실패",
+                t.slug + " · 테스트 주문이 취소되지 않고 남아 있습니다");
+        return out;
+    }
+
+    /** 열린 주문 조회로 잔류를 본다 — 조회 자체가 실패하면 잔류로 간주한다 (안전 방향). */
+    private boolean isTestOrderOpen(String orderId) {
+        try {
+            List<Object> open = client.getOpenOrders(orderId, null, null);
+            return OrderPathTest.openOrderPresent(open, orderId);
+        } catch (Exception e) {
+            log("열린 주문 조회 실패: " + slice(msg(e), 120) + " — 잔류로 간주합니다");
+            return true;
+        }
+    }
+
+    /**
+     * 제출 결과가 불명(전송 예외)일 때 — 주문 ID를 모르므로 자산으로
+     * 열린 주문을 조회해 테스트 가격으로 걸린 주문을 찾아 취소한다.
+     * 반환 true면 잔류가 확정돼 측정을 중단해야 한다.
+     */
+    private boolean reconcileUnknownTestPost(OrderPathTest.Target t) {
+        List<Object> open;
+        try {
+            open = client.getOpenOrders(null, null, t.assetKey());
+        } catch (Exception e) {
+            log("결과 불명 제출의 열린 주문 조회 실패: " + slice(msg(e), 120)
+                    + " — 잔류로 간주해 측정을 중단합니다");
+            return true;
+        }
+        boolean residual = false;
+        for (Object row : open) {
+            double price = Js.fieldNum(row, "price");
+            if (Double.isFinite(price) && Math.abs(price - OrderPathTest.TEST_PRICE) < 1e-9) {
+                Object idRaw = Js.field(row, "id");
+                if (idRaw == Js.UNDEFINED || idRaw == null) {
+                    continue;
+                }
+                String id = Js.str(idRaw);
+                TestRoundOutcome cancel = cancelTestOrder(t, id);
+                if (cancel.residual) {
+                    residual = true;
+                } else {
+                    log("결과 불명 제출의 잔류 주문을 찾아 취소했습니다 · " + t.slug);
+                }
+            }
+        }
+        return residual;
+    }
+
+    /** 측정 종단 결과를 뷰어 표시용으로 남긴다 — 실패해도 흐름에 영향 없다. */
+    private void saveOrderPathTestStatus(String outcome, long[] postStats, long[] cancelStats,
+                                         int failures) {
+        try {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("ts", (double) env.nowMs());
+            m.put("outcome", outcome);
+            if (postStats != null) {
+                m.put("postCount", (double) postStats[0]);
+                m.put("postMedianMs", (double) postStats[1]);
+                m.put("postP90Ms", (double) postStats[2]);
+                m.put("postMaxMs", (double) postStats[3]);
+            }
+            if (cancelStats != null) {
+                m.put("cancelCount", (double) cancelStats[0]);
+                m.put("cancelMedianMs", (double) cancelStats[1]);
+                m.put("cancelP90Ms", (double) cancelStats[2]);
+                m.put("cancelMaxMs", (double) cancelStats[3]);
+            }
+            m.put("failures", (double) failures);
+            env.durableWrite(OrderPathTest.STATUS_KEY, ModelJson.stringify(m));
         } catch (Exception ignored) {
         }
     }
@@ -1218,6 +1687,13 @@ public final class NativeCycle {
     /** summarizeCycle 이식. */
     public static String summarizeCycle(int candidateCount, int verified, Map<String, Integer> rejects,
                                  int filled, int unfilled, int failed, Map<String, Integer> scan) {
+        return summarizeCycle(candidateCount, verified, rejects, filled, unfilled, failed, scan, null);
+    }
+
+    /** 단계 소요를 붙인 요약 — durationsText가 null이면 기존 요약과 같다. */
+    public static String summarizeCycle(int candidateCount, int verified, Map<String, Integer> rejects,
+                                 int filled, int unfilled, int failed, Map<String, Integer> scan,
+                                 String durationsText) {
         StringBuilder sb = new StringBuilder();
         sb.append("사이클 요약 · 후보 ").append(candidateCount).append(" · 검증 ").append(verified);
         if (scan != null) {
@@ -1239,7 +1715,17 @@ public final class NativeCycle {
         if (failed > 0) {
             sb.append(" · 실패 ").append(failed);
         }
+        if (durationsText != null && !durationsText.isEmpty()) {
+            sb.append(" · ").append(durationsText);
+        }
         return sb.toString();
+    }
+
+    /** 단계 소요 표기 — 스냅샷·손절·스캔 전체와 스캔 안의 검증·주문 누적. */
+    public static String stageDurationsText(long snapshotMs, long stopLossMs, long scanMs,
+                                            long verifyMs, long orderMs) {
+        return "소요 스냅샷 " + snapshotMs + "ms · 손절 " + stopLossMs + "ms · 스캔 " + scanMs
+                + "ms · 검증 " + verifyMs + "ms · 주문 " + orderMs + "ms";
     }
 
     // ── 업데이트 확인 ───────────────────────────────────────────────────────
@@ -1278,6 +1764,12 @@ public final class NativeCycle {
         // 바뀌었을 때 구·신 설정이 섞인다 (v0.3.38 감사).
         TradeSettings tradeCfg = TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY));
         TempNo.Settings tempSettings = TempNo.parseSettings(env.durableRead(TempNo.SETTINGS_KEY));
+        long stageT0 = env.nowMs();
+        stageMsSnapshot = 0;
+        stageMsStopLoss = 0;
+        stageMsScan = 0;
+        stageMsVerify = 0;
+        stageMsOrder = 0;
         env.setStage("snapshot", cycle);
         Snap snap;
         try {
@@ -1309,12 +1801,15 @@ public final class NativeCycle {
         snapModel.put("settledRealizedPnl", numOrNull(snap.settledRealizedPnl));
         SettledBaseline.Notice settleNotice = SettledBaseline.noticeFor(settledBaseline, snapModel);
         env.beatProgress(cycle);
+        stageMsSnapshot = env.nowMs() - stageT0;
+        long stageT1 = env.nowMs();
         env.setStage("stoploss", cycle);
         int sold = runStopLoss(gen, tradeCfg);
         env.beatProgress(cycle);
         if (sold > 0) {
             snap = snapshot(tradeCfg);
         }
+        stageMsStopLoss = env.nowMs() - stageT1;
         env.setStage("redeem", cycle);
         double recovered = runRedeems(gen);
         env.beatProgress(cycle);
@@ -1359,6 +1854,7 @@ public final class NativeCycle {
         if (!boughtReconciled) {
             reconcileBoughtOnce(snap);
         }
+        scanStartMs = env.nowMs();
         env.setStage("scan", cycle);
         runScanAndBuy(gen, snap, tradeCfg, tempSettings);
     }
@@ -1497,14 +1993,17 @@ public final class NativeCycle {
             env.beatProgress(cycle);
             verified++;
             CandidateVerifier.Result detail;
+            long verifyT0 = env.nowMs();
             try {
                 detail = CandidateVerifier.verifyCandidate(cand, snap.bet, gammaSource, bookSource, env.nowMs(),
                         tradeCfg, tempSettings.entryHourUtc);
             } catch (Exception e) {
+                stageMsVerify += env.nowMs() - verifyT0;
                 tally(rejects, "verify_error");
                 log("검증 오류 " + cand.slug + ": " + msg(e));
                 continue;
             }
+            stageMsVerify += env.nowMs() - verifyT0;
             if (!detail.ok) {
                 tally(rejects, detail.reason);
                 if (detail.note != null) {
@@ -1528,6 +2027,7 @@ public final class NativeCycle {
                     log("세대 교체 — 제출 중단 " + cand.slug);
                     continue;
                 }
+                long orderT0 = env.nowMs();
                 try {
                     SignedOrder signed;
                     try {
@@ -1641,6 +2141,7 @@ public final class NativeCycle {
                             + (hasFillPrice ? " · 체결가 " + n(fillPrice) : "")
                             + " · $" + n(snap.bet));
                 } finally {
+                    stageMsOrder += env.nowMs() - orderT0;
                     guard.endSubmit();
                 }
             } finally {
@@ -1656,7 +2157,9 @@ public final class NativeCycle {
                         + "건을 미루고 슬롯을 남깁니다");
             }
         }
-        log(summarizeCycle(candidates.size(), verified, rejects, filledCount, unfilledCount, failedCount, scanStats));
+        stageMsScan = env.nowMs() - scanStartMs;
+        log(summarizeCycle(candidates.size(), verified, rejects, filledCount, unfilledCount, failedCount, scanStats,
+                stageDurationsText(stageMsSnapshot, stageMsStopLoss, stageMsScan, stageMsVerify, stageMsOrder)));
     }
 
     // ── 루프 1회전 (loop() 이식 — 스케줄링과 재시작 실행은 드라이버 몫) ──────
@@ -1694,6 +2197,14 @@ public final class NativeCycle {
             cycleErrors = 0;
         }
         env.setStage("idle", cycle);
+        // 주문 경로 측정은 사이클이 쉬는 구간에서만 돈다 — 운영 제출과
+        // 겹치지 않게 사이클 경계 뒤에 붙인다. 자체 예외는 사이클 오류로
+        // 세지 않는다 (측정 실패가 엔진 오류 카운터를 올리면 안 된다).
+        try {
+            processOrderPathTest(gen);
+        } catch (Exception e) {
+            log("주문 경로 측정 처리 오류: " + slice(msg(e), 160));
+        }
         if (cycle % UPDATE_CHECK_EVERY_CYCLES == 0) {
             checkForUpdate();
         }

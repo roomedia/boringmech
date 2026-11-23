@@ -130,6 +130,25 @@ public final class OrderBridge {
                 .bridgePost(url, headers, body, retryOnError);
     }
 
+    /**
+     * DELETE 전송 + 결과 shaping — SDK del 등가. 재시도하지 않는다:
+     * 취소는 멱등 확인(열린 주문 조회)이 별도로 있어, 응답 유실 시
+     * 호출자가 조회로 확정하는 쪽이 중복 취소를 만들지 않는다.
+     * 전송 예외는 postOnce와 같이 {status:0} 봉투로 접는다.
+     */
+    public static Object bridgeDelete(RawHttp.Transport transport, String url,
+                                      Map<String, String> headers, String body,
+                                      JsonCodec codec) {
+        RawHttp.Raw r;
+        try {
+            r = transport.delete(url, headers, body);
+        } catch (Exception e) {
+            String m = e.getMessage();
+            r = new RawHttp.Raw(0, "", m != null ? m : e.toString());
+        }
+        return new OrderBridge(transport, codec, ms -> { }).shapeNativeResult(r);
+    }
+
     /** 전송 실패 모양({error}만 있고 status 없음)인지 — judgeFill의 unknown 판정과 같은 기준. */
     static boolean isRawTransportFailure(Object shaped) {
         if (!(shaped instanceof Map)) {

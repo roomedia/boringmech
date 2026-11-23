@@ -116,6 +116,16 @@ public final class JsNumber {
         return Math.floor(num * p) / p;
     }
 
+    /** SDK utilities.roundNormal: Math.round((num + EPSILON) * 10^d) / 10^d. */
+    public static double roundNormal(double num, int decimals) {
+        if (decimalPlaces(num) <= decimals) {
+            return num;
+        }
+        double p = Math.pow(10, decimals);
+        // Number.EPSILON = 2.220446049250313e-16
+        return Math.round((num + 2.220446049250313e-16) * p) / p;
+    }
+
     /** SDK utilities.roundUp: Math.ceil(num * 10^d) / 10^d. */
     public static double roundUp(double num, int decimals) {
         if (decimalPlaces(num) <= decimals) {

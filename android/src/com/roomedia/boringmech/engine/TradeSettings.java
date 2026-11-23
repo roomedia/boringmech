@@ -35,6 +35,8 @@ public final class TradeSettings {
     public double tempStopDrop = 0.15;     // StopLoss.TEMP_STOP_DROP
     public double decidedHigh = 0.97;      // StopLoss.DECIDED_HIGH
     public double decidedLow = 0.03;       // StopLoss.DECIDED_LOW
+    /** 주문 경로 측정 반복 횟수 — 가격·수량은 코드 고정이라 이 값만 조정 가능하다. */
+    public int orderTestRounds = 30;
 
     /** 기본값 그대로의 설정 — 설정을 못 읽거나 비었을 때의 동작은 기존과 같다. */
     public static TradeSettings defaults() {
@@ -109,6 +111,8 @@ public final class TradeSettings {
         out.tempStopDrop = numField(o, "tempStopDrop", d.tempStopDrop, v -> v > 0 && v < 1);
         out.decidedHigh = numField(o, "decidedHigh", d.decidedHigh, v -> v > 0 && v < 1);
         out.decidedLow = numField(o, "decidedLow", d.decidedLow, v -> v > 0 && v < 1);
+        out.orderTestRounds = (int) numField(o, "orderTestRounds", d.orderTestRounds,
+                v -> v == Math.floor(v) && v >= 1 && v <= 100);
         if (!(out.bandLo < out.bandHi)) {
             out.bandLo = d.bandLo;
             out.bandHi = d.bandHi;

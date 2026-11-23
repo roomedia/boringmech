@@ -67,6 +67,47 @@ public final class Amounts {
     }
 
     /**
+     * 지정가 주문 금액 산출 — SDK getOrderRawAmounts 재현. 시장가와 두
+     * 가지가 다르다: 가격은 roundNormal로 다듬고, 기준 수량은 "건
+     * 금액"이 아니라 주식 수(size)다. BUY는 taker=size,
+     * maker=size×가격이고 SELL은 반대다.
+     *
+     * {rawMakerAmt, rawTakerAmt} — JS double 그대로.
+     */
+    public static double[] limitRawAmounts(boolean buy, double size, double price, RoundingConfig cfg) {
+        double rawPrice = JsNumber.roundNormal(price, cfg.price);
+        if (buy) {
+            double rawTakerAmt = JsNumber.roundDown(size, cfg.size);
+            double rawMakerAmt = rawTakerAmt * rawPrice;
+            if (JsNumber.decimalPlaces(rawMakerAmt) > cfg.amount) {
+                rawMakerAmt = JsNumber.roundUp(rawMakerAmt, cfg.amount + 4);
+                if (JsNumber.decimalPlaces(rawMakerAmt) > cfg.amount) {
+                    rawMakerAmt = JsNumber.roundDown(rawMakerAmt, cfg.amount);
+                }
+            }
+            return new double[]{rawMakerAmt, rawTakerAmt};
+        }
+        double rawMakerAmt = JsNumber.roundDown(size, cfg.size);
+        double rawTakerAmt = rawMakerAmt * rawPrice;
+        if (JsNumber.decimalPlaces(rawTakerAmt) > cfg.amount) {
+            rawTakerAmt = JsNumber.roundUp(rawTakerAmt, cfg.amount + 4);
+            if (JsNumber.decimalPlaces(rawTakerAmt) > cfg.amount) {
+                rawTakerAmt = JsNumber.roundDown(rawTakerAmt, cfg.amount);
+            }
+        }
+        return new double[]{rawMakerAmt, rawTakerAmt};
+    }
+
+    /** {makerAmount, takerAmount} — 6자리 스케일 정수 문자열. */
+    public static String[] limitOrderAmounts(boolean buy, double size, double price, RoundingConfig cfg) {
+        double[] raw = limitRawAmounts(buy, size, price, cfg);
+        return new String[]{
+                parseUnits(JsNumber.toString(raw[0]), COLLATERAL_DECIMALS).toString(),
+                parseUnits(JsNumber.toString(raw[1]), COLLATERAL_DECIMALS).toString(),
+        };
+    }
+
+    /**
      * viem parseUnits (Value.from) 재현 — 문자열 기반이며, 소수 자릿수가
      * decimals를 넘으면 반올림(절댓값 기준 5 이상 올림, 자리올림 전파)을 한다.
      */

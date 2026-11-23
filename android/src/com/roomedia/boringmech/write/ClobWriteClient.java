@@ -1,6 +1,7 @@
 package com.roomedia.boringmech.write;
 
 import com.roomedia.boringmech.crypto.Amounts;
+import com.roomedia.boringmech.crypto.JsNumber;
 import com.roomedia.boringmech.crypto.OrderSigner;
 import com.roomedia.boringmech.crypto.PolyHmac;
 import com.roomedia.boringmech.engine.Js;
@@ -30,6 +31,14 @@ import java.util.concurrent.Callable;
  * - postOrder: orderToJsonV2 본문(OrderJson) → L2 헤더(PolyHmac) →
  *   OrderBridge 전송(shaping·재시도) → 버전 불일치 시 버전 강제 갱신 →
  *   resolveTransactionsHashes(체결 해시 폴링).
+ * - createLimitOrder: SDK createOrder 등가 — 시장가와 달리 시장 정보
+ *   캐시를 강제하지 않고, 가격은 roundNormal로 다듬으며, 금액은 지정가
+ *   전용 산출(Amounts.limitOrderAmounts), expiration은 서명 구조 밖이라
+ *   본문에만 실린다. 제출은 postOrder(signed, "GTC")를 그대로 쓴다.
+ * - cancelOrder: DELETE /order, 본문 {"orderID"} — L2 헤더는 본문을
+ *   포함해 서명한다 (SDK cancelOrder). 재시도 없음.
+ * - getOpenOrders: GET /data/orders 한 페이지 (only_first_page) —
+ *   취소 실패·결과 불명 주문의 잔류 확인 전용.
  * - 메서드 단위 20초 타임아웃(withClientTimeout 등가)은 TimeoutRunner가 맡는다.
  *
  * 실제 네트워크 호출은 주입된 Transport가 한다. 기본 배선(HttpTransport)은
@@ -119,6 +128,28 @@ public final class ClobWriteClient {
             this.buy = buy;
             this.amount = amount;
             this.price = price;
+        }
+    }
+
+    /** 지정가 주문 요청 — SDK UserOrder. size는 달러가 아니라 주식 수다. */
+    public static final class LimitOrderRequest {
+        public String tokenID;
+        public String positionID;
+        public boolean buy;
+        public double price;
+        public double size;
+        /** GTD 만료 (epoch 초). 0이면 GTC — 본문 expiration "0". */
+        public long expiration;
+        public String tickSize;
+        public Boolean negRisk;
+        /** options.version — 지정하지 않으면 서버 버전. */
+        public Integer version;
+
+        public LimitOrderRequest(String tokenID, boolean buy, double price, double size) {
+            this.tokenID = tokenID;
+            this.buy = buy;
+            this.price = price;
+            this.size = size;
         }
     }
 
@@ -320,20 +351,26 @@ public final class ClobWriteClient {
         if (version == 1) {
             throw new Exception("signature type POLY_1271 is not supported for v1 orders");
         }
-        String exchangeContract;
+        String exchangeContract = exchangeContractFor(version, negRisk);
+        Amounts.RoundingConfig cfg = Amounts.roundingConfig(tickSize);
+        String[] amts = Amounts.marketOrderAmounts(req.buy, req.amount, price, cfg);
+        return signBuiltOrder(assetID, version, exchangeContract, amts, req.buy, "0");
+    }
+
+    private static String exchangeContractFor(int version, boolean negRisk) throws Exception {
         switch (version) {
             case 2:
-                exchangeContract = negRisk ? NEG_RISK_EXCHANGE_V2 : EXCHANGE_V2;
-                break;
+                return negRisk ? NEG_RISK_EXCHANGE_V2 : EXCHANGE_V2;
             case 3:
-                exchangeContract = EXCHANGE_V3;
-                break;
+                return EXCHANGE_V3;
             default:
                 throw new Exception("unsupported order version " + version);
         }
-        Amounts.RoundingConfig cfg = Amounts.roundingConfig(tickSize);
-        String[] amts = Amounts.marketOrderAmounts(req.buy, req.amount, price, cfg);
+    }
 
+    /** 서명 주문 조립 — 시장가·지정가 공용 꼬리 (POLY_1271: signer = maker). */
+    private SignedOrder signBuiltOrder(String assetID, int version, String exchangeContract,
+                                       String[] amts, boolean buy, String expiration) throws Exception {
         SignedOrder o = new SignedOrder();
         o.salt = saltGenerator.generate();
         o.maker = funder;
@@ -341,10 +378,10 @@ public final class ClobWriteClient {
         o.tokenId = assetID;
         o.makerAmount = amts[0];
         o.takerAmount = amts[1];
-        o.side = req.buy ? "BUY" : "SELL";
+        o.side = buy ? "BUY" : "SELL";
         o.signatureType = SIGNATURE_TYPE_POLY_1271;
         o.timestamp = String.valueOf(clock.nowMs());
-        o.expiration = "0";
+        o.expiration = expiration;
         o.metadata = BYTES32_ZERO;
         o.builder = BYTES32_ZERO;
         o.signature = OrderSigner.signOrder(privateKey, o.toSignerOrder(),
@@ -353,14 +390,113 @@ public final class ClobWriteClient {
     }
 
     private static String resolveOrderAssetID(MarketOrderRequest req) {
-        String assetID = req.positionID == null ? req.tokenID : req.positionID;
-        boolean bad = (req.tokenID == null) == (req.positionID == null)
+        return resolveOrderAssetID(req.tokenID, req.positionID);
+    }
+
+    private static String resolveOrderAssetID(String tokenID, String positionID) {
+        String assetID = positionID == null ? tokenID : positionID;
+        boolean bad = (tokenID == null) == (positionID == null)
                 || assetID == null || assetID.trim().isEmpty();
         if (bad) {
             throw new IllegalArgumentException(
                     "Exactly one of tokenID or positionID must be provided as a non-empty string");
         }
         return assetID;
+    }
+
+    // ── createLimitOrder (SDK createOrder) ──
+
+    public SignedOrder createLimitOrder(LimitOrderRequest req) throws Exception {
+        return timeout.run("createOrder", () -> createLimitOrderInner(req));
+    }
+
+    private SignedOrder createLimitOrderInner(LimitOrderRequest req) throws Exception {
+        if (privateKey == null) {
+            throw new Exception("L1_AUTH_UNAVAILABLE_ERROR");
+        }
+        String assetID = resolveOrderAssetID(req.tokenID, req.positionID);
+        Integer routingVersion = req.positionID != null ? Integer.valueOf(3) : req.version;
+
+        // SDK createOrder는 createMarketOrder와 달리 시장 정보 캐시를
+        // 강제하지 않는다 — 틱은 getTickSize 경로로만 해소한다.
+        String tickSize = resolveTickSize(assetID, req.tickSize);
+        if (!priceValid(req.price, tickSize)) {
+            throw new Exception("invalid price (" + Js.str(req.price) + "), min: "
+                    + Double.parseDouble(tickSize) + " - max: " + (1 - Double.parseDouble(tickSize)));
+        }
+        Amounts.RoundingConfig cfg = Amounts.roundingConfig(tickSize);
+        double price = JsNumber.roundNormal(req.price, cfg.price);
+        int version = routingVersion != null ? routingVersion : versionResolver.resolveVersion(false);
+        boolean negRisk = version == 3 ? false
+                : (req.negRisk != null ? req.negRisk : marketInfo.getNegRisk(assetID));
+        if (version == 1) {
+            throw new Exception("signature type POLY_1271 is not supported for v1 orders");
+        }
+        String exchangeContract = exchangeContractFor(version, negRisk);
+        String[] amts = Amounts.limitOrderAmounts(req.buy, req.size, price, cfg);
+        String expiration = req.expiration > 0 ? String.valueOf(req.expiration) : "0";
+        return signBuiltOrder(assetID, version, exchangeContract, amts, req.buy, expiration);
+    }
+
+    // ── cancelOrder / getOpenOrders ──
+
+    /**
+     * SDK cancelOrder — DELETE /order, 본문 {"orderID": "..."}.
+     * 반환은 shaping된 응답 모델 ({canceled, not_canceled} 또는 {error}).
+     */
+    public Object cancelOrder(String orderId) throws Exception {
+        return timeout.run("cancelOrder", () -> cancelOrderInner(orderId));
+    }
+
+    private Object cancelOrderInner(String orderId) {
+        if (creds == null) {
+            throw new IllegalStateException("L2_AUTH_NOT_AVAILABLE");
+        }
+        String body = "{\"orderID\":" + ModelJson.quote(orderId) + "}";
+        Map<String, String> headers = createL2Headers("DELETE", "/order", body);
+        return OrderBridge.bridgeDelete(transport, host + "/order", headers, body, codec);
+    }
+
+    /**
+     * SDK getOpenOrders(only_first_page=true) — GET /data/orders 한 페이지.
+     * 필터는 null인 항목을 빼고 붙인다. 전송·HTTP 오류는 예외로 던진다 —
+     * 잔류 확인 전용이라 조회 실패를 "열린 주문 없음"으로 오독하면
+     * 취소 실패 주문이 방치되기 때문이다.
+     */
+    public List<Object> getOpenOrders(String id, String market, String assetId) throws Exception {
+        return timeout.run("getOpenOrders", () -> getOpenOrdersInner(id, market, assetId));
+    }
+
+    private List<Object> getOpenOrdersInner(String id, String market, String assetId) throws Exception {
+        if (creds == null) {
+            throw new Exception("L2_AUTH_NOT_AVAILABLE");
+        }
+        StringBuilder path = new StringBuilder("/data/orders?next_cursor=MA==");
+        if (id != null) {
+            path.append("&id=").append(enc(id));
+        }
+        if (market != null) {
+            path.append("&market=").append(enc(market));
+        }
+        if (assetId != null) {
+            path.append("&asset_id=").append(enc(assetId));
+        }
+        Map<String, String> headers = createL2Headers("GET", "/data/orders", null);
+        RawHttp.Raw raw = transport.get(host + path, headers);
+        if (raw.status == 0 || raw.status >= 400) {
+            throw new Exception("열린 주문 조회 실패 (status " + raw.status + ")"
+                    + (raw.error != null ? ": " + raw.error : ""));
+        }
+        Object parsed = codec.parse(raw.body.isEmpty() ? "{}" : raw.body);
+        if (parsed instanceof Map) {
+            Object data = ((Map<?, ?>) parsed).get("data");
+            if (data instanceof List) {
+                @SuppressWarnings("unchecked")
+                List<Object> l = (List<Object>) data;
+                return l;
+            }
+        }
+        return List.of();
     }
 
     private String resolveTickSize(String tokenId, String tickSize) throws Exception {

@@ -31,5 +31,10 @@ public final class RawHttp {
         Raw post(String url, Map<String, String> headers, String body);
 
         Raw get(String url, Map<String, String> headers);
+
+        /** 본문 있는 DELETE (CLOB 주문 취소) — 미구현 전송은 실패 봉투를 돌려준다. */
+        default Raw delete(String url, Map<String, String> headers, String body) {
+            return Raw.failure("DELETE 미지원 전송");
+        }
     }
 }

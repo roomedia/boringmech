@@ -40,7 +40,9 @@ public class GoldenTest {
 
         testFunder(root, priv, meta);
         testAmounts(root);
+        testLimitAmounts(root);
         testOrderSignatures(root, priv, fixedSalt, fixedOrderTimestamp);
+        testLimitOrderSignatures(root, priv, fixedSalt, fixedOrderTimestamp);
         testL1(root, priv);
         testL2(root);
         testRedeem(root);
@@ -100,6 +102,85 @@ public class GoldenTest {
                         + " maker=" + maker + " (exp " + exp.get("makerAmount") + ")"
                         + " taker=" + taker + " (exp " + exp.get("takerAmount") + ")"
                         + " cfgOk=" + cfgOk);
+            } catch (Exception e) {
+                check(name, false, "exception: " + e);
+            }
+        }
+    }
+
+    private static void testLimitAmounts(Map<String, Object> root) {
+        for (Object o : arr(root.get("limitAmounts"))) {
+            Map<String, Object> c = obj(o);
+            String name = "limitAmounts/" + str(c.get("name"));
+            try {
+                Map<String, Object> in = obj(c.get("input"));
+                Map<String, Object> exp = obj(c.get("expected"));
+                Map<String, Object> expCfg = obj(exp.get("roundConfig"));
+                Amounts.RoundingConfig cfg = Amounts.roundingConfig(str(in.get("tickSize")));
+                boolean cfgOk = cfg.price == intVal(expCfg.get("price"))
+                        && cfg.size == intVal(expCfg.get("size"))
+                        && cfg.amount == intVal(expCfg.get("amount"));
+                boolean buy = str(in.get("side")).equals("BUY");
+                double size = Double.parseDouble(str(in.get("size")));
+                double price = Double.parseDouble(str(in.get("price")));
+                double[] raw = Amounts.limitRawAmounts(buy, size, price, cfg);
+                String rawMaker = JsNumber.toString(raw[0]);
+                String rawTaker = JsNumber.toString(raw[1]);
+                String maker = Amounts.parseUnits(rawMaker, 6).toString();
+                String taker = Amounts.parseUnits(rawTaker, 6).toString();
+                boolean ok = cfgOk
+                        && rawMaker.equals(str(exp.get("rawMakerAmt")))
+                        && rawTaker.equals(str(exp.get("rawTakerAmt")))
+                        && maker.equals(str(exp.get("makerAmount")))
+                        && taker.equals(str(exp.get("takerAmount")));
+                check(name, ok, "rawMaker=" + rawMaker + " (exp " + exp.get("rawMakerAmt") + ")"
+                        + " rawTaker=" + rawTaker + " (exp " + exp.get("rawTakerAmt") + ")"
+                        + " maker=" + maker + " (exp " + exp.get("makerAmount") + ")"
+                        + " taker=" + taker + " (exp " + exp.get("takerAmount") + ")"
+                        + " cfgOk=" + cfgOk);
+            } catch (Exception e) {
+                check(name, false, "exception: " + e);
+            }
+        }
+    }
+
+    private static void testLimitOrderSignatures(Map<String, Object> root, BigInteger priv,
+                                                 String fixedSalt, String fixedOrderTimestamp) {
+        for (Object o : arr(root.get("limitOrderSignatures"))) {
+            Map<String, Object> c = obj(o);
+            String name = "limitOrderSignatures/" + str(c.get("name"));
+            try {
+                Map<String, Object> in = obj(c.get("input"));
+                Map<String, Object> uo = obj(in.get("userOrder"));
+                Map<String, Object> options = obj(in.get("options"));
+                Map<String, Object> orderJson = obj(in.get("order"));
+                Map<String, Object> domain = obj(in.get("domain"));
+
+                boolean buy = str(uo.get("side")).equals("BUY");
+                Amounts.RoundingConfig cfg = Amounts.roundingConfig(str(options.get("tickSize")));
+                String[] amts = Amounts.limitOrderAmounts(
+                        buy, num(uo.get("size")), num(uo.get("price")), cfg);
+                boolean amtOk = amts[0].equals(str(orderJson.get("makerAmount")))
+                        && amts[1].equals(str(orderJson.get("takerAmount")));
+
+                OrderSigner.Order order = new OrderSigner.Order();
+                order.salt = new BigInteger(fixedSalt);
+                order.maker = str(orderJson.get("maker"));
+                order.signer = str(orderJson.get("signer"));
+                order.tokenId = new BigInteger(str(orderJson.get("tokenId")));
+                order.makerAmount = new BigInteger(amts[0]);
+                order.takerAmount = new BigInteger(amts[1]);
+                order.side = buy ? 0 : 1;
+                order.signatureType = intVal(orderJson.get("signatureType"));
+                order.timestamp = new BigInteger(fixedOrderTimestamp);
+                order.metadata = Hex.hexToBytes(str(orderJson.get("metadata")));
+                order.builder = Hex.hexToBytes(str(orderJson.get("builder")));
+
+                String sig = OrderSigner.signOrder(priv, order, str(domain.get("version")),
+                        BigInteger.valueOf(intVal(in.get("chainId"))), str(in.get("exchangeContract")));
+                String expected = str(obj(c.get("expected")).get("signature"));
+                check(name, amtOk && sig.equals(expected),
+                        "amtOk=" + amtOk + " sig=" + sig + " expected=" + expected);
             } catch (Exception e) {
                 check(name, false, "exception: " + e);
             }

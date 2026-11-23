@@ -51,6 +51,38 @@ public final class HttpTransport implements RawHttp.Transport {
         }
     }
 
+    /** 주문 취소용 DELETE — POST와 같은 규약으로 본문을 고정 길이로 쓴다. */
+    @Override
+    public RawHttp.Raw delete(String url, Map<String, String> headers, String body) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setRequestMethod("DELETE");
+            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(READ_TIMEOUT_MS);
+            conn.setDoOutput(true);
+            if (headers != null) {
+                for (Map.Entry<String, String> e : headers.entrySet()) {
+                    conn.setRequestProperty(e.getKey(), e.getValue());
+                }
+            }
+            conn.setRequestProperty("Content-Type", "application/json");
+            byte[] payload = (body == null ? "" : body).getBytes(StandardCharsets.UTF_8);
+            conn.setFixedLengthStreamingMode(payload.length);
+            OutputStream os = conn.getOutputStream();
+            os.write(payload);
+            os.close();
+            int status = conn.getResponseCode();
+            return new RawHttp.Raw(status, readBody(conn, status), null);
+        } catch (Exception e) {
+            return RawHttp.Raw.failure(e.getMessage() != null ? e.getMessage() : e.toString());
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
+        }
+    }
+
     @Override
     public RawHttp.Raw get(String url, Map<String, String> headers) {
         HttpURLConnection conn = null;

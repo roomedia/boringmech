@@ -370,6 +370,35 @@
     </div>
 
     <div class="card">
+      <h2>주문 경로 측정</h2>
+      <div class="set">
+        <div class="set-head"><span class="lab">반복 횟수</span>
+          <span class="stepper">
+            <button type="button" class="step-btn" data-for="ts_orderTestRounds" data-dir="-1">−</button>
+            <span><span class="val" id="val_orderTestRounds">30</span><span class="unit">회</span></span>
+            <button type="button" class="step-btn" data-for="ts_orderTestRounds" data-dir="1">+</button>
+          </span>
+        </div>
+        <input type="hidden" id="ts_orderTestRounds" value="30">
+      </div>
+      <p class="note" style="margin-top:10px">
+        가격 0.01 고정 · 최소 수량 · 걸자마자 취소합니다. 체결이 감지되면 즉시 중단하고,
+        테스트 주문은 포지션·기매수 기록에 남지 않습니다.
+      </p>
+      <div class="stack" style="margin-top:16px">
+        <button class="btn accent" id="btnOrderTestStart">측정 시작</button>
+        <button class="btn ghost" id="btnOrderTestSave" disabled>설정 저장</button>
+        <div class="btnrow">
+          <button class="btn ghost sm" id="btnOrderTestSaved" disabled>저장본으로</button>
+          <button class="btn ghost sm" id="btnOrderTestDefault">기본값으로</button>
+        </div>
+      </div>
+      <div class="err" id="orderTestErr"></div>
+      <div class="note" id="orderTestMsg" style="display:none;margin-top:8px"></div>
+      <div class="note" id="orderTestStatus" style="display:none;margin-top:8px"></div>
+    </div>
+
+    <div class="card">
       <h2>최근 로그</h2>
       <div class="log" id="logBox">—</div>
       <div class="stack" style="margin-top:10px">
@@ -814,7 +843,10 @@
         { id: 'ts_stopDrop', key: 'stopDrop', def: 0.25, min: 0, max: 1, minEx: true, maxEx: true, label: '손절 폭', ctrl: 'slider' },
         { id: 'ts_decidedHigh', key: 'decidedHigh', def: 0.97, min: 0, max: 1, minEx: true, maxEx: true, label: '결정 구간 상한', ctrl: 'slider' },
         { id: 'ts_decidedLow', key: 'decidedLow', def: 0.03, min: 0, max: 1, minEx: true, maxEx: true, label: '결정 구간 하한', ctrl: 'slider' }
-      ], pairs: [['ts_decidedLow', 'ts_decidedHigh', '결정 구간']] }
+      ], pairs: [['ts_decidedLow', 'ts_decidedHigh', '결정 구간']] },
+      orderTest: { err: 'orderTestErr', fields: [
+        { id: 'ts_orderTestRounds', key: 'orderTestRounds', def: 30, min: 1, max: 100, int: true, label: '측정 반복 횟수', ctrl: 'step', step: 5, smax: 100 }
+      ], pairs: [] }
     };
 
     function fieldValid(f, v){
@@ -885,7 +917,8 @@
       temp: { save: 'btnTempSave', toSaved: 'btnTempSaved', toDefault: 'btnTempDefault', err: 'tempNoErr' },
       band: { save: 'btnBandSave', toSaved: 'btnBandSaved', toDefault: 'btnBandDefault', err: 'bandErr' },
       size: { save: 'btnSizeSave', toSaved: 'btnSizeSaved', toDefault: 'btnSizeDefault', err: 'sizeErr' },
-      stop: { save: 'btnStopSave', toSaved: 'btnStopSaved', toDefault: 'btnStopDefault', err: 'stopErr' }
+      stop: { save: 'btnStopSave', toSaved: 'btnStopSaved', toDefault: 'btnStopDefault', err: 'stopErr' },
+      orderTest: { save: 'btnOrderTestSave', toSaved: 'btnOrderTestSaved', toDefault: 'btnOrderTestDefault', err: 'orderTestErr' }
     };
     // 기온 카드 필드 — prop은 readTempSettings 반환 키, def는 그 폴백 기본값
     var TEMP_FIELDS = [
@@ -1229,6 +1262,40 @@
       el.style.display = '';
     }
 
+    // 주문 경로 측정 마지막 결과 — 엔진이 bm_orderpath_test_status에
+    // 남긴 요약(제출·취소 중앙값/p90/최대)을 한 줄로 보여준다.
+    var ORDER_TEST_OUTCOME_LABELS = {
+      done: '완료', filled_abort: '체결 감지로 중단', residual_abort: '취소 실패로 중단',
+      no_market: '대상 시장 없음', aborted_stop: '엔진 정지로 중단', error: '오류',
+      bad_format: '요청 형식 오류', expired: '요청 만료'
+    };
+    function renderOrderPathTestStatus(){
+      var el = $('orderTestStatus');
+      if (!el) return;
+      var st = null;
+      try {
+        var raw = window.AndroidBridge && AndroidBridge.getDurable
+          ? AndroidBridge.getDurable('bm_orderpath_test_status') : null;
+        if (raw) st = JSON.parse(raw);
+      } catch (e) { st = null; }
+      if (!st || !st.ts || Date.now() - st.ts > 24 * 3600 * 1000) {
+        el.style.display = 'none';
+        return;
+      }
+      var d = new Date(st.ts);
+      var hh = ('0' + d.getHours()).slice(-2);
+      var mm = ('0' + d.getMinutes()).slice(-2);
+      var text = '주문 경로 측정: ' + (ORDER_TEST_OUTCOME_LABELS[st.outcome] || st.outcome || '');
+      if (st.postCount) {
+        text += ' · 제출 중앙값 ' + st.postMedianMs + 'ms · p90 ' + st.postP90Ms + 'ms · 최대 ' + st.postMaxMs + 'ms'
+          + ' · 취소 중앙값 ' + st.cancelMedianMs + 'ms · p90 ' + st.cancelP90Ms + 'ms · 최대 ' + st.cancelMaxMs + 'ms';
+      }
+      if (st.failures) text += ' · 실패 ' + st.failures + '건';
+      text += ' · ' + hh + ':' + mm;
+      el.textContent = text;
+      el.style.display = '';
+    }
+
     function refresh(){
       try { hasKey = !!localStorage.getItem('bm_pk'); } catch (e) { hasKey = false; }
       intentOn = bridgeIntent();
@@ -1249,6 +1316,7 @@
       showMain();
       render(readSnap());
       renderManualSellStatus();
+      renderOrderPathTestStatus();
       renderLogs();
       renderUpdate();
       renderRelayer();
@@ -1485,6 +1553,31 @@
     $('btnBandSave').addEventListener('click', function(){ saveTradeGroup('band'); });
     $('btnSizeSave').addEventListener('click', function(){ saveTradeGroup('size'); });
     $('btnStopSave').addEventListener('click', function(){ saveTradeGroup('stop'); });
+    $('btnOrderTestSave').addEventListener('click', function(){ saveTradeGroup('orderTest'); });
+    // 측정 시작 제출은 이 핸들러가 유일한 경로다 — 엔진이 사이클이
+    // 끝난 idle 구간에서 요청을 한 번만 소비해 실행한다.
+    $('btnOrderTestStart').addEventListener('click', function(){
+      var msg = $('orderTestMsg');
+      if (!window.confirm('주문 경로 측정을 시작할까요? 가격 0.01에 최소 수량 지정가를 걸었다 즉시 취소하며 왕복 시간을 잽니다.')) return;
+      var ok = false;
+      try {
+        if (window.AndroidBridge && AndroidBridge.putDurable) {
+          AndroidBridge.putDurable('bm_orderpath_test_req', JSON.stringify({ ts: Date.now() }));
+          ok = true;
+        }
+      } catch (e) {}
+      msg.style.display = '';
+      if (ok) {
+        var hb = bridgeHeartbeat();
+        if (!hb || Date.now() - hb > 180000) {
+          msg.textContent = '요청은 보냈지만 엔진이 멈춰 있습니다 — 재개가 10분을 넘기면 만료됩니다.';
+        } else {
+          msg.textContent = '측정 요청을 보냈습니다 — 사이클이 끝난 뒤 실행되고 결과는 최근 로그와 이 카드에 남습니다.';
+        }
+      } else {
+        msg.textContent = '요청 전송 실패 — 앱을 다시 열고 시도하세요.';
+      }
+    });
     Object.keys(SET_GROUPS).forEach(function(name){
       $(SET_GROUPS[name].toSaved).addEventListener('click', function(){ revertGroup(name, false); });
       $(SET_GROUPS[name].toDefault).addEventListener('click', function(){ revertGroup(name, true); });

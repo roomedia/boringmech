@@ -19,6 +19,7 @@ mkdir -p "$OUT"
 javac -encoding UTF-8 -cp "$BC" -d "$OUT" \
   "$SRC"/crypto/*.java \
   "$SRC/engine/Js.java" \
+  "$SRC/engine/JsonText.java" \
   "$SRC"/write/*.java \
   "$HERE/Json.java" \
   "$HERE/Golden4Test.java"

@@ -16,6 +16,7 @@ import { writeFileSync } from "node:fs";
 // --- SDK 내부 (app/node_modules의 dist 파일을 직접 참조) ---
 import { ExchangeOrderBuilderV2, ExchangeOrderBuilderV3 } from "../app/node_modules/@polymarket/clob-client-v2/dist/order-utils/exchangeOrderBuilderV2.js";
 import { getMarketOrderRawAmounts } from "../app/node_modules/@polymarket/clob-client-v2/dist/order-builder/helpers/getMarketOrderRawAmounts.js";
+import { getOrderRawAmounts } from "../app/node_modules/@polymarket/clob-client-v2/dist/order-builder/helpers/getOrderRawAmounts.js";
 import { ROUNDING_CONFIG } from "../app/node_modules/@polymarket/clob-client-v2/dist/order-builder/helpers/roundingConfig.js";
 import { buildClobEip712Signature } from "../app/node_modules/@polymarket/clob-client-v2/dist/signing/eip712.js";
 import { buildPolyHmacSignature } from "../app/node_modules/@polymarket/clob-client-v2/dist/signing/hmac.js";
@@ -116,6 +117,43 @@ const amounts = AMOUNT_CASES.map(([name, side, amount, price, tickSize]) => ({
 }));
 
 // ---------------------------------------------------------------------------
+// 1b. 지정가 금액 케이스 — SDK getOrderRawAmounts + parseUnits(…, 6)
+//     (buildOrderCreationArgs가 하는 변환과 동일. 입력은 금액이 아니라 수량)
+// ---------------------------------------------------------------------------
+const LIMIT_AMOUNT_CASES = [
+  // [이름, side, size, price, tickSize]
+  ["buy_test_price_min", "BUY", "5", "0.01", "0.01"],
+  ["buy_tick0.005_fractional", "BUY", "5", "0.335", "0.005"],
+  ["sell_tick0.005_fractional", "SELL", "12.5", "0.335", "0.005"],
+  ["buy_tick0.01_mid", "BUY", "100", "0.48", "0.01"],
+  ["buy_size_excess_decimals", "BUY", "5.009", "0.5", "0.01"],
+  ["sell_test_price_min", "SELL", "5", "0.01", "0.01"],
+];
+
+function limitAmountsFor(side, size, price, tickSize) {
+  const roundConfig = ROUNDING_CONFIG[tickSize];
+  const { rawMakerAmt, rawTakerAmt } = getOrderRawAmounts(
+    side,
+    Number(size),
+    Number(price),
+    roundConfig,
+  );
+  return {
+    roundConfig,
+    rawMakerAmt: String(rawMakerAmt),
+    rawTakerAmt: String(rawTakerAmt),
+    makerAmount: parseUnits(rawMakerAmt.toString(), COLLATERAL_TOKEN_DECIMALS).toString(),
+    takerAmount: parseUnits(rawTakerAmt.toString(), COLLATERAL_TOKEN_DECIMALS).toString(),
+  };
+}
+
+const limitAmounts = LIMIT_AMOUNT_CASES.map(([name, side, size, price, tickSize]) => ({
+  name,
+  input: { side, size, price, tickSize },
+  expected: limitAmountsFor(side, size, price, tickSize),
+}));
+
+// ---------------------------------------------------------------------------
 // 2. 주문 서명 케이스 (POLY_1271)
 //    buildMarketOrderCreationArgs는 timestamp를 Date.now()로 찍으므로 쓰지
 //    않고, 그 내부 변환(금액 산출 + 필드 조립)만 고정 timestamp로 재현한 뒤
@@ -174,6 +212,61 @@ orderSignatures.push(await orderCase({ name: "v2_negrisk_buy", version: 2, negRi
 orderSignatures.push(await orderCase({ name: "v2_negrisk_sell", version: 2, negRisk: true, side: "SELL", amount: 12.5, price: 0.335, tickSize: "0.005", tokenId: TOKEN_B }));
 orderSignatures.push(await orderCase({ name: "v3_buy", version: 3, negRisk: false, side: "BUY", amount: 5, price: 0.75, tickSize: "0.01", tokenId: TOKEN_A }));
 orderSignatures.push(await orderCase({ name: "v3_sell", version: 3, negRisk: false, side: "SELL", amount: 6.66, price: 0.72, tickSize: "0.01", tokenId: TOKEN_A }));
+
+// ---------------------------------------------------------------------------
+// 2b. 지정가 주문 서명 케이스 (POLY_1271, GTC)
+//     금액은 getOrderRawAmounts 경로, expiration은 서명에 들어가지 않고
+//     POST 본문에만 실리는지까지 Java 서명과 대조해 확정한다.
+// ---------------------------------------------------------------------------
+async function limitOrderCase({ name, version, negRisk, side, size, price, tickSize, tokenId, expiration }) {
+  const amt = limitAmountsFor(side, size, price, tickSize);
+  const exchangeContract =
+    version === 3 ? contracts.exchangeV3 : negRisk ? contracts.negRiskExchangeV2 : contracts.exchangeV2;
+  const domainVersion = version === 3 ? "3" : "2";
+  const orderData = {
+    maker: FUNDER,
+    tokenId,
+    makerAmount: amt.makerAmount,
+    takerAmount: amt.takerAmount,
+    side,
+    signer: FUNDER,
+    signatureType: SIGNATURE_TYPE,
+    timestamp: FIXED_ORDER_TIMESTAMP,
+    metadata: bytes32Zero,
+    builder: bytes32Zero,
+    expiration: expiration ?? "0",
+  };
+  const builder =
+    version === 3
+      ? new ExchangeOrderBuilderV3(exchangeContract, CHAIN_ID, wallet, () => FIXED_SALT)
+      : new ExchangeOrderBuilderV2(exchangeContract, CHAIN_ID, wallet, () => FIXED_SALT);
+  const signed = await builder.buildSignedOrder(orderData);
+  const { signature, ...order } = signed;
+  return {
+    name,
+    input: {
+      userOrder: { tokenID: tokenId, side, size, price, orderType: "GTC", expiration: expiration ?? "0" },
+      options: { tickSize, negRisk },
+      version,
+      chainId: CHAIN_ID,
+      exchangeContract,
+      domain: {
+        name: "Polymarket CTF Exchange",
+        version: domainVersion,
+        chainId: CHAIN_ID,
+        verifyingContract: exchangeContract,
+      },
+      order,
+    },
+    expected: { signature },
+  };
+}
+
+const limitOrderSignatures = [];
+limitOrderSignatures.push(await limitOrderCase({ name: "v2_limit_buy_test_price", version: 2, negRisk: false, side: "BUY", size: 5, price: 0.01, tickSize: "0.01", tokenId: TOKEN_A }));
+limitOrderSignatures.push(await limitOrderCase({ name: "v2_limit_sell", version: 2, negRisk: false, side: "SELL", size: 12.5, price: 0.335, tickSize: "0.005", tokenId: TOKEN_B }));
+limitOrderSignatures.push(await limitOrderCase({ name: "v3_limit_buy", version: 3, negRisk: false, side: "BUY", size: 100, price: 0.48, tickSize: "0.01", tokenId: TOKEN_A }));
+limitOrderSignatures.push(await limitOrderCase({ name: "v2_limit_buy_expiration", version: 2, negRisk: true, side: "BUY", size: 5, price: 0.5, tickSize: "0.01", tokenId: TOKEN_B, expiration: "1760003600" }));
 
 // ---------------------------------------------------------------------------
 // 3. L1 서명 (ClobAuth) — buildClobEip712Signature 그대로
@@ -370,7 +463,9 @@ const golden = {
     expected: { uups: FUNDER_UUPS, beacon: FUNDER_BEACON },
   },
   amounts,
+  limitAmounts,
   orderSignatures,
+  limitOrderSignatures,
   l1Signature,
   l2Hmac,
   redeemCalldata,
@@ -381,7 +476,8 @@ const out = JSON.stringify(golden, null, 2) + "\n";
 writeFileSync(new URL("./golden.json", import.meta.url), out);
 console.log(`golden.json written (${out.length} bytes)`);
 console.log(
-  `cases: amounts=${amounts.length}, orderSignatures=${orderSignatures.length}, ` +
+  `cases: amounts=${amounts.length}, limitAmounts=${limitAmounts.length}, ` +
+    `orderSignatures=${orderSignatures.length}, limitOrderSignatures=${limitOrderSignatures.length}, ` +
     `l1=1, l2Hmac=${l2Hmac.length}, redeemCalldata=${redeemCalldata.length}, ` +
     `batchSignatures=${batchSignatures.length}, funderDerivation=1`,
 );

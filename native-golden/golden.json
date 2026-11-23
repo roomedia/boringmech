@@ -424,6 +424,128 @@
       }
     }
   ],
+  "limitAmounts": [
+    {
+      "name": "buy_test_price_min",
+      "input": {
+        "side": "BUY",
+        "size": "5",
+        "price": "0.01",
+        "tickSize": "0.01"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 2,
+          "size": 2,
+          "amount": 4
+        },
+        "rawMakerAmt": "0.05",
+        "rawTakerAmt": "5",
+        "makerAmount": "50000",
+        "takerAmount": "5000000"
+      }
+    },
+    {
+      "name": "buy_tick0.005_fractional",
+      "input": {
+        "side": "BUY",
+        "size": "5",
+        "price": "0.335",
+        "tickSize": "0.005"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 3,
+          "size": 2,
+          "amount": 5
+        },
+        "rawMakerAmt": "1.675",
+        "rawTakerAmt": "5",
+        "makerAmount": "1675000",
+        "takerAmount": "5000000"
+      }
+    },
+    {
+      "name": "sell_tick0.005_fractional",
+      "input": {
+        "side": "SELL",
+        "size": "12.5",
+        "price": "0.335",
+        "tickSize": "0.005"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 3,
+          "size": 2,
+          "amount": 5
+        },
+        "rawMakerAmt": "12.5",
+        "rawTakerAmt": "4.1875",
+        "makerAmount": "12500000",
+        "takerAmount": "4187500"
+      }
+    },
+    {
+      "name": "buy_tick0.01_mid",
+      "input": {
+        "side": "BUY",
+        "size": "100",
+        "price": "0.48",
+        "tickSize": "0.01"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 2,
+          "size": 2,
+          "amount": 4
+        },
+        "rawMakerAmt": "48",
+        "rawTakerAmt": "100",
+        "makerAmount": "48000000",
+        "takerAmount": "100000000"
+      }
+    },
+    {
+      "name": "buy_size_excess_decimals",
+      "input": {
+        "side": "BUY",
+        "size": "5.009",
+        "price": "0.5",
+        "tickSize": "0.01"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 2,
+          "size": 2,
+          "amount": 4
+        },
+        "rawMakerAmt": "2.5",
+        "rawTakerAmt": "5",
+        "makerAmount": "2500000",
+        "takerAmount": "5000000"
+      }
+    },
+    {
+      "name": "sell_test_price_min",
+      "input": {
+        "side": "SELL",
+        "size": "5",
+        "price": "0.01",
+        "tickSize": "0.01"
+      },
+      "expected": {
+        "roundConfig": {
+          "price": 2,
+          "size": 2,
+          "amount": 4
+        },
+        "rawMakerAmt": "5",
+        "rawTakerAmt": "0.05",
+        "makerAmount": "5000000",
+        "takerAmount": "50000"
+      }
+    }
+  ],
   "orderSignatures": [
     {
       "name": "v2_general_buy",
@@ -675,6 +797,180 @@
       },
       "expected": {
         "signature": "0x290b1db6221a0512139a903eeda91878646ad0698efd565c90d0389e9faf740f6a8bbdf7deaf802008f41d1cc1916c71772b60c654a1a5f04bdc8a5fd928c39e1b466c63910185bbd55e8679264200c4e0abdcbb0c6264eb3d41d13326022e095bd3eae3061b8d3b1afe383d16f17c34bb5269b3ac18b0beb6856d37bcd25b4b644f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba"
+      }
+    }
+  ],
+  "limitOrderSignatures": [
+    {
+      "name": "v2_limit_buy_test_price",
+      "input": {
+        "userOrder": {
+          "tokenID": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+          "side": "BUY",
+          "size": 5,
+          "price": 0.01,
+          "orderType": "GTC",
+          "expiration": "0"
+        },
+        "options": {
+          "tickSize": "0.01",
+          "negRisk": false
+        },
+        "version": 2,
+        "chainId": 137,
+        "exchangeContract": "0xE111180000d2663C0091e4f400237545B87B996B",
+        "domain": {
+          "name": "Polymarket CTF Exchange",
+          "version": "2",
+          "chainId": 137,
+          "verifyingContract": "0xE111180000d2663C0091e4f400237545B87B996B"
+        },
+        "order": {
+          "salt": "1234567890123456789",
+          "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "tokenId": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+          "makerAmount": "50000",
+          "takerAmount": "5000000",
+          "side": "BUY",
+          "signatureType": 3,
+          "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "builder": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "timestamp": "1760000000000",
+          "expiration": "0"
+        }
+      },
+      "expected": {
+        "signature": "0x8d57e4a6cc5a689dd27bf3da2ad990cf7af8a0ae0f7ff3dfb388f51929ffceb07ef76e91595492f48190de3a202cc17980f11197bbfc4b30a0f898dfd50b1ea21b3264e159346253e26a64e00b69032db0e7d32f94628de3e6eecb50304d7af3d298d6d55f1da3c5966b185eb00d7c4ee634c70568781ff572a8ee448094f0ecdc4f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba"
+      }
+    },
+    {
+      "name": "v2_limit_sell",
+      "input": {
+        "userOrder": {
+          "tokenID": "9800787273216002583860617742040128587601631587605531883592612768894865019786",
+          "side": "SELL",
+          "size": 12.5,
+          "price": 0.335,
+          "orderType": "GTC",
+          "expiration": "0"
+        },
+        "options": {
+          "tickSize": "0.005",
+          "negRisk": false
+        },
+        "version": 2,
+        "chainId": 137,
+        "exchangeContract": "0xE111180000d2663C0091e4f400237545B87B996B",
+        "domain": {
+          "name": "Polymarket CTF Exchange",
+          "version": "2",
+          "chainId": 137,
+          "verifyingContract": "0xE111180000d2663C0091e4f400237545B87B996B"
+        },
+        "order": {
+          "salt": "1234567890123456789",
+          "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "tokenId": "9800787273216002583860617742040128587601631587605531883592612768894865019786",
+          "makerAmount": "12500000",
+          "takerAmount": "4187500",
+          "side": "SELL",
+          "signatureType": 3,
+          "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "builder": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "timestamp": "1760000000000",
+          "expiration": "0"
+        }
+      },
+      "expected": {
+        "signature": "0x0d7d790eb4ffb218361432b3810b448f3c8a2fa96fcce1219e2b6b740c8807850575abb56365ef6db2f597df910e4a9120410e46cdca5ccb2ba3ffcb300d3df21c3264e159346253e26a64e00b69032db0e7d32f94628de3e6eecb50304d7af3d252f29c387c0d863a06e58a7f93e4611d5e27d5cf2e93321aef742ccec35e58d54f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba"
+      }
+    },
+    {
+      "name": "v3_limit_buy",
+      "input": {
+        "userOrder": {
+          "tokenID": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+          "side": "BUY",
+          "size": 100,
+          "price": 0.48,
+          "orderType": "GTC",
+          "expiration": "0"
+        },
+        "options": {
+          "tickSize": "0.01",
+          "negRisk": false
+        },
+        "version": 3,
+        "chainId": 137,
+        "exchangeContract": "0xe3333700cA9d93003F00f0F71f8515005F6c00Aa",
+        "domain": {
+          "name": "Polymarket CTF Exchange",
+          "version": "3",
+          "chainId": 137,
+          "verifyingContract": "0xe3333700cA9d93003F00f0F71f8515005F6c00Aa"
+        },
+        "order": {
+          "salt": "1234567890123456789",
+          "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "tokenId": "5217830831767552351603457242192184817666125891744021388456190691134219482513",
+          "makerAmount": "48000000",
+          "takerAmount": "100000000",
+          "side": "BUY",
+          "signatureType": 3,
+          "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "builder": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "timestamp": "1760000000000",
+          "expiration": "0"
+        }
+      },
+      "expected": {
+        "signature": "0x8e70891456a6ce89b1dada96a00ce1c4a3b2fb8d69c77036d7c0de983099015f715c303e1ceb4e507fe94ed352cad482e0f98f818a6c1a5e9bee9a0a781943241b466c63910185bbd55e8679264200c4e0abdcbb0c6264eb3d41d13326022e095be347222fdcadf0ed823082dc66899ff1a7361ac727182a4424d6d5775dde8fe54f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba"
+      }
+    },
+    {
+      "name": "v2_limit_buy_expiration",
+      "input": {
+        "userOrder": {
+          "tokenID": "9800787273216002583860617742040128587601631587605531883592612768894865019786",
+          "side": "BUY",
+          "size": 5,
+          "price": 0.5,
+          "orderType": "GTC",
+          "expiration": "1760003600"
+        },
+        "options": {
+          "tickSize": "0.01",
+          "negRisk": true
+        },
+        "version": 2,
+        "chainId": 137,
+        "exchangeContract": "0xe2222d279d744050d28e00520010520000310F59",
+        "domain": {
+          "name": "Polymarket CTF Exchange",
+          "version": "2",
+          "chainId": 137,
+          "verifyingContract": "0xe2222d279d744050d28e00520010520000310F59"
+        },
+        "order": {
+          "salt": "1234567890123456789",
+          "maker": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "signer": "0x7a57144fAfde87F5cE4a880D570BAe58eeBC83f2",
+          "tokenId": "9800787273216002583860617742040128587601631587605531883592612768894865019786",
+          "makerAmount": "2500000",
+          "takerAmount": "5000000",
+          "side": "BUY",
+          "signatureType": 3,
+          "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "builder": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "timestamp": "1760000000000",
+          "expiration": "1760003600"
+        }
+      },
+      "expected": {
+        "signature": "0x2faeac88e6cea0e9995a3cdc659e11a4adcdf46b094cda7fb48f8fb4aab78b4c4f83f010650d6ea17e3174efbe1d8d6fc4d6e7b122d12c36bbc160c0cb9ef92f1b9b858f53327b0bd13af8ec14cfb35234fb9eb7b0504d1a4e61f433840d30e81a387bd438d4374bf29f03925bd942bbee99a2cd5dc36c72022f433db8ccee7d904f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba"
       }
     }
   ],
