@@ -91,23 +91,7 @@ const {
   TEMP_STOP_DROP,
   DECIDED_HIGH,
   DECIDED_LOW,
-  ORDER_PATH_TEST_PRICE,
   ORDER_TEST_DEFAULT_ROUNDS,
-  parseOrderPathTestRequest,
-  isOrderPathTestStale,
-  pickOrderPathTestMarkets,
-  planOrderPathTestSize,
-  orderPathTestBestAsk,
-  isSafeOrderPathTestBook,
-  isOrderPathTestFill,
-  isOrderPathTestUnknown,
-  orderPathTestIsOwnOrder,
-  orderPathTestOrderIdOf,
-  orderPathTestResponseStatus,
-  orderPathTestCancelConfirmed,
-  orderPathTestCancelRefusal,
-  orderPathTestOpenOrderPresent,
-  orderPathTestStats,
   stageDurationsText,
 } = await import("../src/engine.js");
 const { decodeFunctionData, parseAbi } = await import("viem");
@@ -1542,105 +1526,24 @@ eq(parseTradeSettings({ tempStopDrop: 0.2 }).tempStopDrop, 0.2, "trade settings:
     "summary: save re-renders summary immediately");
 }
 
-// 주문 경로 측정 순수 로직 — 네이티브 OrderPathTest와 같은 판정이어야 한다.
+// orderTestRounds는 v0.3.43에서 기능이 제거된 뒤에도 파싱만 남은 유산
+// 필드다 — 저장된 설정이 있어도 깨지지 않고 기본값 규칙이 유지되는지,
+// 그리고 사이클 단계별 소요 표기(유지 대상)가 그대로인지 고정한다.
 {
-  eq(ORDER_PATH_TEST_PRICE, 0.01, "orderpath: price fixed 0.01");
-  eq(parseOrderPathTestRequest({ ts: 1000 }), { ts: 1000 }, "orderpath: request parse");
-  eq(parseOrderPathTestRequest({}), null, "orderpath: empty request invalid");
-  eq(parseOrderPathTestRequest({ ts: 0 }), null, "orderpath: ts 0 invalid");
-  eq(parseOrderPathTestRequest(null), null, "orderpath: null invalid");
-  eq(isOrderPathTestStale({ ts: 1000 }, 1000 + 600000), false, "orderpath: fresh at boundary");
-  eq(isOrderPathTestStale({ ts: 1000 }, 1000 + 600001), true, "orderpath: stale past boundary");
-
-  const markets = [
-    { active: true, closed: false, acceptingOrders: true, slug: "a", volume: 100, clobTokenIds: "[\"111\"]" },
-    { active: true, closed: false, version: "v2", slug: "b", volume: 5000, positionIds: ["222", "333"] },
-    { active: true, closed: true, slug: "c", volume: 9000, clobTokenIds: "[\"444\"]" },
-    { active: true, closed: false, acceptingOrders: false, slug: "d", volume: 9000, clobTokenIds: "[\"555\"]" },
-    { active: false, closed: false, slug: "e", volume: 9000, clobTokenIds: "[\"666\"]" },
-    { active: true, closed: false, slug: "f", volume: 9000 },
-  ];
-  const picked = pickOrderPathTestMarkets(markets, 5);
-  eq(picked.length, 2, "orderpath: pick count");
-  eq([picked[0].slug, picked[0].positionId, picked[0].tokenId, picked[0].assetKey],
-    ["b", "222", null, "222"], "orderpath: v2 first by volume");
-  eq([picked[1].slug, picked[1].tokenId, picked[1].assetKey],
-    ["a", "111", "111"], "orderpath: token second");
-  eq(pickOrderPathTestMarkets(markets, 1).length, 1, "orderpath: pick limit");
-
-  eq(planOrderPathTestSize(5), 5, "orderpath: size passthrough");
-  eq(planOrderPathTestSize(0), null, "orderpath: size 0 null");
-  eq(planOrderPathTestSize(undefined), null, "orderpath: size missing null");
-
-  // 호가 안전 판정 (감사 F1) — 네이티브 isSafeTestBook과 동일
-  eq(orderPathTestBestAsk({ asks: [{ price: "0.50", size: "10" }, { price: "0.20", size: "5" }] }), 0.2, "orderpath: bestAsk min");
-  eq(isSafeOrderPathTestBook({ asks: [{ price: "0.20", size: "5" }] }), true, "orderpath: book safe");
-  eq(isSafeOrderPathTestBook({ asks: [{ price: "0.01", size: "10" }] }), false, "orderpath: ask at price unsafe");
-  eq(isSafeOrderPathTestBook({ asks: [{ price: "0.001", size: "10" }] }), false, "orderpath: ask below unsafe");
-  eq(isSafeOrderPathTestBook({ asks: [] }), false, "orderpath: no asks unsafe");
-  eq(isSafeOrderPathTestBook(null), false, "orderpath: no book unsafe");
-
-  // 결과 불명 판정 (감사 F2)
-  eq(isOrderPathTestUnknown({ error: "Network Error" }), true, "orderpath: transport error unknown");
-  eq(isOrderPathTestUnknown({ error: "boom", status: 503 }), true, "orderpath: 5xx unknown");
-  eq(isOrderPathTestUnknown({ error: "bad", status: 400 }), false, "orderpath: 4xx not unknown");
-  eq(isOrderPathTestUnknown({ success: true, status: "live" }), false, "orderpath: live not unknown");
-
-  // 자기 주문 신원 대조 (감사 F3)
-  const ownCtx = { assetKey: "111", size: 5, postStartMs: 1700000000000, funder: "0xFUNDER" };
-  const ownRow = {
-    id: "o1", side: "BUY", asset_id: "111", price: "0.01", original_size: "5",
-    size_matched: "0", order_type: "GTC", expiration: "0", created_at: 1700000000,
-    maker_address: "0xFUNDER",
-  };
-  eq(orderPathTestIsOwnOrder(ownRow, ownCtx), true, "orderpath: own order match");
-  eq(orderPathTestIsOwnOrder({ ...ownRow, original_size: "10" }, ownCtx), false, "orderpath: wrong size foreign");
-  eq(orderPathTestIsOwnOrder({ ...ownRow, created_at: 1699999000 }, ownCtx), false, "orderpath: old order foreign");
-  eq(orderPathTestIsOwnOrder({ ...ownRow, side: "SELL" }, ownCtx), false, "orderpath: sell foreign");
-  eq(orderPathTestIsOwnOrder({ ...ownRow, size_matched: "1" }, ownCtx), false, "orderpath: matched foreign");
-
-  eq(isOrderPathTestFill({ success: true, status: "live", orderID: "x" }), false, "orderpath: live not fill");
-  eq(isOrderPathTestFill({ success: true, status: "matched" }), true, "orderpath: matched fill");
-  eq(isOrderPathTestFill({ success: false, status: "matched" }), true, "orderpath: matched fill regardless of success");
-  eq(isOrderPathTestFill({ success: true, status: "unmatched" }), false, "orderpath: unmatched not fill");
-  eq(orderPathTestOrderIdOf({ orderID: "ord-7" }), "ord-7", "orderpath: order id");
-  eq(orderPathTestOrderIdOf({ success: true }), null, "orderpath: order id missing");
-  eq(orderPathTestResponseStatus({ status: "LIVE" }), "live", "orderpath: status lowercased");
-
-  const cancelResp = { canceled: ["a", "b"], not_canceled: { c: "already canceled" } };
-  eq(orderPathTestCancelConfirmed(cancelResp, "b"), true, "orderpath: cancel confirmed");
-  eq(orderPathTestCancelConfirmed(cancelResp, "c"), false, "orderpath: cancel not confirmed");
-  eq(orderPathTestCancelRefusal(cancelResp, "c"), "already canceled", "orderpath: cancel refusal");
-  eq(orderPathTestCancelRefusal(cancelResp, "a"), null, "orderpath: no refusal");
-
-  eq(orderPathTestOpenOrderPresent([{ id: "x" }, { id: "y" }], "y"), true, "orderpath: open present");
-  eq(orderPathTestOpenOrderPresent([], "x"), false, "orderpath: open empty");
-  eq(orderPathTestOpenOrderPresent(null, "x"), false, "orderpath: open null");
-
-  eq(orderPathTestStats([]), { count: 0, median: 0, p90: 0, max: 0 }, "orderpath: stats empty");
-  eq(orderPathTestStats([100]), { count: 1, median: 100, p90: 100, max: 100 }, "orderpath: stats one");
-  eq(orderPathTestStats([40, 10, 30, 20]), { count: 4, median: 20, p90: 40, max: 40 }, "orderpath: stats four");
-  eq(orderPathTestStats([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), { count: 10, median: 5, p90: 9, max: 10 }, "orderpath: stats ten");
-
-  eq(parseTradeSettings({}).orderTestRounds, 30, "orderpath: rounds default");
-  eq(parseTradeSettings({ orderTestRounds: 45 }).orderTestRounds, 45, "orderpath: rounds set");
-  eq(parseTradeSettings({ orderTestRounds: 0 }).orderTestRounds, 30, "orderpath: rounds 0 fallback");
-  eq(parseTradeSettings({ orderTestRounds: 101 }).orderTestRounds, 30, "orderpath: rounds 101 fallback");
-  eq(parseTradeSettings({ orderTestRounds: 45.5 }).orderTestRounds, 30, "orderpath: rounds fractional fallback");
+  eq(parseTradeSettings({}).orderTestRounds, 30, "settings: legacy rounds default");
+  eq(parseTradeSettings({ orderTestRounds: 45 }).orderTestRounds, 45, "settings: legacy rounds set");
+  eq(parseTradeSettings({ orderTestRounds: 0 }).orderTestRounds, 30, "settings: legacy rounds 0 fallback");
+  eq(parseTradeSettings({ orderTestRounds: 101 }).orderTestRounds, 30, "settings: legacy rounds 101 fallback");
+  eq(parseTradeSettings({ orderTestRounds: 45.5 }).orderTestRounds, 30, "settings: legacy rounds fractional fallback");
 
   eq(stageDurationsText(1, 2, 3, 4, 5),
-    "소요 스냅샷 1ms · 손절 2ms · 스캔 3ms · 검증 4ms · 주문 5ms", "orderpath: durations text");
+    "소요 스냅샷 1ms · 손절 2ms · 스캔 3ms · 검증 4ms · 주문 5ms", "summary: durations text");
   eq(summarizeCycle({ candidates: 1, verified: 1, rejects: {}, filled: 1, unfilled: 0, failed: 0, durations: "D" }).endsWith(" · D"),
-    true, "orderpath: summary durations appended");
+    true, "summary: durations appended");
   eq(summarizeCycle({ candidates: 1, verified: 1, rejects: {}, filled: 1, unfilled: 0, failed: 0 }).includes("소요"),
-    false, "orderpath: summary without durations unchanged");
-
-  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-  eq(html.includes('id="btnOrderTestStart"'), true, "orderpath: start button exists");
-  eq(html.includes("bm_orderpath_test_req"), true, "orderpath: request key wired");
-  eq(html.includes("bm_orderpath_test_status"), true, "orderpath: status key wired");
-  eq(html.includes("saveTradeGroup('orderTest')"), true, "orderpath: save wired");
+    false, "summary: without durations unchanged");
 }
+
 
 console.log(`book tests: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

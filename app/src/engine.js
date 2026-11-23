@@ -46,6 +46,8 @@ export const SLIPPAGE_CAP = 0.015;
 export const SNAPSHOT_MATCH_TOL = 0.03;
 export const ASK_ABOVE_SIGNAL = 0.05;
 export const VERIFY_CAP = 60;
+// 주문 경로 측정 기능은 v0.3.43에서 제거됐다. orderTestRounds는 저장된
+// 설정과의 호환을 위해 파싱만 남긴 유산 필드다 — 읽어서 동작하는 곳은 없다.
 export const ORDER_TEST_DEFAULT_ROUNDS = 30;
 const CYCLE_MS = 60_000;
 // 요청 타임아웃 (F1) — 무응답 fetch가 사이클을 무한정 붙잡지 않게 한다.
@@ -95,8 +97,6 @@ const LS = {
   manualSellArchive: "bm_manual_sell_archive",
   manualSellAttempted: "bm_manual_sell_attempted",
   manualSellAttemptedArchive: "bm_manual_sell_attempted_archive",
-  orderTestReq: "bm_orderpath_test_req",
-  orderTestStatus: "bm_orderpath_test_status",
   settings: "bm_settings",
 };
 
@@ -1843,573 +1843,37 @@ export function judgeFill(resp) {
     : { filled: false, kind: "unfilled", status };
 }
 
-// ── 주문 경로 측정 (자기 테스트) ─────────────────────────────
-// 안전 경계는 코드로 고정한다: 테스트 가격은 설정으로 바꿀 수 없는
-// 상수이고, 수량은 대상 시장의 최소 주문 수량 그대로다. 테스트 주문은
-// 이 절의 코드로만 나가고 markBought·원장·포지션 기록에는 닿지 않는다.
-// 통신 규약은 수동 매도와 같다: 뷰어가 LS.orderTestReq에 {ts}를 쓰면
-// 엔진이 idle 구간에서 한 번만 읽어 소비한다.
-export const ORDER_PATH_TEST_PRICE = 0.01;
-export const ORDER_PATH_TEST_CONCURRENCY = 5;
-export const ORDER_PATH_TEST_MAX_AGE_MS = 600_000;
-/** 측정 1회의 총 실행 상한 — 다음 사이클(손절)을 무기한 미루지 않게 한다. */
-export const ORDER_PATH_TEST_MAX_RUN_MS = 600_000;
+// ── 수동 매도 확인 팝업 견적 ─────────────────────────────────
+// 표시 가격(스냅샷가)과 실제 체결가는 기준이 다르다 — 시장가 FOK 매도는
+// 주문장의 최고 매수호가로 잡힌다. 팝업을 여는 시점에 조회한 오더북으로
+// 견적을 만들어, 누르기 전에 체결가를 알 수 있게 한다.
 
-/** 측정 요청 모델 검증 — ts가 유한 양수일 때만 유효한 요청으로 본다. */
-export function parseOrderPathTestRequest(model) {
-  if (!model || typeof model !== "object") return null;
-  const ts = Number(model.ts);
-  if (!Number.isFinite(ts) || ts <= 0) return null;
-  return { ts };
-}
-
-export function isOrderPathTestStale(req, nowMs) {
-  return nowMs - req.ts > ORDER_PATH_TEST_MAX_AGE_MS;
-}
-
-/**
- * Gamma 마켓 목록에서 유동성 순으로 측정 대상을 고른다 — 활성이고
- * 닫히지 않았고 주문을 받는 시장만, 거래량 내림차순. 토큰은 검증기와
- * 같은 규칙: v2 마켓은 positionIds, 그 외는 clobTokenIds 파싱.
- * 첫 번째 outcome(인덱스 0)만 쓴다.
- */
-export function pickOrderPathTestMarkets(markets, count) {
-  const out = [];
-  if (!Array.isArray(markets)) return out;
-  for (const m of markets) {
-    if (!m || typeof m !== "object") continue;
-    if (!m.active || m.closed) continue;
-    if (m.acceptingOrders === false) continue;
-    let tokenId = null;
-    let positionId = null;
-    if (m.version === "v2" && Array.isArray(m.positionIds) && m.positionIds.length) {
-      positionId = String(m.positionIds[0]);
-    } else {
-      let ids = null;
-      if (Array.isArray(m.clobTokenIds)) ids = m.clobTokenIds;
-      else if (typeof m.clobTokenIds === "string") {
-        try { ids = JSON.parse(m.clobTokenIds || "[]"); } catch { ids = null; }
-      }
-      if (Array.isArray(ids) && ids.length) tokenId = String(ids[0]);
-    }
-    const assetKey = positionId ?? tokenId;
-    if (!assetKey) continue;
-    const volume = Number(m.volume || 0);
-    out.push({
-      slug: typeof m.slug === "string" ? m.slug : assetKey,
-      tokenId,
-      positionId,
-      assetKey,
-      volume: Number.isFinite(volume) ? volume : 0,
-    });
-  }
-  out.sort((a, b) => b.volume - a.volume);
-  return out.slice(0, count);
-}
-
-/**
- * 테스트 수량 — 오더북 min_order_size 그대로. 값이 없거나 0이면
- * null을 돌려줘 호출자가 그 시장을 건너뛰게 한다 (추정 금지).
- */
-export function planOrderPathTestSize(minOrderSize) {
-  const v = Number(minOrderSize);
-  return Number.isFinite(v) && v > 0 ? v : null;
-}
-
-/** 오더북의 최저 매도호가 — 수량이 양수인 호가만 본다. 없으면 NaN. */
-export function orderPathTestBestAsk(book) {
-  const asks = book && Array.isArray(book.asks) ? book.asks : [];
+/** 오더북의 최고 매수호가 — 수량이 양수인 호가만 본다. 없으면 NaN. */
+export function bestBidFromBook(book) {
+  const bids = book && Array.isArray(book.bids) ? book.bids : [];
   let best = NaN;
-  for (const row of asks) {
+  for (const row of bids) {
     const price = Number(row?.price);
     const size = Number(row?.size);
     if (!Number.isFinite(price) || !Number.isFinite(size) || price <= 0 || size <= 0) continue;
-    if (Number.isNaN(best) || price < best) best = price;
+    if (Number.isNaN(best) || price > best) best = price;
   }
   return best;
 }
 
 /**
- * 테스트 주문이 즉시 체결되지 않을 북인가 — 최저 매도호가가 테스트
- * 가격보다 strictly 위에 있어야 한다 (네이티브 isSafeTestBook과 동일).
+ * 매도 견적 — 예상 수령액은 수량 × 기준가(수수료 전)이고, 수수료는
+ * 기존 팝업과 같은 식(shares × 요율 × p × (1−p))으로 따로 계산한다.
+ * 요율을 모르면 보수적 상한(0.07)으로 계산하고 feeKnown=false로 알린다.
+ * 수량·기준가가 유효하지 않으면 null.
  */
-export function isSafeOrderPathTestBook(book) {
-  const ask = orderPathTestBestAsk(book);
-  return Number.isFinite(ask) && ask > ORDER_PATH_TEST_PRICE;
-}
-
-/** 제출 응답의 status 문자열 (없으면 빈 문자열, 소문자). */
-export function orderPathTestResponseStatus(resp) {
-  const st = resp && typeof resp === "object" ? resp.status : null;
-  return st == null ? "" : String(st).toLowerCase();
-}
-
-/** 제출 응답의 주문 ID (없으면 null). */
-export function orderPathTestOrderIdOf(resp) {
-  if (!resp || typeof resp !== "object") return null;
-  const id = resp.orderID;
-  return id == null ? null : String(id);
-}
-
-/**
- * 체결 감지 — status가 matched/filled면 무조건 체결로 본다.
- * 그 외에는 judgeFill의 체결 증거 판정을 그대로 쓴다.
- */
-export function isOrderPathTestFill(resp) {
-  const st = orderPathTestResponseStatus(resp);
-  if (st === "matched" || st === "filled") return true;
-  return judgeFill(resp).filled;
-}
-
-/**
- * 제출 결과가 불명인가 — 전송 실패 {error} 응답은 judgeFill이
- * unknown으로 가른다. 접수됐을 수 있어 열린 주문 확인 대상이다.
- * HTTP 5xx도 서버 처리 여부를 확정할 수 없어 결과 불명으로 본다
- * (네이티브 JudgeFill과 같은 분류 — JS judgeFill은 5xx를 error로
- * 가르므로 여기서 보정한다).
- */
-export function isOrderPathTestUnknown(resp) {
-  const v = judgeFill(resp);
-  if (!v.filled && v.kind === "unknown") return true;
-  if (resp && typeof resp === "object" && resp.error) {
-    const code = Number(resp.status);
-    if (Number.isFinite(code) && code >= 500 && code < 600) return true;
-  }
-  return false;
-}
-
-/**
- * 열린 주문 행이 이 측정의 테스트 주문인가 — 신원이 전부 일치할
- * 때만 인정한다 (네이티브 isOwnTestOrder와 동일).
- */
-export function orderPathTestIsOwnOrder(row, { assetKey, size, postStartMs, funder }) {
-  if (!row || !assetKey) return false;
-  if (String(row.side ?? "").toUpperCase() !== "BUY") return false;
-  if (row.asset_id == null || String(row.asset_id) !== assetKey) return false;
-  const price = Number(row.price);
-  if (!Number.isFinite(price) || Math.abs(price - ORDER_PATH_TEST_PRICE) >= 1e-9) return false;
-  const orig = Number(row.original_size);
-  if (!Number.isFinite(orig) || Math.abs(orig - size) >= 1e-9) return false;
-  const matched = Number(row.size_matched);
-  if (!Number.isFinite(matched) || matched !== 0) return false;
-  if (row.order_type != null && String(row.order_type).toUpperCase() !== "GTC") return false;
-  if (row.expiration != null && String(row.expiration) !== "0") return false;
-  const created = Number(row.created_at);
-  if (!Number.isFinite(created) || created < postStartMs / 1000 - 5) return false;
-  if (funder != null && row.maker_address != null
-      && String(row.maker_address).toLowerCase() !== String(funder).toLowerCase()) return false;
-  return true;
-}
-
-/** 취소 응답이 이 주문의 취소를 확정했는가 ({canceled: [...]} 포함 여부). */
-export function orderPathTestCancelConfirmed(resp, orderId) {
-  const canceled = resp && typeof resp === "object" ? resp.canceled : null;
-  return Array.isArray(canceled) && canceled.some((id) => String(id) === orderId);
-}
-
-/** 취소 거부 사유 ({not_canceled: {id: 사유}}) — 없으면 null. */
-export function orderPathTestCancelRefusal(resp, orderId) {
-  const nc = resp && typeof resp === "object" ? resp.not_canceled : null;
-  if (nc && typeof nc === "object" && Object.prototype.hasOwnProperty.call(nc, orderId)) {
-    return String(nc[orderId] ?? "");
-  }
-  return null;
-}
-
-/** 열린 주문 목록에 이 주문이 아직 남아 있는가 (행의 id 필드 대조). */
-export function orderPathTestOpenOrderPresent(openOrders, orderId) {
-  if (!Array.isArray(openOrders)) return false;
-  return openOrders.some((row) => row && row.id != null && String(row.id) === orderId);
-}
-
-/** 왕복 시간 통계 — {count, median(하위 중앙), p90(nearest-rank), max}. */
-export function orderPathTestStats(samples) {
-  if (!samples || !samples.length) return { count: 0, median: 0, p90: 0, max: 0 };
-  const s = [...samples].sort((a, b) => a - b);
-  const median = s[Math.floor((s.length - 1) / 2)];
-  const p90 = s[Math.max(0, Math.ceil(0.9 * s.length) - 1)];
-  return { count: s.length, median, p90, max: s[s.length - 1] };
-}
-
-/** 측정 종단 결과를 뷰어 표시용으로 남긴다 — 실패해도 흐름에 영향 없다. */
-function saveOrderPathTestStatus(outcome, postStats, cancelStats, failures) {
-  try {
-    const m = { ts: Date.now(), outcome, failures };
-    if (postStats) {
-      m.postCount = postStats.count;
-      m.postMedianMs = postStats.median;
-      m.postP90Ms = postStats.p90;
-      m.postMaxMs = postStats.max;
-    }
-    if (cancelStats) {
-      m.cancelCount = cancelStats.count;
-      m.cancelMedianMs = cancelStats.median;
-      m.cancelP90Ms = cancelStats.p90;
-      m.cancelMaxMs = cancelStats.max;
-    }
-    durableWrite(LS.orderTestStatus, JSON.stringify(m));
-  } catch {}
-}
-
-/** 테스트 주문 서명 — 가격은 ORDER_PATH_TEST_PRICE 고정, 수량은 최소 수량. */
-async function signTestOrder(t, size, tickSize) {
-  const order = { side: Side.BUY, price: ORDER_PATH_TEST_PRICE, size };
-  if (t.positionId != null) order.positionID = t.positionId;
-  else order.tokenID = t.tokenId;
-  return state.client.createOrder(order, tickSize ? { tickSize } : {});
-}
-
-/**
- * 테스트 주문 취소 + 잔류 확인. 취소가 확정되지 않으면 열린 주문
- * 조회로 확인하고, 잔류가 보이면 1회 더 취소한다. 그래도 남으면
- * residual로 올려 호출자가 측정을 중단하게 한다.
- */
-async function cancelTestOrder(t, orderId) {
-  const out = { cancelMs: -1, failed: false, residual: false };
-  // 취소 정리가 길어져도 정체 판정에 걸리지 않게 진행 신호를 남긴다.
-  beatProgress();
-  const t0 = Date.now();
-  let resp = null;
-  let err = null;
-  try {
-    resp = await state.client.cancelOrder({ orderID: orderId });
-  } catch (e) {
-    err = e;
-  }
-  out.cancelMs = Date.now() - t0;
-  if (!err && orderPathTestCancelConfirmed(resp, orderId)) return out;
-  const refusal = err == null ? orderPathTestCancelRefusal(resp, orderId) : null;
-  if (err) {
-    log(`취소 요청 오류 ${t.slug}: ${String(err?.message ?? err).slice(0, 120)} — 열린 주문으로 확인합니다`);
-  } else if (refusal != null) {
-    log(`취소 거부 ${t.slug}: ${refusal} — 열린 주문으로 확인합니다`);
-  }
-  if (!(await isTestOrderOpen(orderId))) {
-    log(`취소 재확인 — 열린 주문에 없어 취소된 것으로 봅니다 · ${t.slug}`);
-    return out;
-  }
-  beatProgress();
-  try {
-    resp = await state.client.cancelOrder({ orderID: orderId });
-  } catch {
-    resp = null;
-  }
-  if (resp != null && orderPathTestCancelConfirmed(resp, orderId)) {
-    log(`재취소로 정리됨 · ${t.slug}`);
-    return out;
-  }
-  if (!(await isTestOrderOpen(orderId))) {
-    log(`재취소 후 열린 주문에 없음 · ${t.slug}`);
-    return out;
-  }
-  out.failed = true;
-  out.residual = true;
-  log(`취소 실패 — 테스트 주문이 열린 채로 남았습니다 · ${t.slug} · 주문 ${orderId} — Polymarket에서 직접 확인해 취소하세요`);
-  notifyMoney("주문 경로 측정 취소 실패", `${t.slug} · 테스트 주문이 취소되지 않고 남아 있습니다`);
-  return out;
-}
-
-/** 열린 주문 조회로 잔류를 본다 — 조회 자체가 실패하면 잔류로 간주한다 (안전 방향). */
-async function isTestOrderOpen(orderId) {
-  try {
-    const open = await state.client.getOpenOrders({ id: orderId });
-    return orderPathTestOpenOrderPresent(open, orderId);
-  } catch (e) {
-    log(`열린 주문 조회 실패: ${String(e?.message ?? e).slice(0, 120)} — 잔류로 간주합니다`);
-    return true;
-  }
-}
-
-/**
- * 제출 결과가 불명(전송 예외·{error} 응답)일 때 — 주문 ID를 모르므로
- * 자산으로 열린 주문을 조회한다. 단, 취소는 행의 신원이 전부 일치해
- * 이 측정의 주문임이 확정될 때만 한다 (네이티브와 동일).
- * 반환 true면 잔류가 확정돼 측정을 중단해야 한다.
- */
-async function reconcileUnknownTestPost(t, size, postStartMs) {
-  let open;
-  try {
-    open = await state.client.getOpenOrders({ asset_id: t.assetKey });
-  } catch (e) {
-    log(`결과 불명 제출의 열린 주문 조회 실패: ${String(e?.message ?? e).slice(0, 120)} — 잔류로 간주해 측정을 중단합니다`);
-    return true;
-  }
-  let residual = false;
-  for (const row of Array.isArray(open) ? open : []) {
-    if (!orderPathTestIsOwnOrder(row, {
-      assetKey: t.assetKey, size, postStartMs, funder: state.funder,
-    })) continue;
-    if (row?.id == null) continue;
-    const cancel = await cancelTestOrder(t, String(row.id));
-    if (cancel.residual) residual = true;
-    else log(`결과 불명 제출의 잔류 주문을 찾아 취소했습니다 · ${t.slug}`);
-  }
-  return residual;
-}
-
-/** 제출 1건 — 왕복 시간 측정 + 체결·중단 판정. */
-async function postTestOrder(gen, t, signed, size) {
-  const out = { postMs: -1, failed: false, fillDetected: false, residual: false, resp: null };
-  const lockKey = `orderpath:${t.assetKey}`;
-  if (!tryAcquireSubmitLock(lockKey)) {
-    out.failed = true;
-    log(`제출 잠금 충돌로 건너뜁니다 ${t.slug}`);
-    return out;
-  }
-  try {
-    beginSubmit();
-    try {
-      const t0 = Date.now();
-      let resp;
-      try {
-        resp = await state.client.postOrder(signed, OrderType.GTC);
-      } catch (e) {
-        out.postMs = Date.now() - t0;
-        out.failed = true;
-        log(`제출 결과 불명 ${t.slug}: ${String(e?.message ?? e).slice(0, 120)} — 열린 주문으로 확인합니다`);
-        out.residual = await reconcileUnknownTestPost(t, size, t0);
-        return out;
-      }
-      out.postMs = Date.now() - t0;
-      out.resp = resp;
-      if (isOrderPathTestFill(resp)) {
-        log(`체결 감지 — 주문 경로 측정을 즉시 중단합니다 · ${t.slug} · 응답: ${JSON.stringify(resp).slice(0, 200)}`);
-        notifyMoney("주문 경로 측정 체결 감지", `${t.slug} · 체결 불가 가격에서 체결이 감지돼 측정을 중단했습니다`);
-        out.fillDetected = true;
-        return out;
-      }
-      // 전송 실패 {error} 응답도 결과 불명으로 가른다 (감사 F2).
-      if (isOrderPathTestUnknown(resp)) {
-        out.failed = true;
-        log(`제출 결과 불명 ${t.slug} · 응답: ${JSON.stringify(resp).slice(0, 200)} — 열린 주문으로 확인합니다`);
-        out.residual = await reconcileUnknownTestPost(t, size, t0);
-        return out;
-      }
-      if (orderPathTestOrderIdOf(resp) == null) {
-        out.failed = true;
-        log(`제출 응답에 주문 ID가 없습니다 ${t.slug} · 응답: ${JSON.stringify(resp).slice(0, 200)}`);
-      }
-      return out;
-    } finally {
-      endSubmit();
-    }
-  } finally {
-    releaseSubmitLock(lockKey);
-  }
-}
-
-/** 반복 구간 1회 — 지정가 제출 → 즉시 취소, 왕복 시간을 잰다. */
-async function orderPathTestRound(gen, t, size, tickSize, label) {
-  const out = { postMs: -1, cancelMs: -1, failed: false, fillDetected: false, residual: false };
-  let signed;
-  try {
-    signed = await signTestOrder(t, size, tickSize);
-  } catch (e) {
-    out.failed = true;
-    log(`측정 ${label} · 서명 실패 ${t.slug}: ${String(e?.message ?? e).slice(0, 120)}`);
-    return out;
-  }
-  const posted = await postTestOrder(gen, t, signed, size);
-  out.postMs = posted.postMs;
-  out.failed = posted.failed;
-  out.fillDetected = posted.fillDetected;
-  out.residual = posted.residual;
-  if (posted.fillDetected || posted.residual || posted.failed) return out;
-  const orderId = orderPathTestOrderIdOf(posted.resp);
-  const status = orderPathTestResponseStatus(posted.resp);
-  const cancel = await cancelTestOrder(t, orderId);
-  out.cancelMs = cancel.cancelMs;
-  out.failed = cancel.failed;
-  out.residual = cancel.residual;
-  log(`측정 ${label} · ${t.slug} · 제출 ${out.postMs}ms · 취소 ${out.cancelMs}ms · 상태 ${status || "(없음)"}${cancel.residual ? " · 취소 실패(잔류)" : " · 취소됨"}`);
-  return out;
-}
-
-/** 동시성 구간 — 서로 다른 시장에 연속 제출하고 전부 취소한다. */
-async function orderPathTestConcurrency(gen, usable, sizeByAsset, tickByAsset, stats, runStartMs) {
-  const five = usable.slice(0, ORDER_PATH_TEST_CONCURRENCY);
-  log(`주문 경로 측정 동시성 구간 — 시장 ${five.length}개 연속 제출`);
-  const signeds = [];
-  const signedTargets = [];
-  for (const t of five) {
-    try {
-      signeds.push(await signTestOrder(t, sizeByAsset.get(t.assetKey), tickByAsset.get(t.assetKey)));
-      signedTargets.push(t);
-    } catch (e) {
-      stats.failures += 1;
-      log(`동시성 · 서명 실패 ${t.slug}: ${String(e?.message ?? e).slice(0, 120)}`);
-    }
-  }
-  const placedIds = [];
-  const placedTargets = [];
-  const totalT0 = Date.now();
-  for (let i = 0; i < signeds.length; i++) {
-    const t = signedTargets[i];
-    if (!state.running || gen !== state.gen) {
-      stats.outcome = "aborted_stop";
-      break;
-    }
-    // 총 실행 상한 (감사 F4) — 이미 제출된 건의 취소 정리는 아래
-    // 루프가 상한과 무관하게 수행한다.
-    if (Date.now() - runStartMs > ORDER_PATH_TEST_MAX_RUN_MS) {
-      stats.outcome = "timeout_abort";
-      log("주문 경로 측정 중단 — 총 실행 상한을 넘겼습니다 (동시성 제출 중단)");
-      break;
-    }
-    // 제출 직전 호가 재확인 (감사 F1).
-    let bookNow = null;
-    try {
-      bookNow = await state.client.getOrderBook(t.assetKey);
-    } catch {
-      bookNow = null;
-    }
-    if (!isSafeOrderPathTestBook(bookNow)) {
-      stats.outcome = "unsafe_abort";
-      log(`주문 경로 측정 중단 — 최저 매도호가가 테스트 가격 이하로 내려왔습니다 · ${t.slug}`);
-      break;
-    }
-    beatProgress();
-    const r = await postTestOrder(gen, t, signeds[i], sizeByAsset.get(t.assetKey));
-    if (r.postMs >= 0) stats.postMs.push(r.postMs);
-    if (r.fillDetected) {
-      stats.outcome = "filled_abort";
-      break;
-    }
-    if (r.failed) {
-      stats.failures += 1;
-      if (r.residual) {
-        stats.outcome = "residual_abort";
-        break;
-      }
-      continue;
-    }
-    placedIds.push(orderPathTestOrderIdOf(r.resp));
-    placedTargets.push(t);
-  }
-  log(`동시성 제출 완료 — 총 ${Date.now() - totalT0}ms · 접수 ${placedIds.length}건`);
-  for (let i = 0; i < placedIds.length; i++) {
-    const cancel = await cancelTestOrder(placedTargets[i], placedIds[i]);
-    if (cancel.cancelMs >= 0) stats.cancelMs.push(cancel.cancelMs);
-    if (cancel.failed) stats.failures += 1;
-    if (cancel.residual && stats.outcome === "done") stats.outcome = "residual_abort";
-  }
-}
-
-/** 측정 본체 — 대상 선정 → 반복 구간 → 동시성 구간 → 요약. */
-async function runOrderPathTest(gen, rounds) {
-  log(`주문 경로 측정 시작 — 반복 ${rounds}회 · 가격 ${ORDER_PATH_TEST_PRICE} 고정 · 최소 수량 · 체결 시 즉시 중단`);
-  const stats = { postMs: [], cancelMs: [], failures: 0, outcome: "done" };
-  try {
-    const markets = await fetchMarkets();
-    const picked = pickOrderPathTestMarkets(markets, ORDER_PATH_TEST_CONCURRENCY);
-    // 대상별 최소 수량을 오더북에서 확정한다 — 못 읽는 시장은
-    // 추정으로 크기를 만들지 않고 건너뛴다.
-    const usable = [];
-    const sizeByAsset = new Map();
-    const tickByAsset = new Map();
-    for (const t of picked) {
-      let book;
-      try {
-        book = await state.client.getOrderBook(t.assetKey);
-      } catch {
-        continue;
-      }
-      const size = planOrderPathTestSize(book?.min_order_size);
-      if (size == null) continue;
-      // 최저 매도호가가 테스트 가격 이하인 시장은 즉시 체결될 수
-      // 있어 대상에서 뺀다 (감사 F1).
-      if (!isSafeOrderPathTestBook(book)) {
-        log(`주문 경로 측정 대상 제외 — 최저 매도호가가 테스트 가격 이하입니다 · ${t.slug}`);
-        continue;
-      }
-      usable.push(t);
-      sizeByAsset.set(t.assetKey, size);
-      if (book?.tick_size) tickByAsset.set(t.assetKey, String(book.tick_size));
-    }
-    if (!usable.length) {
-      log("주문 경로 측정 중단 — 대상 시장을 찾지 못했습니다");
-      stats.outcome = "no_market";
-    } else {
-      const main = usable[0];
-      const runStartMs = Date.now();
-      for (let i = 1; i <= rounds; i++) {
-        if (!state.running || gen !== state.gen) {
-          stats.outcome = "aborted_stop";
-          break;
-        }
-        // 총 실행 상한 (감사 F4).
-        if (Date.now() - runStartMs > ORDER_PATH_TEST_MAX_RUN_MS) {
-          stats.outcome = "timeout_abort";
-          log(`주문 경로 측정 중단 — 총 실행 상한(${ORDER_PATH_TEST_MAX_RUN_MS / 1000}초)을 넘겼습니다`);
-          break;
-        }
-        // 제출 직전 호가 재확인 (감사 F1).
-        let bookNow = null;
-        try {
-          bookNow = await state.client.getOrderBook(main.assetKey);
-        } catch {
-          bookNow = null;
-        }
-        if (!isSafeOrderPathTestBook(bookNow)) {
-          stats.outcome = "unsafe_abort";
-          log(`주문 경로 측정 중단 — 최저 매도호가가 테스트 가격 이하로 내려왔습니다 · ${main.slug}`);
-          break;
-        }
-        beatProgress();
-        const r = await orderPathTestRound(gen, main, sizeByAsset.get(main.assetKey),
-          tickByAsset.get(main.assetKey), `${i}/${rounds}`);
-        if (r.postMs >= 0) stats.postMs.push(r.postMs);
-        if (r.cancelMs >= 0) stats.cancelMs.push(r.cancelMs);
-        if (r.failed) stats.failures += 1;
-        if (r.fillDetected) {
-          stats.outcome = "filled_abort";
-          break;
-        }
-        if (r.residual) {
-          stats.outcome = "residual_abort";
-          break;
-        }
-      }
-      if (stats.outcome === "done") {
-        await orderPathTestConcurrency(gen, usable, sizeByAsset, tickByAsset, stats, runStartMs);
-      }
-    }
-  } catch (e) {
-    log(`주문 경로 측정 오류: ${String(e?.message ?? e).slice(0, 160)}`);
-    stats.outcome = "error";
-  }
-  const p = orderPathTestStats(stats.postMs);
-  const c = orderPathTestStats(stats.cancelMs);
-  log(`주문 경로 측정 종료 (${stats.outcome}) — 제출 ${p.count}건 · 중앙값 ${p.median}ms · p90 ${p.p90}ms · 최대 ${p.max}ms · 취소 ${c.count}건 · 중앙값 ${c.median}ms · p90 ${c.p90}ms · 최대 ${c.max}ms · 실패 ${stats.failures}건`);
-  saveOrderPathTestStatus(stats.outcome, p, c, stats.failures);
-}
-
-/**
- * 뷰어 측정 요청 소비 — 읽는 즉시 지운다 (재시작돼도 같은 요청이
- * 두 번 돌지 않게). 실행은 사이클이 끝난 idle 구간에서만 한다.
- */
-async function processOrderPathTest(gen) {
-  if (!state.running || gen !== state.gen) return;
-  const raw = durableRead(LS.orderTestReq);
-  if (!raw) return;
-  durableWrite(LS.orderTestReq, "");
-  let model = null;
-  try {
-    model = JSON.parse(raw);
-  } catch {}
-  const req = parseOrderPathTestRequest(model);
-  if (!req) {
-    log("주문 경로 측정 요청 형식 오류 — 버립니다");
-    saveOrderPathTestStatus("bad_format", null, null, 0);
-    return;
-  }
-  if (isOrderPathTestStale(req, Date.now())) {
-    log("주문 경로 측정 요청 만료 — 오래된 요청이라 버립니다");
-    saveOrderPathTestStatus("expired", null, null, 0);
-    return;
-  }
-  const tradeCfg = parseTradeSettings(durableRead(LS.settings));
-  await runOrderPathTest(gen, tradeCfg.orderTestRounds);
+export function sellQuoteOf(shares, feeRate, price) {
+  const n = Number(shares);
+  const p = Number(price);
+  if (!Number.isFinite(n) || n <= 0 || !Number.isFinite(p) || p <= 0) return null;
+  const known = feeRate != null && isFinite(feeRate);
+  const rate = known ? Number(feeRate) : 0.07;
+  return { gross: n * p, fee: n * rate * p * (1 - p), feeKnown: known };
 }
 
 // ── 제출 잠금 (중복 체결 방지) ───────────────────────────────
@@ -3311,16 +2775,6 @@ async function loop(gen) {
   }
   // 정지된 뒤에 끝난 사이클이 "stopped" 기록을 "idle"로 덮지 않게 한다
   if (state.running && gen === state.gen) setStage("idle");
-  // 주문 경로 측정은 사이클이 쉬는 구간에서만 돈다 — 운영 제출과
-  // 겹치지 않게 사이클 경계 뒤에 붙인다. 자체 예외는 사이클 오류로
-  // 세지 않는다 (측정 실패가 엔진 오류 카운터를 올리면 안 된다).
-  if (state.running && gen === state.gen) {
-    try {
-      await processOrderPathTest(gen);
-    } catch (e) {
-      log(`주문 경로 측정 처리 오류: ${String(e?.message ?? e).slice(0, 160)}`);
-    }
-  }
   if (state.cycle % UPDATE_CHECK_EVERY_CYCLES === 0) void checkForUpdate();
   if (state.running && gen === state.gen) {
     state.timer = setTimeout(() => loop(gen), CYCLE_MS);
@@ -4338,6 +3792,8 @@ function unlink() {
 window.BM = {
   boot,
   link,
+  bestBidFromBook,
+  sellQuoteOf,
   restore,
   unlink,
   snapshot,

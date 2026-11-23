@@ -36,6 +36,8 @@ public final class TradeSettings {
     public double decidedHigh = 0.97;      // StopLoss.DECIDED_HIGH
     public double decidedLow = 0.03;       // StopLoss.DECIDED_LOW
     /** 주문 경로 측정 반복 횟수 — 가격·수량은 코드 고정이라 이 값만 조정 가능하다. */
+    // 주문 경로 측정 기능은 v0.3.43에서 제거됐다 — 저장된 설정과의 호환을
+    // 위해 파싱만 남긴 유산 필드다 (읽어서 동작하는 곳은 없다).
     public int orderTestRounds = 30;
 
     /** 기본값 그대로의 설정 — 설정을 못 읽거나 비었을 때의 동작은 기존과 같다. */

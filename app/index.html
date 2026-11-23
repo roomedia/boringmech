@@ -370,35 +370,6 @@
     </div>
 
     <div class="card">
-      <h2>주문 경로 측정</h2>
-      <div class="set">
-        <div class="set-head"><span class="lab">반복 횟수</span>
-          <span class="stepper">
-            <button type="button" class="step-btn" data-for="ts_orderTestRounds" data-dir="-1">−</button>
-            <span><span class="val" id="val_orderTestRounds">30</span><span class="unit">회</span></span>
-            <button type="button" class="step-btn" data-for="ts_orderTestRounds" data-dir="1">+</button>
-          </span>
-        </div>
-        <input type="hidden" id="ts_orderTestRounds" value="30">
-      </div>
-      <p class="note" style="margin-top:10px">
-        가격 0.01 고정 · 최소 수량 · 걸자마자 취소합니다. 체결이 감지되면 즉시 중단하고,
-        테스트 주문은 포지션·기매수 기록에 남지 않습니다.
-      </p>
-      <div class="stack" style="margin-top:16px">
-        <button class="btn accent" id="btnOrderTestStart">측정 시작</button>
-        <button class="btn ghost" id="btnOrderTestSave" disabled>설정 저장</button>
-        <div class="btnrow">
-          <button class="btn ghost sm" id="btnOrderTestSaved" disabled>저장본으로</button>
-          <button class="btn ghost sm" id="btnOrderTestDefault">기본값으로</button>
-        </div>
-      </div>
-      <div class="err" id="orderTestErr"></div>
-      <div class="note" id="orderTestMsg" style="display:none;margin-top:8px"></div>
-      <div class="note" id="orderTestStatus" style="display:none;margin-top:8px"></div>
-    </div>
-
-    <div class="card">
       <h2>최근 로그</h2>
       <div class="log" id="logBox">—</div>
       <div class="stack" style="margin-top:10px">
@@ -434,7 +405,7 @@
     <div class="sheet">
       <h2>매도 확인</h2>
       <div id="sellDetail"></div>
-      <p class="note" style="margin:12px 0">확인하면 다음 사이클에 전량 즉시 매도합니다. 예상 금액은 현재가 기준이라 실제 체결과 다를 수 있습니다.</p>
+      <p class="note" id="sellNote" style="margin:12px 0">확인하면 다음 사이클에 전량 즉시 매도합니다. 주문장을 조회하고 있습니다.</p>
       <div class="stack">
         <button class="btn danger" id="btnSellConfirm">매도하기</button>
         <button class="btn ghost" id="btnSellCancel">취소</button>
@@ -746,28 +717,68 @@
       return row;
     }
 
+    // 매도 견적 조회 세대 — 팝업을 닫거나 다른 종목을 열면 이전 조회
+    // 결과를 버린다 (늦게 도착한 응답이 새 팝업을 덮지 않게).
+    var sellQuoteSeq = 0;
+
     function openSellPopup(p){
       pendingSell = p;
       $('sellMsg').textContent = '';
+      var seq = ++sellQuoteSeq;
+      renderSellDetail(p, null, true);
+      $('sellOverlay').classList.remove('hidden');
+      // 조회 시점은 팝업을 여는 순간이 정본이다 — 목록 화면의 낡은
+      // 값을 재사용하지 않고 그때의 주문장을 새로 읽는다.
+      fetchSellBook(p.token_id).then(function(book){
+        if (seq !== sellQuoteSeq || pendingSell !== p) return;
+        renderSellDetail(p, book, false);
+      });
+    }
+
+    // 주문장 조회 — 뷰어의 기존 fetch 패턴(AbortController 타임아웃)을
+    // 그대로 쓴다. 실패하면 null을 돌려 호출자가 폴백으로 가게 한다.
+    function fetchSellBook(tokenId){
+      if (!tokenId) return Promise.resolve(null);
+      var ctl = new AbortController();
+      var timer = setTimeout(function(){ ctl.abort(); }, 10000);
+      return fetch('https://clob.polymarket.com/book?token_id=' + encodeURIComponent(tokenId), { signal: ctl.signal })
+        .then(function(resp){ return resp.ok ? resp.json() : null; })
+        .catch(function(){ return null; })
+        .then(function(book){ clearTimeout(timer); return book; });
+    }
+
+    function renderSellDetail(p, book, loading){
       var shares = Number(p.current_size);
-      var price = Number(p.current_price);
-      var gross = shares * price;
-      // 예상 수수료 = shares × 요율 × p × (1−p). 요율을 모르면
-      // 보수적 상한(0.07)으로 계산하고 "약"을 붙인다.
-      var known = p.fee_rate != null && isFinite(p.fee_rate);
-      var rate = known ? Number(p.fee_rate) : 0.07;
-      var fee = shares * rate * price * (1 - price);
       var box = $('sellDetail');
       box.textContent = '';
       box.appendChild(detailRow('종목', (p.title || p.slug || '—') + (p.outcome ? ' · ' + p.outcome : '')));
       box.appendChild(detailRow('수량 (전량)', isFinite(shares) ? shares.toLocaleString('en-US') + '주' : '—'));
-      box.appendChild(detailRow('현재가', fmtPrice(p.current_price)));
-      box.appendChild(detailRow('예상 수령액', isFinite(gross) ? fmt(gross - fee) : '—'));
-      box.appendChild(detailRow('예상 수수료', isFinite(fee) ? (known ? '' : '약 ') + fmt(fee) : '—'));
-      $('sellOverlay').classList.remove('hidden');
+      var bid = NaN;
+      try { bid = book ? BM.bestBidFromBook(book) : NaN; } catch (e) { bid = NaN; }
+      if (isFinite(bid)) {
+        var q = null;
+        try { q = BM.sellQuoteOf(shares, p.fee_rate, bid); } catch (e) {}
+        box.appendChild(detailRow('실제 매도가 (최고 매수호가)', fmtPrice(bid)));
+        box.appendChild(detailRow('예상 수령액 (수수료 전)', q ? fmt(q.gross) : '—'));
+        box.appendChild(detailRow('예상 수수료', q ? (q.feeKnown ? '' : '약 ') + fmt(q.fee) : '—'));
+        $('sellNote').textContent = '확인하면 다음 사이클에 전량 즉시 매도합니다. 매도가는 팝업을 연 시점에 조회한 최고 매수호가 기준이라 실제 체결과 다를 수 있습니다.';
+      } else if (loading) {
+        box.appendChild(detailRow('실제 매도가 (최고 매수호가)', '조회 중…'));
+        box.appendChild(detailRow('예상 수령액 (수수료 전)', '—'));
+        $('sellNote').textContent = '확인하면 다음 사이클에 전량 즉시 매도합니다. 주문장을 조회하고 있습니다.';
+      } else {
+        // 조회 실패 — 스냅샷가를 참고가로 보여주되 매도 자체는 막지 않는다.
+        var qs = null;
+        try { qs = BM.sellQuoteOf(shares, p.fee_rate, Number(p.current_price)); } catch (e) {}
+        box.appendChild(detailRow('참고가 (스냅샷가)', fmtPrice(p.current_price)));
+        box.appendChild(detailRow('예상 수령액 (수수료 전)', qs ? fmt(qs.gross) : '—'));
+        box.appendChild(detailRow('예상 수수료', qs ? (qs.feeKnown ? '' : '약 ') + fmt(qs.fee) : '—'));
+        $('sellNote').textContent = '확인하면 다음 사이클에 전량 즉시 매도합니다. 주문장 조회에 실패해 스냅샷가를 참고가로 표시합니다. 실제 체결가는 주문장 사정에 따라 달라질 수 있습니다.';
+      }
     }
 
     function closeSellPopup(){
+      sellQuoteSeq++;
       pendingSell = null;
       $('sellOverlay').classList.add('hidden');
     }
@@ -875,10 +886,7 @@
         { id: 'ts_stopDrop', key: 'stopDrop', def: 0.25, min: 0, max: 1, minEx: true, maxEx: true, label: '손절 폭', ctrl: 'slider' },
         { id: 'ts_decidedHigh', key: 'decidedHigh', def: 0.97, min: 0, max: 1, minEx: true, maxEx: true, label: '결정 구간 상한', ctrl: 'slider' },
         { id: 'ts_decidedLow', key: 'decidedLow', def: 0.03, min: 0, max: 1, minEx: true, maxEx: true, label: '결정 구간 하한', ctrl: 'slider' }
-      ], pairs: [['ts_decidedLow', 'ts_decidedHigh', '결정 구간']] },
-      orderTest: { err: 'orderTestErr', fields: [
-        { id: 'ts_orderTestRounds', key: 'orderTestRounds', def: 30, min: 1, max: 100, int: true, label: '측정 반복 횟수', ctrl: 'step', step: 5, smax: 100 }
-      ], pairs: [] }
+      ], pairs: [['ts_decidedLow', 'ts_decidedHigh', '결정 구간']] }
     };
 
     function fieldValid(f, v){
@@ -949,8 +957,7 @@
       temp: { save: 'btnTempSave', toSaved: 'btnTempSaved', toDefault: 'btnTempDefault', err: 'tempNoErr' },
       band: { save: 'btnBandSave', toSaved: 'btnBandSaved', toDefault: 'btnBandDefault', err: 'bandErr' },
       size: { save: 'btnSizeSave', toSaved: 'btnSizeSaved', toDefault: 'btnSizeDefault', err: 'sizeErr' },
-      stop: { save: 'btnStopSave', toSaved: 'btnStopSaved', toDefault: 'btnStopDefault', err: 'stopErr' },
-      orderTest: { save: 'btnOrderTestSave', toSaved: 'btnOrderTestSaved', toDefault: 'btnOrderTestDefault', err: 'orderTestErr' }
+      stop: { save: 'btnStopSave', toSaved: 'btnStopSaved', toDefault: 'btnStopDefault', err: 'stopErr' }
     };
     // 기온 카드 필드 — prop은 readTempSettings 반환 키, def는 그 폴백 기본값
     var TEMP_FIELDS = [
@@ -1295,41 +1302,6 @@
       el.style.display = '';
     }
 
-    // 주문 경로 측정 마지막 결과 — 엔진이 bm_orderpath_test_status에
-    // 남긴 요약(제출·취소 중앙값/p90/최대)을 한 줄로 보여준다.
-    var ORDER_TEST_OUTCOME_LABELS = {
-      done: '완료', filled_abort: '체결 감지로 중단', residual_abort: '취소 실패로 중단',
-      timeout_abort: '시간 상한으로 중단', unsafe_abort: '체결 가능 호가로 중단',
-      no_market: '대상 시장 없음', aborted_stop: '엔진 정지로 중단', error: '오류',
-      bad_format: '요청 형식 오류', expired: '요청 만료'
-    };
-    function renderOrderPathTestStatus(){
-      var el = $('orderTestStatus');
-      if (!el) return;
-      var st = null;
-      try {
-        var raw = window.AndroidBridge && AndroidBridge.getDurable
-          ? AndroidBridge.getDurable('bm_orderpath_test_status') : null;
-        if (raw) st = JSON.parse(raw);
-      } catch (e) { st = null; }
-      if (!st || !st.ts || Date.now() - st.ts > 24 * 3600 * 1000) {
-        el.style.display = 'none';
-        return;
-      }
-      var d = new Date(st.ts);
-      var hh = ('0' + d.getHours()).slice(-2);
-      var mm = ('0' + d.getMinutes()).slice(-2);
-      var text = '주문 경로 측정: ' + (ORDER_TEST_OUTCOME_LABELS[st.outcome] || st.outcome || '');
-      if (st.postCount) {
-        text += ' · 제출 중앙값 ' + st.postMedianMs + 'ms · p90 ' + st.postP90Ms + 'ms · 최대 ' + st.postMaxMs + 'ms'
-          + ' · 취소 중앙값 ' + st.cancelMedianMs + 'ms · p90 ' + st.cancelP90Ms + 'ms · 최대 ' + st.cancelMaxMs + 'ms';
-      }
-      if (st.failures) text += ' · 실패 ' + st.failures + '건';
-      text += ' · ' + hh + ':' + mm;
-      el.textContent = text;
-      el.style.display = '';
-    }
-
     function refresh(){
       try { hasKey = !!localStorage.getItem('bm_pk'); } catch (e) { hasKey = false; }
       intentOn = bridgeIntent();
@@ -1350,7 +1322,6 @@
       showMain();
       render(readSnap());
       renderManualSellStatus();
-      renderOrderPathTestStatus();
       renderLogs();
       renderUpdate();
       renderRelayer();
@@ -1592,32 +1563,6 @@
     $('btnBandSave').addEventListener('click', function(){ saveTradeGroup('band'); });
     $('btnSizeSave').addEventListener('click', function(){ saveTradeGroup('size'); });
     $('btnStopSave').addEventListener('click', function(){ saveTradeGroup('stop'); });
-    $('btnOrderTestSave').addEventListener('click', function(){ saveTradeGroup('orderTest'); });
-    // 측정 시작 제출은 이 핸들러가 유일한 경로다 — 엔진이 사이클이
-    // 끝난 idle 구간에서 요청을 한 번만 소비해 실행한다.
-    $('btnOrderTestStart').addEventListener('click', function(){
-      askConfirm('주문 경로 측정을 시작할까요? 가격 0.01에 최소 수량 지정가를 걸었다 즉시 취소하며 왕복 시간을 잽니다.', '측정 시작', false, function(){
-        var msg = $('orderTestMsg');
-        var ok = false;
-        try {
-          if (window.AndroidBridge && AndroidBridge.putDurable) {
-            AndroidBridge.putDurable('bm_orderpath_test_req', JSON.stringify({ ts: Date.now() }));
-            ok = true;
-          }
-        } catch (e) {}
-        msg.style.display = '';
-        if (ok) {
-          var hb = bridgeHeartbeat();
-          if (!hb || Date.now() - hb > 180000) {
-            msg.textContent = '요청은 보냈지만 엔진이 멈춰 있습니다 — 재개가 10분을 넘기면 만료됩니다.';
-          } else {
-            msg.textContent = '측정 요청을 보냈습니다 — 사이클이 끝난 뒤 실행되고 결과는 최근 로그와 이 카드에 남습니다.';
-          }
-        } else {
-          msg.textContent = '요청 전송 실패 — 앱을 다시 열고 시도하세요.';
-        }
-      });
-    });
     Object.keys(SET_GROUPS).forEach(function(name){
       $(SET_GROUPS[name].toSaved).addEventListener('click', function(){ revertGroup(name, false); });
       $(SET_GROUPS[name].toDefault).addEventListener('click', function(){ revertGroup(name, true); });

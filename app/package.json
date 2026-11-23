@@ -11,7 +11,7 @@
   "private": true,
   "scripts": {
     "bundle": "node bundle.mjs",
-    "test": "node test/book.test.mjs && node test/temp.test.mjs && node test/bundle.test.mjs && node test/html-guard.test.mjs"
+    "test": "node test/book.test.mjs && node test/temp.test.mjs && node test/bundle.test.mjs && node test/html-guard.test.mjs && node test/sellquote.test.mjs"
   },
-  "version": "0.3.42"
+  "version": "0.3.43"
 }
