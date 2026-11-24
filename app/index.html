@@ -675,14 +675,13 @@
     var posListOpen = false;
 
     // 접힌 요약 수치 — 행별 손익은 목록 행과 같은 기준(평가액 − 진입
-    // 원금)으로 계산한다. 그룹 손익률은 그룹 손익 합 ÷ 그룹 진입 원금
-    // 합이다. 본전(손익 0)은 수익·손실 어느 쪽에도 세지 않고, 손익을
+    // 원금)으로 계산한다. 수익·손실 종목 표기는 그룹 손익 합계(달러)
+    // 다. 본전(손익 0)은 수익·손실 어느 쪽에도 세지 않고, 손익을
     // 계산할 수 없는 행은 건수·가치에만 들어가고 손익 합에서는 빠진다.
     function summarizePositions(rows){
       var out = { count: 0, value: 0, pnl: 0,
-        winCount: 0, winPnl: 0, winCost: 0,
-        lossCount: 0, lossPnl: 0, lossCost: 0,
-        winPct: null, lossPct: null };
+        winCount: 0, winPnl: 0,
+        lossCount: 0, lossPnl: 0 };
       (Array.isArray(rows) ? rows : []).forEach(function(p){
         out.count++;
         if (p.current_value != null && isFinite(Number(p.current_value)))
@@ -693,11 +692,9 @@
           ? Number(p.current_value) - cost : null;
         if (pnl == null || !isFinite(pnl)) return;
         out.pnl += pnl;
-        if (pnl > 0){ out.winCount++; out.winPnl += pnl; out.winCost += cost; }
-        else if (pnl < 0){ out.lossCount++; out.lossPnl += pnl; out.lossCost += cost; }
+        if (pnl > 0){ out.winCount++; out.winPnl += pnl; }
+        else if (pnl < 0){ out.lossCount++; out.lossPnl += pnl; }
       });
-      out.winPct = out.winCost > 0 ? out.winPnl / out.winCost * 100 : null;
-      out.lossPct = out.lossCost > 0 ? out.lossPnl / out.lossCost * 100 : null;
       return out;
     }
 
@@ -748,16 +745,16 @@
         return;
       }
       // 접힌 상태에서는 요약만 보인다 — 보유 건수, 포지션 가치와 전체
-      // 손익, 수익·손실 종목 수와 그룹 손익률.
+      // 손익, 수익·손실 종목 수와 그룹 손익 합계(달러).
       var sum = summarizePositions(rows);
       var sumLines = [
         ['보유', sum.count + '건', null],
         ['포지션 가치', fmt(sum.value), null],
         ['전체 손익', (sum.pnl < 0 ? '-' : '+') + fmt(Math.abs(sum.pnl)),
           sum.pnl < 0 ? 'var(--danger)' : 'var(--accent)'],
-        ['수익 종목', sum.winCount + '건' + (sum.winPct != null ? ' · ' + fmtPct(sum.winPct) : ''),
+        ['수익 종목', sum.winCount + '건' + (sum.winCount ? ' · +' + fmt(sum.winPnl) : ''),
           sum.winCount ? 'var(--accent)' : null],
-        ['손실 종목', sum.lossCount + '건' + (sum.lossPct != null ? ' · ' + fmtPct(sum.lossPct) : ''),
+        ['손실 종목', sum.lossCount + '건' + (sum.lossCount ? ' · -' + fmt(Math.abs(sum.lossPnl)) : ''),
           sum.lossCount ? 'var(--danger)' : null]
       ];
       sumLines.forEach(function(kv){
