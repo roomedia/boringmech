@@ -57,15 +57,23 @@ for (const id of ["settledCount", "settledWL", "settledSL"]) {
 check(!html.includes("settledCount + '건 · '"), "html-guard: 정산 요약 합본 문자열이 남아 있지 않다");
 check(html.includes("expandedPos"), "html-guard: 포지션 펼침 상태 유지 코드가 있다");
 
-// 설정 잠금 가드 (v0.3.45) — 잠금은 요소를 숨기거나 값 표시로 대체하지
-// 않고 disabled로만 표현한다. 설정 컨트롤이 영역 밖에 생기거나,
-// 재잠금 지점이 사라지면 여기서 잡는다 (동작 검증은 settings-lock).
+// 설정 잠금 가드 (v0.3.45, 카드별 v0.3.46) — 잠금은 요소를 숨기거나
+// 값 표시로 대체하지 않고 disabled로만 표현한다. 잠금은 카드별 독립
+// 이라 편집 아이콘은 카드마다 있고, 재잠금은 그 카드만 잠근다. 설정
+// 컨트롤이 영역 밖에 생기거나, 재잠금 지점이 사라지면 여기서 잡는다
+// (동작 검증은 settings-lock).
 check(html.includes('id="settingsArea"'), "html-guard: settingsArea 마크업 존재");
-check(html.includes('id="btnSettingsEdit"'), "html-guard: 설정 편집 아이콘 존재");
-check(html.includes("function setSettingsLocked("), "html-guard: setSettingsLocked 정의 존재");
-check(html.includes("if (settingsLocked) return;"), "html-guard: 잠금 시 숫자 입력 시트 차단 존재");
-check((html.match(/setSettingsLocked\(true\)/g) || []).length >= 3,
-  "html-guard: 저장·되돌리기 재잠금 지점이 3곳 이상이다");
+for (const card of ["Temp", "Band", "Size", "Stop"]) {
+  check(html.includes(`id="btnEdit${card}"`), `html-guard: ${card} 카드 편집 아이콘 존재`);
+}
+check(!html.includes('id="btnSettingsEdit"'), "html-guard: 전체 일괄 편집 아이콘은 없다");
+check(html.includes("function setCardLocked("), "html-guard: setCardLocked 정의 존재");
+check(html.includes("var cardLocked = { temp: true, band: true, size: true, stop: true };"),
+  "html-guard: 카드별 잠금 상태가 전 카드 잠금으로 시작한다");
+check(html.includes("if (lockGroup && cardLocked[lockGroup]) return;"),
+  "html-guard: 잠금 카드의 숫자 입력 시트 차단 존재");
+check((html.match(/setCardLocked\((name|'temp'), true\)/g) || []).length >= 3,
+  "html-guard: 저장·되돌리기 카드별 재잠금 지점이 3곳 이상이다");
 const areaStart = html.indexOf('id="settingsArea"');
 const areaEnd = html.indexOf("최근 로그", areaStart);
 const settingsIds = [...html.matchAll(/id="((?:ts_|temp)[A-Za-z]+)"/g)].map((m) => m[1]);

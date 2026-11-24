@@ -1,7 +1,9 @@
-// 설정 잠금 모드 가드 — 평소 읽기 모드에서는 설정 컨트롤이 레이아웃
-// 그대로 존재하되 disabled이고, 편집 아이콘을 눌렀을 때만 같은 요소가
-// 활성화되며, 저장·되돌리기 뒤에는 다시 잠긴다. 출하 HTML의 인라인
-// 스크립트를 최소 fake DOM 위에서 실제로 실행해 검증한다 (jsdom 없음).
+// 설정 잠금 모드 가드 (카드별, v0.3.46) — 평소 읽기 모드에서는 설정
+// 컨트롤이 레이아웃 그대로 존재하되 disabled이고, 잠금은 카드별로
+// 독립이다: 카드의 편집 아이콘은 그 카드만 열고, 다른 카드는 잠긴
+// 상태를 유지하며, 그 카드의 저장·되돌리기 뒤에는 그 카드만 다시
+// 잠긴다. 출하 HTML의 인라인 스크립트를 최소 fake DOM 위에서 실제로
+// 실행해 검증한다 (jsdom 없음).
 //
 // 잠금을 disabled가 아니라 요소 숨김·교체로 구현하면, fake DOM에는
 // 숨김 개념이 없어도 "같은 요소가 활성화된다"는 대조가 깨져 잡힌다.
@@ -98,18 +100,24 @@ function el(id) {
   return registry.get(id);
 }
 
-// 설정 영역 컨트롤은 getElementById와 영역 querySelectorAll이 같은
-// 객체를 돌려줘야 "같은 요소" 대조가 성립한다.
-const areaControls = [];
+// 설정 영역 컨트롤은 getElementById와 querySelectorAll이 같은 객체를
+// 돌려줘야 "같은 요소" 대조가 성립한다.
 for (const t of [...areaInputs, ...areaButtons]) {
   const e = el(t.id);
   e.className = t.cls;
   if (t.dataFor) e.setAttribute("data-for", t.dataFor);
   if (t.dataDir) e.setAttribute("data-dir", t.dataDir);
-  areaControls.push(e);
 }
-const area = el("settingsArea");
-area.querySelectorAll = () => areaControls.slice();
+// 스테퍼 버튼은 id가 없어 data-for로 구분한다 — 카드별 잠금이 자기
+// 카드의 스테퍼만 골라 disabled를 거는지 대조하는 데 쓴다.
+const stepBtnEls = stepBtns.map((t) => {
+  const e = new FakeEl("");
+  e.className = t.cls;
+  if (t.dataFor) e.setAttribute("data-for", t.dataFor);
+  if (t.dataDir) e.setAttribute("data-dir", t.dataDir);
+  return e;
+});
+const stepBtnFor = (inputId) => stepBtnEls.find((e) => e.getAttribute("data-for") === inputId);
 el("numOverlay").classList.add("hidden");
 el("confirmOverlay").classList.add("hidden");
 
@@ -118,7 +126,7 @@ const documentStub = {
   getElementById: (id) => el(id),
   querySelectorAll: (sel) => {
     if (sel === "input.slider") return byIdFromParse(sliders);
-    if (sel === ".step-btn") return byIdFromParse(stepBtns);
+    if (sel === ".step-btn") return stepBtnEls.slice();
     if (sel === ".numin") return byIdFromParse(numins);
     return [];
   },
@@ -169,55 +177,95 @@ const inline = /<script>([\s\S]*?)<\/script>/.exec(html)[1];
 vm.runInContext(inline, sandbox, { filename: "index-inline.js" });
 
 const $ = (id) => registry.get(id);
-const slider = $("ts_bandLo");
-check(!!slider, "lock: 슬라이더 요소가 존재한다");
+const bandSlider = $("ts_bandLo");
+const sizeSlider = $("ts_betPct");
+const stopSlider = $("ts_stopDrop");
+check(!!bandSlider && !!sizeSlider && !!stopSlider, "lock: 카드별 슬라이더 요소가 존재한다");
 
-// 1) 초기 상태는 잠금 — 요소는 그대로 있고 disabled다.
-check(sandbox.settingsLocked === true, "lock: 초기 상태가 잠금이다");
-check(slider.disabled === true, "lock: 잠금 상태에서 슬라이더가 disabled다");
+// 1) 초기 상태는 전 카드 잠금 — 요소는 그대로 있고 disabled다.
+check(["temp", "band", "size", "stop"].every((g) => sandbox.cardLocked[g] === true),
+  "lock: 초기 상태는 전 카드 잠금이다");
+check(bandSlider.disabled === true, "lock: 잠금 상태에서 매수 카드 슬라이더가 disabled다");
 check($("tempNoEnabled").disabled === true, "lock: 잠금 상태에서 기온 스위치가 disabled다");
-check($("btnSettingsEdit").disabled === false, "lock: 편집 아이콘은 잠금 상태에서도 눌린다");
+check(sizeSlider.disabled === true, "lock: 잠금 상태에서 사이징 슬라이더가 disabled다");
+check(stopSlider.disabled === true, "lock: 잠금 상태에서 손절 슬라이더가 disabled다");
+check(stepBtnFor("ts_betMinUsd").disabled === true, "lock: 잠금 상태에서 사이징 스테퍼가 disabled다");
+for (const b of ["btnEditTemp", "btnEditBand", "btnEditSize", "btnEditStop"]) {
+  check($(b).disabled === false, `lock: ${b} 편집 아이콘은 잠금 상태에서도 눌린다`);
+}
 
-// 2) 편집 진입 — 같은 요소가 활성화되고, 변경이 없으면 저장 버튼은
-//    그대로 비활성이다 (전부 켜는 구현을 막는다).
-$("btnSettingsEdit").click();
-check(sandbox.settingsLocked === false, "lock: 편집 아이콘으로 해제된다");
-check(slider.disabled === false, "lock: 해제 시 같은 슬라이더 요소가 활성화된다");
+// 2) 매수 카드만 열기 — 그 카드만 활성화되고 다른 카드는 잠긴 채다.
+//    변경이 없으면 저장 버튼은 그대로 비활성이다 (전부 켜는 구현 방지).
+$("btnEditBand").click();
+check(sandbox.cardLocked.band === false, "lock: 매수 카드 편집 아이콘으로 그 카드만 해제된다");
+check(sandbox.cardLocked.temp === true && sandbox.cardLocked.size === true && sandbox.cardLocked.stop === true,
+  "lock: 다른 카드는 잠긴 상태를 유지한다");
+check(bandSlider.disabled === false, "lock: 해제 시 같은 슬라이더 요소가 활성화된다");
+check($("tempNoEnabled").disabled === true, "lock: 기온 카드는 여전히 disabled다");
+check(sizeSlider.disabled === true, "lock: 사이징 카드는 여전히 disabled다");
+check(stopSlider.disabled === true, "lock: 손절 카드는 여전히 disabled다");
+check(stepBtnFor("ts_endWindowDays").disabled === false, "lock: 열린 카드의 스테퍼는 활성화된다");
+check(stepBtnFor("ts_betMinUsd").disabled === true, "lock: 잠긴 카드의 스테퍼는 여전히 disabled다");
 check($("btnBandSave").disabled === true, "lock: 해제 직후 변경 없으면 저장 버튼은 비활성이다");
 
-// 3) 값을 바꾸면 저장 버튼이 켜지고, 저장하면 다시 잠긴다.
+// 3) 매수 카드 값을 바꾸면 저장 버튼이 켜지고, 저장하면 그 카드만
+//    다시 잠긴다.
 sandbox.renderTradeSettings();
 for (const g of Object.values(sandbox.TRADE_GROUPS)) {
   for (const f of g.fields) $(f.id).value = String(f.def);
 }
-slider.value = "0.65";
+bandSlider.value = "0.65";
 sandbox.updateSettingsUI();
 check($("btnBandSave").disabled === false, "lock: 변경 후 저장 버튼이 활성화된다");
 $("btnBandSave").click();
-check(sandbox.settingsLocked === true, "lock: 저장하면 다시 잠긴다");
-check(slider.disabled === true, "lock: 저장 후 슬라이더가 다시 disabled다");
+check(sandbox.cardLocked.band === true, "lock: 저장하면 그 카드만 다시 잠긴다");
+check(bandSlider.disabled === true, "lock: 저장 후 슬라이더가 다시 disabled다");
+check(sandbox.cardLocked.temp === true && sandbox.cardLocked.size === true && sandbox.cardLocked.stop === true,
+  "lock: 저장해도 다른 카드 상태는 그대로다");
 check(JSON.parse(lsMap.get("bm_settings")).bandLo === 0.65, "lock: 저장값이 실제로 기록됐다");
 
-// 4) 되돌리기(저장본으로)도 확인 팝업을 거친 뒤 다시 잠긴다.
-$("btnSettingsEdit").click();
-check(slider.disabled === false, "lock: 재해제 시 슬라이더가 활성화된다");
-$("ts_bandHi").value = "0.85";
+// 4) 기온 카드 되돌리기(저장본으로) — 확인 팝업 뒤 그 카드만 잠긴다.
+sandbox.renderTempSettings();
+$("btnEditTemp").click();
+check(sandbox.cardLocked.temp === false, "lock: 기온 카드만 열린다");
+check($("tempNoEnabled").disabled === false, "lock: 기온 스위치가 활성화된다");
+check(bandSlider.disabled === true, "lock: 매수 카드는 여전히 잠겨 있다");
+$("tempNoBandLo").value = "0.85";
 sandbox.updateSettingsUI();
-$("btnBandSaved").click();
+check($("btnTempSaved").disabled === false, "lock: 변경 후 되돌리기 버튼이 활성화된다");
+$("btnTempSaved").click();
 check(!$("confirmOverlay").classList.contains("hidden"), "lock: 되돌리기가 확인 팝업을 연다");
 $("btnConfirmOk").click();
-check(sandbox.settingsLocked === true, "lock: 되돌리기 후 다시 잠긴다");
-check(Number($("ts_bandHi").value) === 0.9, "lock: 되돌리기로 폼이 저장본으로 돌아갔다");
+check(sandbox.cardLocked.temp === true, "lock: 되돌리기 후 그 카드만 다시 잠긴다");
+check($("tempNoEnabled").disabled === true, "lock: 되돌리기 후 기온 스위치가 다시 disabled다");
+check(Number($("tempNoBandLo").value) === 0.8, "lock: 되돌리기로 폼이 저장본으로 돌아갔다");
 
-// 5) 잠금 상태에서는 값 표시를 눌러도 숫자 입력 시트가 열리지 않는다.
+// 5) 카드 여럿이 동시에 열려 있어도 된다 — 각자 독립으로 잠긴다.
+$("btnEditBand").click();
+$("btnEditSize").click();
+check(bandSlider.disabled === false && sizeSlider.disabled === false,
+  "lock: 두 카드가 동시에 열릴 수 있다");
+check(stopSlider.disabled === true, "lock: 열지 않은 손절 카드는 잠긴 채다");
+$("btnEditBand").click();
+check(sandbox.cardLocked.band === true && bandSlider.disabled === true,
+  "lock: 편집 아이콘 재클릭으로 그 카드만 다시 잠긴다");
+check(sandbox.cardLocked.size === false && sizeSlider.disabled === false,
+  "lock: 다른 열린 카드는 영향을 받지 않는다");
+$("btnEditSize").click();
+check(sandbox.cardLocked.size === true && sizeSlider.disabled === true, "lock: 사이징 카드도 독립으로 잠긴다");
+
+// 6) 숫자 입력 시트는 그 카드가 잠겨 있으면 열리지 않고, 열린 카드의
+//    값만 열린다.
 sandbox.openNumSheet({ inputId: "ts_volumeMin", dispId: null, label: "최소 거래량" });
-check($("numOverlay").classList.contains("hidden"), "lock: 잠금 상태에서 숫자 입력 시트가 열리지 않는다");
-$("btnSettingsEdit").click();
+check($("numOverlay").classList.contains("hidden"), "lock: 잠긴 카드에서는 숫자 입력 시트가 열리지 않는다");
+$("btnEditBand").click();
 sandbox.openNumSheet({ inputId: "ts_volumeMin", dispId: null, label: "최소 거래량" });
-check(!$("numOverlay").classList.contains("hidden"), "lock: 해제 상태에서는 숫자 입력 시트가 열린다");
+check(!$("numOverlay").classList.contains("hidden"), "lock: 열린 카드에서는 숫자 입력 시트가 열린다");
 sandbox.closeNumSheet();
-$("btnSettingsEdit").click();
-check(sandbox.settingsLocked === true, "lock: 편집 아이콘 재클릭으로 다시 잠긴다");
+sandbox.openNumSheet({ inputId: "tempNoBandLo", dispId: "val_tempBandLo", label: "밴드 하한" });
+check($("numOverlay").classList.contains("hidden"),
+  "lock: 다른 카드가 열려 있어도 잠긴 기온 카드의 시트는 열리지 않는다");
+$("btnEditBand").click();
 
 console.log(`settings-lock tests: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

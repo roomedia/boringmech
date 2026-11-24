@@ -202,7 +202,7 @@
       <h2>기온 No 페이드</h2>
       <div class="set-tools">
         <span class="lab">설정 편집</span>
-        <button type="button" class="icon-btn" id="btnSettingsEdit" aria-label="설정 편집"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
+        <button type="button" class="icon-btn" id="btnEditTemp" aria-label="설정 편집"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
       </div>
       <div class="set">
         <div class="set-head"><span class="lab">사용</span><input type="checkbox" class="switch" id="tempNoEnabled"></div>
@@ -251,6 +251,10 @@
 
     <div class="card">
       <h2>매수 · 검증</h2>
+      <div class="set-tools">
+        <span class="lab">설정 편집</span>
+        <button type="button" class="icon-btn" id="btnEditBand" aria-label="설정 편집"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
+      </div>
       <div class="set">
         <div class="set-head"><span class="lab">매수 밴드 하한</span><span class="val" id="val_bandLo">0.60</span></div>
         <input type="range" class="slider" id="ts_bandLo" value="0.6" min="0.05" max="0.95" step="0.01">
@@ -320,6 +324,10 @@
 
     <div class="card">
       <h2>사이징</h2>
+      <div class="set-tools">
+        <span class="lab">설정 편집</span>
+        <button type="button" class="icon-btn" id="btnEditSize" aria-label="설정 편집"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
+      </div>
       <div class="set">
         <div class="set-head"><span class="lab">건당 비율</span><span class="val" id="val_betPct">0.01</span></div>
         <input type="range" class="slider" id="ts_betPct" value="0.01" min="0.005" max="0.10" step="0.005">
@@ -375,6 +383,10 @@
 
     <div class="card">
       <h2>손절</h2>
+      <div class="set-tools">
+        <span class="lab">설정 편집</span>
+        <button type="button" class="icon-btn" id="btnEditStop" aria-label="설정 편집"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
+      </div>
       <div class="set">
         <div class="set-head"><span class="lab">손절 폭</span><span class="val" id="val_stopDrop">0.25</span></div>
         <input type="range" class="slider" id="ts_stopDrop" value="0.25" min="0.05" max="0.60" step="0.01">
@@ -1002,17 +1014,17 @@
       writeSettingsObject(patch);
       syncGroupForm(name, true);
       renderSettingsSummary();
-      setSettingsLocked(true);
+      setCardLocked(name, true);
     }
 
     // 설정 폼 상태 — 카드별 baseline은 마지막으로 저장본과 동기화된 폼 값.
     // 폼이 baseline과 다르면 그 카드는 변경 상태다: refresh가 폼을 덮어쓰지
     // 않고(자동 초기화 방지), 변경 항목에 점이 붙고, 저장 버튼이 켜진다.
     var SET_GROUPS = {
-      temp: { save: 'btnTempSave', toSaved: 'btnTempSaved', toDefault: 'btnTempDefault', err: 'tempNoErr' },
-      band: { save: 'btnBandSave', toSaved: 'btnBandSaved', toDefault: 'btnBandDefault', err: 'bandErr' },
-      size: { save: 'btnSizeSave', toSaved: 'btnSizeSaved', toDefault: 'btnSizeDefault', err: 'sizeErr' },
-      stop: { save: 'btnStopSave', toSaved: 'btnStopSaved', toDefault: 'btnStopDefault', err: 'stopErr' }
+      temp: { edit: 'btnEditTemp', save: 'btnTempSave', toSaved: 'btnTempSaved', toDefault: 'btnTempDefault', err: 'tempNoErr' },
+      band: { edit: 'btnEditBand', save: 'btnBandSave', toSaved: 'btnBandSaved', toDefault: 'btnBandDefault', err: 'bandErr' },
+      size: { edit: 'btnEditSize', save: 'btnSizeSave', toSaved: 'btnSizeSaved', toDefault: 'btnSizeDefault', err: 'sizeErr' },
+      stop: { edit: 'btnEditStop', save: 'btnStopSave', toSaved: 'btnStopSaved', toDefault: 'btnStopDefault', err: 'stopErr' }
     };
     // 기온 카드 필드 — prop은 readTempSettings 반환 키, def는 그 폴백 기본값
     var TEMP_FIELDS = [
@@ -1117,11 +1129,11 @@
           if (valuesDiffer(fv, f.def)) atDefault = false;
         }
         var saveBtn = $(meta.save);
-        if (saveBtn) saveBtn.disabled = settingsLocked || !dirty;
+        if (saveBtn) saveBtn.disabled = cardLocked[name] || !dirty;
         var svBtn = $(meta.toSaved);
-        if (svBtn) svBtn.disabled = settingsLocked || !dirty;
+        if (svBtn) svBtn.disabled = cardLocked[name] || !dirty;
         var dfBtn = $(meta.toDefault);
-        if (dfBtn) dfBtn.disabled = settingsLocked || atDefault;
+        if (dfBtn) dfBtn.disabled = cardLocked[name] || atDefault;
       }
     }
 
@@ -1135,53 +1147,82 @@
         var err = $(SET_GROUPS[name].err);
         if (err) err.textContent = '';
         updateSettingsUI();
-        setSettingsLocked(true);
+        setCardLocked(name, true);
       });
     }
 
     // 설정 잠금 — 평소에는 읽기 모드다. 레이아웃은 편집 모드와 동일하게
     // 유지하고, 컨트롤의 disabled만으로 잠금을 표현한다 (요소를 숨기거나
-    // 값 표시로 대체하지 않는다). 편집 아이콘을 눌렀을 때만 활성화되고,
-    // 저장·되돌리기가 끝나면 다시 잠긴다. 잠금·해제는 설정 영역 전체에
-    // 한 번에 적용된다. 매매 동작과 설정값 해석은 건드리지 않는다.
-    var settingsLocked = true;
+    // 값 표시로 대체하지 않는다). 잠금은 카드별로 독립이다: 각 카드의
+    // 편집 아이콘은 그 카드만 열고, 그 카드의 저장·되돌리기가 끝나면
+    // 그 카드만 다시 잠긴다. 다른 카드는 영향을 받지 않으며, 카드가
+    // 여럿 동시에 열려 있어도 된다. 매매 동작과 설정값 해석은 건드리지
+    // 않는다.
+    var cardLocked = { temp: true, band: true, size: true, stop: true };
     var LOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
     var UNLOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>';
-    function settingsAreaControls(){
-      var area = $('settingsArea');
-      if (!area || !area.querySelectorAll) return [];
-      return area.querySelectorAll('input, button, select, textarea');
-    }
-    function applySettingsLock(){
-      var btn = $('btnSettingsEdit');
-      if (btn) {
-        btn.innerHTML = settingsLocked ? LOCK_SVG : UNLOCK_SVG;
-        btn.classList.toggle('editing', !settingsLocked);
-      }
-      settingsAreaControls().forEach(function(el){
-        if (el.id === 'btnSettingsEdit') return;
-        el.disabled = settingsLocked;
+    // 카드 하나의 조작 대상 — 그 카드의 필드, 필드를 가리키는 스테퍼,
+    // 저장·되돌리기·기본값 버튼. 편집 아이콘 자체는 포함하지 않는다.
+    function cardControls(name){
+      var out = [];
+      function push(el){ if (el && out.indexOf(el) < 0) out.push(el); }
+      var fieldIds = {};
+      groupFields(name).forEach(function(f){
+        fieldIds[f.id] = true;
+        push($(f.id));
       });
+      document.querySelectorAll('.step-btn').forEach(function(btn){
+        if (fieldIds[btn.getAttribute('data-for')]) push(btn);
+      });
+      var meta = SET_GROUPS[name];
+      push($(meta.save));
+      push($(meta.toSaved));
+      push($(meta.toDefault));
+      return out;
+    }
+    function applyCardLock(name){
+      var locked = cardLocked[name];
+      var btn = $(SET_GROUPS[name].edit);
+      if (btn) {
+        btn.innerHTML = locked ? LOCK_SVG : UNLOCK_SVG;
+        btn.classList.toggle('editing', !locked);
+      }
+      cardControls(name).forEach(function(el){ el.disabled = locked; });
       // 해제 직후에는 그룹 버튼(저장·되돌리기·기본값) 상태를 변경
       // 상태 기준으로 다시 맞춘다 — 전부 켜진 채로 두지 않는다.
-      if (!settingsLocked) updateSettingsUI();
+      if (!locked) updateSettingsUI();
     }
-    function setSettingsLocked(locked){
-      settingsLocked = !!locked;
-      applySettingsLock();
+    function setCardLocked(name, locked){
+      cardLocked[name] = !!locked;
+      applyCardLock(name);
     }
-    $('btnSettingsEdit').addEventListener('click', function(){
-      setSettingsLocked(!settingsLocked);
+    Object.keys(SET_GROUPS).forEach(function(name){
+      var btn = $(SET_GROUPS[name].edit);
+      if (btn) btn.addEventListener('click', function(){
+        setCardLocked(name, !cardLocked[name]);
+      });
+      applyCardLock(name);
     });
-    applySettingsLock();
+    // 입력 컨트롤이 속한 설정 카드 — 숫자 입력 시트의 카드별 잠금
+    // 판정에 쓴다.
+    function groupOfInputId(inputId){
+      for (var name in SET_GROUPS) {
+        var fields = groupFields(name);
+        for (var i = 0; i < fields.length; i++) {
+          if (fields[i].id === inputId) return name;
+        }
+      }
+      return null;
+    }
 
     // 숫자 직접 입력 — 큰 숫자를 누르면 시트가 열리고, 대상 컨트롤의
     // min·max·step 규칙으로 검증·스냅한 값만 폼에 반영한다.
     var numTarget = null;
     function openNumSheet(spec){
-      // 잠금 상태에서는 값 표시를 눌러도 숫자 입력 시트를 열지 않는다 —
-      // 슬라이더·스테퍼가 disabled인 것과 같은 읽기 모드다.
-      if (settingsLocked) return;
+      // 그 카드가 잠금 상태에서는 값 표시를 눌러도 숫자 입력 시트를
+      // 열지 않는다 — 슬라이더·스테퍼가 disabled인 것과 같은 읽기 모드다.
+      var lockGroup = groupOfInputId(spec.inputId);
+      if (lockGroup && cardLocked[lockGroup]) return;
       numTarget = spec;
       $('numTitle').textContent = spec.label;
       var cur = Number($(spec.inputId).value);
@@ -1669,7 +1710,7 @@
         tempNoReserveSlots: rs
       });
       syncGroupForm('temp', true);
-      setSettingsLocked(true);
+      setCardLocked('temp', true);
     });
     $('btnBandSave').addEventListener('click', function(){ saveTradeGroup('band'); });
     $('btnSizeSave').addEventListener('click', function(){ saveTradeGroup('size'); });
