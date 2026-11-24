@@ -1469,9 +1469,9 @@ eq(parseTradeSettings({ tempStopDrop: 0.2 }).tempStopDrop, 0.2, "trade settings:
     "ux1: trade save force-syncs its group");
   // 변경 표시와 저장 버튼 활성 상태
   eq(html.includes(".set.dirty .lab::after"), true, "ux1: dirty dot style exists");
-  eq(html.includes("saveBtn.disabled = !dirty"), true, "ux4: save enabled only when dirty");
-  eq(html.includes("svBtn.disabled = !dirty"), true, "ux2: revert-to-saved enabled only when dirty");
-  eq(html.includes("dfBtn.disabled = atDefault"), true, "ux2: revert-to-default disabled at defaults");
+  eq(html.includes("saveBtn.disabled = settingsLocked || !dirty"), true, "ux4: save enabled only when dirty and unlocked");
+  eq(html.includes("svBtn.disabled = settingsLocked || !dirty"), true, "ux2: revert-to-saved enabled only when dirty and unlocked");
+  eq(html.includes("dfBtn.disabled = settingsLocked || atDefault"), true, "ux2: revert-to-default disabled at defaults or locked");
   // 카드 4개 전부 저장 버튼은 비활성으로 시작하고 되돌리기 버튼 쌍을 갖는다
   for (const card of ["Temp", "Band", "Size", "Stop"]) {
     eq(html.includes(`id="btn${card}Save" disabled`), true, `ux4: ${card} save starts disabled`);

@@ -37,5 +37,43 @@ check(html.includes('id="confirmOverlay"'), "html-guard: confirmOverlay 마크�
 check(html.includes("function askConfirm("), "html-guard: askConfirm 정의 존재");
 check(html.includes('id="btnConfirmOk"'), "html-guard: btnConfirmOk 존재");
 
+// 화면 정리 가드 (v0.3.45) — 읽기 순서는 평가 총액 → 실현 손익 →
+// 포지션이고, 정산 요약은 실현 손익만 크게 보이며 건수·승패·손절은
+// 펼침 안에만 있다. 요약 한 줄에 전부 합쳐 그리던 형태로 되돌아가면
+// 여기서 잡는다.
+const idxEquity = html.indexOf('id="equityBig"');
+const idxSettledBig = html.indexOf('id="settledPnlBig"');
+const idxPosList = html.indexOf('id="posList"');
+check(idxEquity >= 0 && idxSettledBig > idxEquity && idxPosList > idxSettledBig,
+  "html-guard: 읽기 순서가 평가 총액 → 실현 손익 → 포지션이다");
+check(/id="settledDetail" class="hidden"/.test(html), "html-guard: 정산 상세는 기본 접힘이다");
+check(/id="sizingDetail" class="hidden"/.test(html), "html-guard: 다음 사이징 상세는 기본 접힘이다");
+const idxDetail = html.indexOf('id="settledDetail"');
+const idxDetailBtn = html.indexOf('id="btnSettledDetail"');
+for (const id of ["settledCount", "settledWL", "settledSL"]) {
+  const i = html.indexOf(`id="${id}"`);
+  check(i > idxDetail && i < idxDetailBtn, `html-guard: ${id}는 정산 상세 펼침 안에만 있다`);
+}
+check(!html.includes("settledCount + '건 · '"), "html-guard: 정산 요약 합본 문자열이 남아 있지 않다");
+check(html.includes("expandedPos"), "html-guard: 포지션 펼침 상태 유지 코드가 있다");
+
+// 설정 잠금 가드 (v0.3.45) — 잠금은 요소를 숨기거나 값 표시로 대체하지
+// 않고 disabled로만 표현한다. 설정 컨트롤이 영역 밖에 생기거나,
+// 재잠금 지점이 사라지면 여기서 잡는다 (동작 검증은 settings-lock).
+check(html.includes('id="settingsArea"'), "html-guard: settingsArea 마크업 존재");
+check(html.includes('id="btnSettingsEdit"'), "html-guard: 설정 편집 아이콘 존재");
+check(html.includes("function setSettingsLocked("), "html-guard: setSettingsLocked 정의 존재");
+check(html.includes("if (settingsLocked) return;"), "html-guard: 잠금 시 숫자 입력 시트 차단 존재");
+check((html.match(/setSettingsLocked\(true\)/g) || []).length >= 3,
+  "html-guard: 저장·되돌리기 재잠금 지점이 3곳 이상이다");
+const areaStart = html.indexOf('id="settingsArea"');
+const areaEnd = html.indexOf("최근 로그", areaStart);
+const settingsIds = [...html.matchAll(/id="((?:ts_|temp)[A-Za-z]+)"/g)].map((m) => m[1]);
+check(settingsIds.length >= 20, "html-guard: 설정 컨트롤 id를 찾았다");
+for (const id of new Set(settingsIds)) {
+  const i = html.indexOf(`id="${id}"`);
+  check(i > areaStart && i < areaEnd, `html-guard: 설정 컨트롤 ${id}가 settingsArea 안에 있다`);
+}
+
 console.log(`html-guard tests: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

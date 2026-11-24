@@ -75,6 +75,16 @@
   .pos .meta{display:flex;justify-content:space-between;align-items:baseline;margin-top:5px;font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums}
   .pos .meta .v{font-weight:700;color:var(--ink)}
   .pos .sell{margin-top:10px;width:100%;font:inherit;font-size:14px;font-weight:700;padding:11px;border:1px solid var(--danger);border-radius:12px;background:#fff;color:var(--danger);cursor:pointer}
+  .detail-toggle{margin-top:12px}
+  .icon-btn{width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:#fff;color:var(--sub);cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none;padding:0}
+  .icon-btn.editing{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+  .icon-btn svg{width:19px;height:19px;display:block}
+  .set-tools{display:flex;justify-content:space-between;align-items:center;padding-bottom:4px}
+  .set-tools .lab{font-size:14px;font-weight:700;color:var(--sub)}
+  input[type=range].slider:disabled{cursor:default;opacity:.55}
+  .step-btn:disabled{color:var(--sub);cursor:default;background:#f5f5f7}
+  .switch:disabled{cursor:default;opacity:.6}
+  .numin:disabled{color:var(--sub)}
   .overlay{position:fixed;inset:0;background:rgba(20,20,25,.45);display:flex;align-items:center;justify-content:center;padding:18px;z-index:50}
   .overlay.hidden{display:none}
   .overlay .sheet{background:var(--card);border-radius:var(--radius);padding:22px;width:100%;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,.25)}
@@ -120,7 +130,17 @@
       <div class="row"><span class="k">포지션 가치</span><span class="v" id="posValue">—</span></div>
       <div class="row"><span class="k">보유금</span><span class="v" id="cash">—</span></div>
       <div class="row"><span class="k">보유 중</span><span class="v" id="openCount">—</span></div>
-      <div class="row"><span class="k">정산 완료</span><span class="v" id="settledCount">—</span></div>
+    </div>
+
+    <div class="card">
+      <h2>실현 손익</h2>
+      <div class="bignum" id="settledPnlBig">—</div>
+      <div id="settledDetail" class="hidden" style="margin-top:10px">
+        <div class="row"><span class="k">정산 완료</span><span class="v" id="settledCount">—</span></div>
+        <div class="row"><span class="k">승 · 패</span><span class="v" id="settledWL">—</span></div>
+        <div class="row"><span class="k">손절</span><span class="v" id="settledSL">—</span></div>
+      </div>
+      <button class="btn ghost sm detail-toggle" id="btnSettledDetail">정산 상세</button>
     </div>
 
     <div class="card" id="posCard">
@@ -131,10 +151,13 @@
 
     <div class="card">
       <h2>다음 사이징</h2>
-      <div class="row"><span class="k">건당 베팅</span><span class="v" id="bet">—</span></div>
-      <div class="row"><span class="k">현금 하한</span><span class="v" id="floor">—</span></div>
-      <div class="row"><span class="k">투입 가능</span><span class="v" id="available">—</span></div>
-      <div class="row"><span class="k">남은 슬롯</span><span class="v" id="slots">—</span></div>
+      <div id="sizingDetail" class="hidden">
+        <div class="row"><span class="k">건당 베팅</span><span class="v" id="bet">—</span></div>
+        <div class="row"><span class="k">현금 하한</span><span class="v" id="floor">—</span></div>
+        <div class="row"><span class="k">투입 가능</span><span class="v" id="available">—</span></div>
+        <div class="row"><span class="k">남은 슬롯</span><span class="v" id="slots">—</span></div>
+      </div>
+      <button class="btn ghost sm detail-toggle" id="btnSizingDetail">상세</button>
     </div>
 
     <div class="card">
@@ -174,8 +197,13 @@
       </div>
     </div>
 
+    <div id="settingsArea">
     <div class="card">
       <h2>기온 No 페이드</h2>
+      <div class="set-tools">
+        <span class="lab">설정 편집</span>
+        <button type="button" class="icon-btn" id="btnSettingsEdit" aria-label="설정 편집"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
+      </div>
       <div class="set">
         <div class="set-head"><span class="lab">사용</span><input type="checkbox" class="switch" id="tempNoEnabled"></div>
       </div>
@@ -368,6 +396,7 @@
       </div>
       <div class="err" id="stopErr"></div>
     </div>
+    </div>
 
     <div class="card">
       <h2>최근 로그</h2>
@@ -547,18 +576,20 @@
         }
         $('cash').textContent = fmt(snap.cash);
         $('openCount').textContent = snap.openCount + '건';
-        if (snap.settledCount == null) {
-          $('settledCount').textContent = '—';
-        } else if (snap.settledWins != null && snap.settledLosses != null) {
-          var settledText = snap.settledCount + '건 · ' + snap.settledWins + '승 ' + snap.settledLosses + '패';
-          if (snap.settledRealizedPnl != null && isFinite(snap.settledRealizedPnl)) {
-            settledText += ' · 실현 ' + (snap.settledRealizedPnl < 0 ? '-' : '+') + fmt(Math.abs(snap.settledRealizedPnl));
-          }
-          if (snap.settledStopLoss) settledText += ' · 손절 ' + snap.settledStopLoss + '건';
-          $('settledCount').textContent = settledText;
+        // 정산 요약은 실현 손익만 크게 보인다. 건수·승패·손절은
+        // 정산 상세(펼침)에만 둔다.
+        var pnlEl = $('settledPnlBig');
+        if (snap.settledRealizedPnl != null && isFinite(snap.settledRealizedPnl)) {
+          pnlEl.textContent = (snap.settledRealizedPnl < 0 ? '-' : '+') + fmt(Math.abs(snap.settledRealizedPnl));
+          pnlEl.style.color = snap.settledRealizedPnl < 0 ? 'var(--danger)' : 'var(--accent)';
         } else {
-          $('settledCount').textContent = snap.settledCount + '건';
+          pnlEl.textContent = '—';
+          pnlEl.style.color = '';
         }
+        $('settledCount').textContent = snap.settledCount == null ? '—' : snap.settledCount + '건';
+        $('settledWL').textContent = (snap.settledWins != null && snap.settledLosses != null)
+          ? snap.settledWins + '승 ' + snap.settledLosses + '패' : '—';
+        $('settledSL').textContent = snap.settledStopLoss == null ? '—' : snap.settledStopLoss + '건';
         $('bet').textContent = fmt(snap.bet);
         $('floor').textContent = fmt(snap.cashFloor);
         $('available').textContent = fmt(snap.available);
@@ -620,6 +651,8 @@
     // 제출 불가"의 구조적 보장이다. 엔진이 다음 사이클에 요청을
     // 소비해 손절과 같은 경로(FOK)로 제출한다.
     var pendingSell = null;
+    // 포지션 펼침 상태 — 재렌더(10초 주기)에도 유지한다.
+    var expandedPos = {};
 
     // ── 공용 확인 팝업 ───────────────────────────────────────────
     // window.confirm은 WebChromeClient를 설정하지 않은 기기 WebView에서
@@ -672,12 +705,28 @@
           ? Number(p.current_size) * Number(p.avg_price) : null;
         var pnl = (p.current_value != null && cost != null)
           ? Number(p.current_value) - cost : null;
+        // 기본 표시는 종목과 손익만. 진입가·수량·평가액·수수료율·마감은
+        // 행을 눌러 펼쳤을 때만 보인다 (10초 재렌더에도 펼침 상태를 유지).
+        var head = document.createElement('div');
+        head.className = 'meta';
+        var hk = document.createElement('span');
+        hk.textContent = '손익';
+        var hv = document.createElement('span');
+        hv.className = 'v';
+        hv.textContent = pnl == null ? '—' : (pnl < 0 ? '-' : '+') + fmt(Math.abs(pnl));
+        if (pnl != null) hv.style.color = pnl < 0 ? 'var(--danger)' : 'var(--accent)';
+        head.appendChild(hk);
+        head.appendChild(hv);
+        box.appendChild(head);
+        var key = p.token_id || p.slug || '';
+        var detail = document.createElement('div');
+        if (!expandedPos[key]) detail.className = 'hidden';
         var lines = [
           ['마감', p.end_date || '—'],
           ['진입 → 현재', fmtPrice(p.avg_price) + ' → ' + fmtPrice(p.current_price)],
           ['수량', p.current_size != null ? Number(p.current_size).toLocaleString('en-US') + '주' : '—'],
           ['평가액', p.current_value != null ? fmt(p.current_value) : '—'],
-          ['손익', pnl == null ? '—' : (pnl < 0 ? '-' : '+') + fmt(Math.abs(pnl))]
+          ['수수료율', (p.fee_rate != null && isFinite(Number(p.fee_rate))) ? (Number(p.fee_rate) * 100).toFixed(2) + '%' : '—']
         ];
         lines.forEach(function(kv){
           var meta = document.createElement('div');
@@ -687,17 +736,22 @@
           var v = document.createElement('span');
           v.className = 'v';
           v.textContent = kv[1];
-          if (kv[0] === '손익' && pnl != null) {
-            v.style.color = pnl < 0 ? 'var(--danger)' : 'var(--accent)';
-          }
           meta.appendChild(k);
           meta.appendChild(v);
-          box.appendChild(meta);
+          detail.appendChild(meta);
+        });
+        box.appendChild(detail);
+        box.addEventListener('click', function(){
+          expandedPos[key] = !expandedPos[key];
+          detail.classList.toggle('hidden', !expandedPos[key]);
         });
         var btn = document.createElement('button');
         btn.className = 'sell';
         btn.textContent = '매도';
-        btn.addEventListener('click', function(){ openSellPopup(p); });
+        btn.addEventListener('click', function(e){
+          if (e && e.stopPropagation) e.stopPropagation();
+          openSellPopup(p);
+        });
         box.appendChild(btn);
         list.appendChild(box);
       });
@@ -948,6 +1002,7 @@
       writeSettingsObject(patch);
       syncGroupForm(name, true);
       renderSettingsSummary();
+      setSettingsLocked(true);
     }
 
     // 설정 폼 상태 — 카드별 baseline은 마지막으로 저장본과 동기화된 폼 값.
@@ -1062,11 +1117,11 @@
           if (valuesDiffer(fv, f.def)) atDefault = false;
         }
         var saveBtn = $(meta.save);
-        if (saveBtn) saveBtn.disabled = !dirty;
+        if (saveBtn) saveBtn.disabled = settingsLocked || !dirty;
         var svBtn = $(meta.toSaved);
-        if (svBtn) svBtn.disabled = !dirty;
+        if (svBtn) svBtn.disabled = settingsLocked || !dirty;
         var dfBtn = $(meta.toDefault);
-        if (dfBtn) dfBtn.disabled = atDefault;
+        if (dfBtn) dfBtn.disabled = settingsLocked || atDefault;
       }
     }
 
@@ -1080,13 +1135,53 @@
         var err = $(SET_GROUPS[name].err);
         if (err) err.textContent = '';
         updateSettingsUI();
+        setSettingsLocked(true);
       });
     }
+
+    // 설정 잠금 — 평소에는 읽기 모드다. 레이아웃은 편집 모드와 동일하게
+    // 유지하고, 컨트롤의 disabled만으로 잠금을 표현한다 (요소를 숨기거나
+    // 값 표시로 대체하지 않는다). 편집 아이콘을 눌렀을 때만 활성화되고,
+    // 저장·되돌리기가 끝나면 다시 잠긴다. 잠금·해제는 설정 영역 전체에
+    // 한 번에 적용된다. 매매 동작과 설정값 해석은 건드리지 않는다.
+    var settingsLocked = true;
+    var LOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+    var UNLOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>';
+    function settingsAreaControls(){
+      var area = $('settingsArea');
+      if (!area || !area.querySelectorAll) return [];
+      return area.querySelectorAll('input, button, select, textarea');
+    }
+    function applySettingsLock(){
+      var btn = $('btnSettingsEdit');
+      if (btn) {
+        btn.innerHTML = settingsLocked ? LOCK_SVG : UNLOCK_SVG;
+        btn.classList.toggle('editing', !settingsLocked);
+      }
+      settingsAreaControls().forEach(function(el){
+        if (el.id === 'btnSettingsEdit') return;
+        el.disabled = settingsLocked;
+      });
+      // 해제 직후에는 그룹 버튼(저장·되돌리기·기본값) 상태를 변경
+      // 상태 기준으로 다시 맞춘다 — 전부 켜진 채로 두지 않는다.
+      if (!settingsLocked) updateSettingsUI();
+    }
+    function setSettingsLocked(locked){
+      settingsLocked = !!locked;
+      applySettingsLock();
+    }
+    $('btnSettingsEdit').addEventListener('click', function(){
+      setSettingsLocked(!settingsLocked);
+    });
+    applySettingsLock();
 
     // 숫자 직접 입력 — 큰 숫자를 누르면 시트가 열리고, 대상 컨트롤의
     // min·max·step 규칙으로 검증·스냅한 값만 폼에 반영한다.
     var numTarget = null;
     function openNumSheet(spec){
+      // 잠금 상태에서는 값 표시를 눌러도 숫자 입력 시트를 열지 않는다 —
+      // 슬라이더·스테퍼가 disabled인 것과 같은 읽기 모드다.
+      if (settingsLocked) return;
       numTarget = spec;
       $('numTitle').textContent = spec.label;
       var cur = Number($(spec.inputId).value);
@@ -1377,6 +1472,12 @@
       render(null);
     });
     $('btnRefresh').addEventListener('click', function(){ refresh(); });
+    $('btnSettledDetail').addEventListener('click', function(){
+      $('settledDetail').classList.toggle('hidden');
+    });
+    $('btnSizingDetail').addEventListener('click', function(){
+      $('sizingDetail').classList.toggle('hidden');
+    });
     $('btnBattery').addEventListener('click', function(){
       try { AndroidBridge.requestBatteryExemption(); } catch (e) {}
       // 설정에서 돌아온 뒤 상태가 바뀌어 있으면 다음 refresh가 잡지만,
@@ -1568,6 +1669,7 @@
         tempNoReserveSlots: rs
       });
       syncGroupForm('temp', true);
+      setSettingsLocked(true);
     });
     $('btnBandSave').addEventListener('click', function(){ saveTradeGroup('band'); });
     $('btnSizeSave').addEventListener('click', function(){ saveTradeGroup('size'); });
