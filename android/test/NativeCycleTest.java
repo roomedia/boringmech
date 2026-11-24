@@ -2,12 +2,14 @@
 // 단계 순서·예외 격리·세대 가드·요약 문구를 검증한다. 실전 네트워크 없음.
 // 실행: android/test/run_native_cycle_test.sh
 import com.roomedia.boringmech.engine.BoughtReconcile;
+import com.roomedia.boringmech.engine.Js;
 import com.roomedia.boringmech.engine.JsonText;
 import com.roomedia.boringmech.engine.NativeCycle;
 import com.roomedia.boringmech.engine.PositionBook;
 import com.roomedia.boringmech.engine.PositionsFetcher;
 import com.roomedia.boringmech.engine.RedeemPlan;
 import com.roomedia.boringmech.engine.StopLoss;
+import com.roomedia.boringmech.engine.StopLossFallback;
 import com.roomedia.boringmech.engine.TradeSettings;
 import com.roomedia.boringmech.write.ClobWriteClient;
 import com.roomedia.boringmech.write.JsonCodec;
@@ -94,6 +96,7 @@ public class NativeCycleTest {
         @Override public void beatProgress(int cycle) {}
         @Override public void setStage(String stage, int cycle) { stages.add(stage); }
         @Override public void putSnapCache(String json) { snapCache = json; }
+        @Override public String getSnapCache() { return snapCache; }
         boolean throwOnNotify = false;
         @Override public void notifyMoney(String t, String b) {
             if (throwOnNotify) {
@@ -143,6 +146,8 @@ public class NativeCycleTest {
         final Map<String, Object> books = new HashMap<>();
         BigInteger condBalance = BigInteger.ZERO;
         boolean failValue = false;
+        boolean failPositions = false;
+        int marketsCalls = 0;
         boolean failMarkets = false;
         boolean failBuySlugs = false;
         boolean failSettled = false;
@@ -153,6 +158,7 @@ public class NativeCycleTest {
 
         @Override
         public List<Object> fetchPositions(String status) throws Exception {
+            if (failPositions) throw new Exception("positions boom");
             if (status == null) {
                 positionsCalls++;
                 return positions;
@@ -179,6 +185,7 @@ public class NativeCycleTest {
 
         @Override
         public List<Object> fetchMarkets() throws Exception {
+            marketsCalls++;
             if (onFetchMarkets != null) onFetchMarkets.run();
             if (failMarkets) throw new Exception("markets boom");
             return markets;
@@ -1260,6 +1267,141 @@ public class NativeCycleTest {
                 env.logged("스냅샷 실패로 손절만 단독 실행함 — 원래 오류: value boom"));
         check("fallback: 사이클 오류 로그", env.logged("사이클 오류: value boom"));
         check("fallback: scan 미실행", !env.stages.contains("scan"));
+    }
+
+    // ── 손절 폴백 (마지막 스냅샷 장부 기준) ─────────────────────────────
+
+    /** 폴백 행 구성 — 무효 행·처분 기록·무효 집합을 걸러내고 판정 입력을 보존한다. */
+    private static void fallbackRowsBuilder() {
+        Object cache = JsonText.parse("{\"positions\":["
+                + "{\"slug\":\"ok\",\"token_id\":\"1\",\"outcome\":\"No\",\"avg_price\":0.9,\"current_size\":10},"
+                + "{\"slug\":\"zero-entry\",\"token_id\":\"2\",\"outcome\":\"No\",\"avg_price\":0,\"current_size\":10},"
+                + "{\"slug\":\"zero-size\",\"token_id\":\"3\",\"outcome\":\"No\",\"avg_price\":0.9,\"current_size\":0},"
+                + "{\"slug\":\"no-token\",\"outcome\":\"No\",\"avg_price\":0.9,\"current_size\":10},"
+                + "{\"slug\":\"sold\",\"token_id\":\"4\",\"outcome\":\"No\",\"avg_price\":0.9,\"current_size\":10},"
+                + "{\"slug\":\"dead\",\"token_id\":\"5\",\"outcome\":\"No\",\"avg_price\":0.9,\"current_size\":10}"
+                + "]}");
+        List<Map<String, Object>> rows = StopLossFallback.rowsFromCache(
+                cache, Set.of("4"), Set.of("5"));
+        check("fallback-rows: 유효 행만 1건", rows.size() == 1);
+        check("fallback-rows: 판정 입력 보존",
+                rows.size() == 1 && "ok".equals(rows.get(0).get("slug"))
+                        && Double.compare((Double) rows.get(0).get("avg_price"), 0.9) == 0
+                        && Double.compare((Double) rows.get(0).get("current_size"), 10.0) == 0);
+        check("fallback-rows: fallback 표기",
+                rows.size() == 1 && Boolean.TRUE.equals(rows.get(0).get("fallback")));
+        // 임계 동일성 — 폴백 행의 진입가를 같은 판정 함수에 넣으면 API 행과 같은 결과
+        check("fallback-rows: 임계 동일성",
+                rows.size() == 1 && "triggered".equals(StopLoss.verdict(
+                        (Double) rows.get(0).get("avg_price"), 0.25, 0.25, 0.97, 0.03))
+                        && "holding".equals(StopLoss.verdict(
+                        (Double) rows.get(0).get("avg_price"), 0.70, 0.25, 0.97, 0.03)));
+    }
+
+    /** 무효 집합 — 재확인 창(10분) 안만 제외하고, 창이 지나면 다시 확인한다. */
+    private static void fallbackDeadSetWindow() {
+        List<Object> dead = StopLossFallback.parseDead("[{\"t\":\"9\",\"ts\":1000}]");
+        check("fallback-dead-set: 창 안 활성",
+                StopLossFallback.deadActiveTokens(dead, 1000 + 599_999).contains("9"));
+        check("fallback-dead-set: 창 지나면 재확인",
+                !StopLossFallback.deadActiveTokens(dead, 1000 + 600_000).contains("9"));
+        check("fallback-dead-set: 깨진 원문은 빈 집합",
+                StopLossFallback.parseDead("{oops").isEmpty());
+    }
+
+    /** 폴백 무대 — Data API 전수 실패 + 스냅샷 캐시 장부에 포지션 1건 (진입 0.9). */
+    private static OrderTransport fallbackStage(FakeEnv env, FakeNet net, String slug,
+                                                String tokenId, String noPrice) {
+        double no = Double.parseDouble(noPrice);
+        String yesPrice = String.valueOf(1 - no);
+        env.snapCache = "{\"positions\":[{\"slug\":\"" + slug + "\",\"token_id\":\"" + tokenId
+                + "\",\"outcome\":\"No\",\"avg_price\":0.9,\"current_price\":" + noPrice
+                + ",\"current_size\":10}]}";
+        net.failPositions = true;
+        Map<String, Object> gamma = new LinkedHashMap<>();
+        gamma.put("outcomes", "[\"Yes\",\"No\"]");
+        gamma.put("outcomePrices", "[\"" + yesPrice + "\",\"" + noPrice + "\"]");
+        net.gammaPages.put(slug, new ArrayList<>(List.of(gamma)));
+        net.books.put(tokenId, jmap("{\"tick_size\":\"0.01\",\"neg_risk\":false,"
+                + "\"asks\":[{\"price\":\"0.26\",\"size\":\"100\"}],"
+                + "\"bids\":[{\"price\":\"" + noPrice + "\",\"size\":\"100\"}]}"));
+        net.condBalance = BigInteger.valueOf(10_000_000);
+        OrderTransport t = new OrderTransport();
+        double taking = 10 * no;
+        String takingStr = taking == Math.floor(taking)
+                ? String.valueOf((long) taking) : String.valueOf(taking);
+        t.responseBody = "{\"success\":true,\"status\":\"matched\","
+                + "\"makingAmount\":\"10\",\"takingAmount\":\"" + takingStr + "\","
+                + "\"transactionHashes\":[\"0xdef\"]}";
+        return t;
+    }
+
+    /** Data API가 통째로 죽어도 장부 기준으로 손절이 발동하고, 매수는 나가지 않는다. */
+    private static void fallbackStopLossFires() {
+        String slug = "fallback-market-a";
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        OrderTransport t = fallbackStage(env, net, slug, "222", "0.25");
+        FakeLedgerStore store = new FakeLedgerStore();
+        NativeCycle c = newCycle(env, net, t, store, () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("fallback-fire: 결과 FAILED (사이클은 원래 오류로 종료)",
+                r == NativeCycle.Result.FAILED);
+        check("fallback-fire: 폴백 발동 로그",
+                env.logged("폴백 손절 실행 — 마지막 스냅샷 장부 1건 기준"));
+        check("fallback-fire: 매도 제출 1회", t.posts == 1);
+        check("fallback-fire: 폴백 손절 매도 로그", env.logged("폴백 손절 매도 " + slug));
+        List<Object> recs = StopLossLedger.records(store);
+        check("fallback-fire: 원장 기록 1건", recs.size() == 1);
+        check("fallback-fire: 기록에 fallback 표기",
+                recs.size() == 1 && Boolean.TRUE.equals(Js.field(recs.get(0), "fallback")));
+        check("fallback-fire: 매수 미실행 (스캔 도달 없음)",
+                net.marketsCalls == 0 && !env.stages.contains("scan"));
+    }
+
+    /** 폴백에서도 기온 태그 건은 기온 전용 폭으로 판정한다 (기준 동일성). */
+    private static void fallbackTempTagUsesTempDrop() {
+        String slug = "highest-temperature-in-seoul-on-november-15-2026-7c";
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        // 현재가 0.70 — 메인 폭 발화선 0.65 위, 기온 폭 발화선 0.75 아래
+        OrderTransport t = fallbackStage(env, net, slug, "222", "0.70");
+        env.durable.put("bm_bought",
+                "[{\"slug\":\"" + slug + "\",\"strategy\":\"temp_no\"}]");
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        c.runIteration(1);
+        check("fallback-temp: 기온 폭으로 폴백 손절 실행",
+                t.posts == 1 && env.logged("폴백 손절 매도 " + slug));
+    }
+
+    /** 태그 없는 건은 폴백에서도 메인 폭 미발화로 들고 있는다. */
+    private static void fallbackUntaggedHoldsAtMidPrice() {
+        String slug = "fallback-market-b";
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        OrderTransport t = fallbackStage(env, net, slug, "222", "0.70");
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        c.runIteration(1);
+        check("fallback-hold: 메인 폭 미발화로 매도 없음", t.posts == 0);
+        check("fallback-hold: 폴백 발동은 기록됨", env.logged("폴백 손절 실행"));
+    }
+
+    /** 처분 완료 토큰은 잔고 0으로 걸러지고, 실패 로그가 사이클마다 쌓이지 않는다. */
+    private static void fallbackDisposedTokenSkippedOnce() {
+        String slug = "fallback-market-c";
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        OrderTransport t = fallbackStage(env, net, slug, "333", "0.25");
+        net.condBalance = BigInteger.ZERO;
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        c.runIteration(1);
+        c.runIteration(1);
+        check("fallback-dead: 매도 제출 없음", t.posts == 0);
+        check("fallback-dead: 무효 집합에 토큰 기록",
+                env.durable.getOrDefault("bm_stoploss_fallback_dead", "").contains("333"));
+        long logs = env.logs.stream()
+                .filter(l -> l.contains("잔고 없음 (처분 완료로 간주)")).count();
+        check("fallback-dead: 건너뜀 로그는 1회만", logs == 1);
     }
 
     private static void marketsFailureIsolation() {
@@ -2365,6 +2507,12 @@ public class NativeCycleTest {
         stopLossVerdictDrops();
         stopLossPath();
         snapshotFailureFallback();
+        fallbackRowsBuilder();
+        fallbackDeadSetWindow();
+        fallbackStopLossFires();
+        fallbackTempTagUsesTempDrop();
+        fallbackUntaggedHoldsAtMidPrice();
+        fallbackDisposedTokenSkippedOnce();
         marketsFailureIsolation();
         reconcileFailureIsolation();
         redeemNoKey();

@@ -296,13 +296,20 @@ public final class StopLossSeller {
                 fill.proceeds,
                 fill.realized,
                 tsIso);
+        // 폴백 손절(스냅샷 캐시 장부 기준 실행)은 기록·체결 로그·알림에
+        // 표기를 남긴다 — 실패 로그 문구는 기존 패턴을 유지한다 (뷰어의
+        // 손절 실패 카운터가 문구에 걸려 있다).
+        boolean fallback = !manual && Js.truthy(Js.field(row, "fallback"));
         if (manual) {
             rec.put("kind", "manual");
             manualRecorder.record(rec);
         } else {
+            if (fallback) {
+                rec.put("fallback", Boolean.TRUE);
+            }
             StopLossLedger.recordStopLoss(store, rec);
         }
-        logger.log(prefix + " " + slug + " · 진입 " + JsNumber.toString(entry)
+        logger.log((fallback ? "폴백 손절 매도" : prefix) + " " + slug + " · 진입 " + JsNumber.toString(entry)
                 + " → 매도 " + JsNumber.toString(StopLoss.round4(fill.exitPrice))
                 + " · 회수 $" + JsNumber.toString(fill.proceeds)
                 + " · 손익 " + (fill.realized < 0 ? "-" : "+") + "$"
@@ -311,7 +318,7 @@ public final class StopLossSeller {
             // 원장 기록 뒤의 알림이다. 예외가 새어 나가면 호출자가 체결을
             // 실패로 뒤집으므로 여기서 삼킨다.
             try {
-                notifier.notifyMoney(manual ? "수동 매도 체결" : "손절 체결",
+                notifier.notifyMoney(manual ? "수동 매도 체결" : fallback ? "폴백 손절 체결" : "손절 체결",
                         slug + " · " + JsNumber.toString(fill.soldShares) + "주"
                                 + " · 체결가 " + JsNumber.toString(StopLoss.round4(fill.exitPrice))
                                 + " · 실현손익 " + StopLoss.signedUsd(fill.realized));

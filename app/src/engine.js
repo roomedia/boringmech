@@ -93,6 +93,7 @@ const LS = {
   stage: "bm_stage",
   stopLossAttempted: "bm_stoploss_attempted",
   stopLossAttemptedSlugs: "bm_stoploss_attempted_slugs",
+  stopLossFallbackDead: "bm_stoploss_fallback_dead",
   manualSell: "bm_manual_sell",
   manualSellArchive: "bm_manual_sell_archive",
   manualSellAttempted: "bm_manual_sell_attempted",
@@ -1566,6 +1567,8 @@ async function snapshot(cfg) {
   };
   state.lastSnapshot = snap;
   state.lastOpenRows = openRows;
+  // 장부를 다시 읽은 사이클 — 폴백 무효 집합은 역할을 다했다
+  if (loadFallbackDead().length) saveFallbackDead([]);
   state.lastWinRows = winRows;
   state.lastLostRows = lostRows;
   try {
@@ -2073,6 +2076,8 @@ async function executeStopLossSell(row, current, cfg = DEFAULT_TRADE_SETTINGS) {
 
 async function executeStopLossSellLocked(row, current, cfg = DEFAULT_TRADE_SETTINGS) {
   const slug = row.slug;
+  // 폴백 손절(스냅샷 캐시 장부 기준 실행)은 로그·원장·알림에 표기를 남긴다
+  const fallback = row?.fallback === true;
   const entry = Number(row.avg_price);
   // 매도 수량은 CLOB 조건부 토큰 잔고가 정본 (Data API 수량은 표시값일 수 있다)
   let shares = Number(row.current_size);
@@ -2144,13 +2149,14 @@ async function executeStopLossSellLocked(row, current, cfg = DEFAULT_TRADE_SETTI
     shares: soldShares,
     proceeds,
     realized_pnl: realized,
+    ...(fallback ? { fallback: true } : {}),
     ts: new Date().toISOString(),
   });
   log(
-    `손절 매도 ${slug} · 진입 ${entry} → 매도 ${round4(exitPrice)} · ` +
+    `${fallback ? "폴백 손절 매도" : "손절 매도"} ${slug} · 진입 ${entry} → 매도 ${round4(exitPrice)} · ` +
     `회수 $${proceeds} · 손익 ${realized < 0 ? "-" : "+"}$${Math.abs(realized)}`,
   );
-  notifyMoney("손절 실행", `진입 ${entry} · 청산 ${round4(exitPrice)} · 실현 ${signedUsd(realized)}`);
+  notifyMoney(fallback ? "폴백 손절 실행" : "손절 실행", `진입 ${entry} · 청산 ${round4(exitPrice)} · 실현 ${signedUsd(realized)}`);
   return true;
 }
 
@@ -2206,6 +2212,152 @@ async function runStopLoss(gen, cfg = DEFAULT_TRADE_SETTINGS) {
       log(`손절 처리 오류 ${row?.slug ?? "?"}: ${String(e.message ?? e).slice(0, 120)}`);
     }
   }
+  return sold;
+}
+
+// ── 손절 폴백 (마지막 스냅샷 장부 기준) ──────────────────────
+// 스냅샷 실패에 이은 포지션 재조회까지 실패하면 재조회도 같은 Data API라
+// 그 사이클의 손절이 전 건 사라진다 (2026-11-25 01:42 실측 — 429·503
+// 전역 장애에서 "손절 단독 실행도 실패"로 확정). 마지막 성공 스냅샷
+// 캐시(bm_snap)의 종목 목록이 로컬에 남은 유일한 장부다 — 토큰·진입가·
+// 수량을 거기서 복원해 기존 판정·실행 경로(checkStopLossPosition)에
+// 그대로 태운다. 판정 기준(Gamma 판정가·손절폭·결정 구간·재검증)은
+// 바꾸지 않고, 매수는 이 경로에서 절대 실행하지 않는다 (호출한
+// runCycle이 원래 오류로 사이클을 끝내 스캔에 닿지 않는다).
+// 커버리지 한계: 마지막 스냅샷 이후에 산 포지션은 장부에 없어 대상이
+// 아니다. 처분된 토큰은 아래 CLOB 잔고 확인으로 걸러진다.
+export const FALLBACK_DEAD_RECHECK_MS = 600_000;
+export const FALLBACK_DEAD_CAP = 1000;
+
+// 무효 토큰 집합 — 폴백에서 CLOB 잔고가 없는 것으로 확인된 토큰.
+// 처분 완료 토큰이 폴백 사이클마다 잔량 부족 매도 실패를 반복하지
+// 않게 한다. 항목은 {t: token_id, ts: epoch ms}이고, 재확인 창이
+// 지나면 잔고를 다시 본다 (잔고 0 오독이 영구 무력화가 되지 않게).
+// 스냅샷이 성공하면 집합을 비운다 — 장부를 다시 아는 상태가 됐다.
+export function parseFallbackDead(raw) {
+  let arr = raw;
+  if (typeof raw === "string") {
+    try {
+      arr = JSON.parse(raw || "[]");
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const e of arr) {
+    if (e && typeof e.t === "string" && e.t && Number.isFinite(Number(e.ts))) {
+      out.push({ t: e.t, ts: Number(e.ts) });
+    }
+  }
+  return out;
+}
+
+export function fallbackDeadActive(entries, tokenId, nowMs) {
+  const hit = (entries || []).find((e) => e.t === tokenId);
+  if (!hit) return false;
+  return nowMs - hit.ts < FALLBACK_DEAD_RECHECK_MS;
+}
+
+export function withFallbackDead(entries, tokenId, nowMs) {
+  const out = (entries || []).filter((e) => e.t !== tokenId);
+  out.push({ t: tokenId, ts: nowMs });
+  return out.slice(-FALLBACK_DEAD_CAP);
+}
+
+function loadFallbackDead() {
+  return parseFallbackDead(durableRead(LS.stopLossFallbackDead));
+}
+
+function saveFallbackDead(entries) {
+  durableWrite(
+    LS.stopLossFallbackDead,
+    JSON.stringify((entries || []).slice(-FALLBACK_DEAD_CAP)),
+  );
+}
+
+// 폴백 손절 행 구성 (순수 함수) — 스냅샷 캐시의 종목 목록에서 판정에
+// 필요한 필드만 복원한다. 이미 손절·수동 매도로 처분이 기록된 토큰과
+// 무효 집합(재확인 창 안)의 토큰은 빼고, 남은 행에 fallback 표기를
+// 단다. 판정 입력(보유 쪽·진입가·수량)은 API 행과 같은 값이어야 하며,
+// 캐시가 마지막 스냅샷 행의 요약을 그대로 담고 있어 성립한다.
+export function fallbackRowsFromCache(cache, soldTokens, deadTokens) {
+  const positions = Array.isArray(cache?.positions) ? cache.positions : [];
+  const out = [];
+  for (const p of positions) {
+    if (!p || typeof p !== "object") continue;
+    const slug = typeof p.slug === "string" && p.slug ? p.slug : null;
+    const tokenId = typeof p.token_id === "string" && p.token_id ? p.token_id : null;
+    const entry = Number(p.avg_price);
+    const size = Number(p.current_size);
+    if (!slug || !tokenId) continue;
+    if (!Number.isFinite(entry) || entry <= 0) continue;
+    if (!Number.isFinite(size) || size <= 0) continue;
+    if (soldTokens?.has(tokenId) || deadTokens?.has(tokenId)) continue;
+    out.push({
+      slug,
+      token_id: tokenId,
+      condition_id: null,
+      outcome: typeof p.outcome === "string" ? p.outcome : null,
+      outcome_index: null,
+      avg_price: entry,
+      current_size: size,
+      fallback: true,
+    });
+  }
+  return out;
+}
+
+async function runFallbackStopLoss(gen, cfg = DEFAULT_TRADE_SETTINGS) {
+  const now = Date.now();
+  const soldTokens = new Set([
+    ...stopLossRecords().map((r) => r.token_id),
+    ...manualSellRecords().map((r) => r.token_id),
+  ]);
+  let dead = loadFallbackDead();
+  const deadActive = new Set(
+    dead.filter((e) => now - e.ts < FALLBACK_DEAD_RECHECK_MS).map((e) => e.t),
+  );
+  const rows = fallbackRowsFromCache(cachedSnapshot(), soldTokens, deadActive);
+  log(`폴백 손절 실행 — 마지막 스냅샷 장부 ${rows.length}건 기준 (포지션 조회 실패)`);
+  let sold = 0;
+  let deadChanged = false;
+  for (const row of rows) {
+    if (!state.running || gen !== state.gen) break;
+    beatProgress();
+    // 처분 완료 토큰 차단 — 판정 전에 CLOB 잔고로 실재를 확인한다.
+    // 실행부도 잔고를 다시 읽지만, 잔고 0이면 API 수량을 유지하는
+    // 의미론이라 낡은 장부 수량으로 제출해 버린다. 조회 자체가
+    // 실패하면 이번 사이클은 그 건을 건너뛴다 (추측으로 제출 금지).
+    let exact;
+    try {
+      const bal = await state.client.getBalanceAllowance({
+        asset_type: AssetType.CONDITIONAL,
+        token_id: row.token_id,
+      });
+      exact = Number(BigInt(bal.balance || "0")) / 1e6;
+    } catch {
+      continue;
+    }
+    if (!Number.isFinite(exact) || exact < 0.01) {
+      // 잔고 없음 = 이미 처분된 토큰. 무효로 남기고 처음 한 번만
+      // 알린다 — 같은 토큰이 폴백 사이클마다 실패 로그를 쌓지 않는다.
+      const known = dead.some((e) => e.t === row.token_id);
+      dead = withFallbackDead(dead, row.token_id, Date.now());
+      deadChanged = true;
+      if (!known) {
+        log(`폴백 손절 건너뜀 ${row.slug} — 잔고 없음 (처분 완료로 간주)`);
+      }
+      continue;
+    }
+    row.current_size = exact;
+    try {
+      if (await checkStopLossPosition(row, cfg)) sold += 1;
+    } catch (e) {
+      log(`폴백 손절 처리 오류 ${row?.slug ?? "?"}: ${String(e.message ?? e).slice(0, 120)}`);
+    }
+  }
+  if (deadChanged) saveFallbackDead(dead);
   return sold;
 }
 
@@ -2278,7 +2430,13 @@ async function runCycle(gen) {
       await runStopLoss(gen, tradeCfg);
       log(`스냅샷 실패로 손절만 단독 실행함 — 원래 오류: ${String(e?.message ?? e).slice(0, 100)}`);
     } catch (e2) {
-      log(`스냅샷 실패 + 손절 단독 실행도 실패: ${String(e2?.message ?? e2).slice(0, 100)}`);
+      // 재조회까지 실패하면 Data API가 통째로 죽은 것이다 — 마지막
+      // 스냅샷 장부 기준의 손절 폴백으로 대체한다 (2026-11-25 후속).
+      try {
+        await runFallbackStopLoss(gen, tradeCfg);
+      } catch (e3) {
+        log(`스냅샷 실패 + 손절 단독 실행도 실패: ${String(e2?.message ?? e2).slice(0, 100)}`);
+      }
     }
     throw e;
   }

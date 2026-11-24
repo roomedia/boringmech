@@ -68,6 +68,9 @@ public final class NativeCycle {
 
         void putSnapCache(String json);
 
+        /** 마지막으로 저장된 스냅샷 캐시 JSON (없으면 null) — 손절 폴백의 장부 재료. */
+        String getSnapCache();
+
         void notifyMoney(String title, String body);
 
         /** 오류 알림 (오류 채널) — key는 NotifyPolicy dedupe 사유 키. */
@@ -433,6 +436,10 @@ public final class NativeCycle {
         // 어긋나지 않게 한다 (status 없는 실기기 행 누락 방지).
         List<Object> open = PositionBook.openRows(positions);
         lastOpenRows = open;
+        // 장부를 다시 읽은 사이클 — 폴백 무효 집합은 역할을 다했다
+        if (!StopLossFallback.parseDead(env.durableRead(StopLossFallback.DEAD_KEY)).isEmpty()) {
+            env.durableWrite(StopLossFallback.DEAD_KEY, "[]");
+        }
         lastWinRows = winRows;
         lastLostRows = lostRows;
         snap.positions = positionSummaries(open);
@@ -748,6 +755,86 @@ public final class NativeCycle {
                 Object slugRaw = Js.field(rowObj, "slug");
                 log("손절 처리 오류 " + (Js.truthy(slugRaw) ? Js.str(slugRaw) : "?") + ": " + slice(msg(e), 120));
             }
+        }
+        return sold;
+    }
+
+    /**
+     * 손절 폴백 — 포지션 재조회까지 실패했을 때 마지막 스냅샷 캐시의
+     * 장부로 손절만 돌린다 (engine.js runFallbackStopLoss 이식). 판정·
+     * 실행은 checkStopLossPosition을 그대로 타고, 매수는 실행하지
+     * 않는다 (호출한 runCycle이 원래 오류로 사이클을 끝낸다).
+     */
+    public int runFallbackStopLoss(int gen, TradeSettings tradeCfg) {
+        long now = env.nowMs();
+        Set<String> soldTokens = new HashSet<>();
+        for (Object r : StopLossLedger.records(ledgerStore)) {
+            Object t = Js.field(r, "token_id");
+            if (t instanceof String) {
+                soldTokens.add((String) t);
+            }
+        }
+        for (String key : new String[]{ManualSell.ARCHIVE_KEY, ManualSell.LEDGER_KEY}) {
+            for (Object r : StopLoss.parseStopLossList(env.durableRead(key))) {
+                Object t = Js.field(r, "token_id");
+                if (t instanceof String) {
+                    soldTokens.add((String) t);
+                }
+            }
+        }
+        List<Object> dead = StopLossFallback.parseDead(
+                env.durableRead(StopLossFallback.DEAD_KEY));
+        Set<String> deadActive = StopLossFallback.deadActiveTokens(dead, now);
+        Object cache = null;
+        String cacheJson = env.getSnapCache();
+        if (cacheJson != null && !cacheJson.isEmpty()) {
+            try {
+                cache = JsonText.parse(cacheJson);
+            } catch (Exception ignored) {
+                cache = null;
+            }
+        }
+        List<Map<String, Object>> rows = StopLossFallback.rowsFromCache(cache, soldTokens, deadActive);
+        log("폴백 손절 실행 — 마지막 스냅샷 장부 " + rows.size() + "건 기준 (포지션 조회 실패)");
+        int sold = 0;
+        boolean deadChanged = false;
+        for (Map<String, Object> row : rows) {
+            if (!env.isRunning(gen)) {
+                break;
+            }
+            env.beatProgress(cycle);
+            String tokenId = (String) row.get("token_id");
+            // 처분 완료 토큰 차단 — 판정 전에 CLOB 잔고로 실재를 확인한다.
+            // 조회 자체가 실패하면 이번 사이클은 그 건을 건너뛴다.
+            double exact;
+            try {
+                BigInteger bal = net.conditionalBalance(tokenId);
+                exact = bal == null ? Double.NaN : bal.doubleValue() / 1e6;
+            } catch (Exception e) {
+                continue;
+            }
+            if (!Double.isFinite(exact) || exact < 0.01) {
+                // 잔고 없음 = 이미 처분된 토큰. 무효로 남기고 처음 한 번만
+                // 알린다 — 폴백 사이클마다 실패 로그를 쌓지 않는다.
+                boolean known = StopLossFallback.hasToken(dead, tokenId);
+                dead = StopLossFallback.withDead(dead, tokenId, env.nowMs());
+                deadChanged = true;
+                if (!known) {
+                    log("폴백 손절 건너뜀 " + row.get("slug") + " — 잔고 없음 (처분 완료로 간주)");
+                }
+                continue;
+            }
+            row.put("current_size", exact);
+            try {
+                if (checkStopLossPosition(row, gen, tradeCfg)) {
+                    sold++;
+                }
+            } catch (Exception e) {
+                log("폴백 손절 처리 오류 " + row.get("slug") + ": " + slice(msg(e), 120));
+            }
+        }
+        if (deadChanged) {
+            env.durableWrite(StopLossFallback.DEAD_KEY, ModelJson.stringify(dead));
         }
         return sold;
     }
@@ -1344,7 +1431,13 @@ public final class NativeCycle {
                 runStopLoss(gen, tradeCfg);
                 log("스냅샷 실패로 손절만 단독 실행함 — 원래 오류: " + slice(msg(e), 100));
             } catch (Exception e2) {
-                log("스냅샷 실패 + 손절 단독 실행도 실패: " + slice(msg(e2), 100));
+                // 재조회까지 실패하면 Data API가 통째로 죽은 것이다 — 마지막
+                // 스냅샷 장부 기준의 손절 폴백으로 대체한다 (2026-11-25 후속).
+                try {
+                    runFallbackStopLoss(gen, tradeCfg);
+                } catch (Exception e3) {
+                    log("스냅샷 실패 + 손절 단독 실행도 실패: " + slice(msg(e2), 100));
+                }
             }
             throw e;
         }

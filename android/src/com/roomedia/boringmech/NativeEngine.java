@@ -553,6 +553,11 @@ final class NativeEngine {
         }
 
         @Override
+        public String getSnapCache() {
+            return EngineService.getSnapCache(ctx);
+        }
+
+        @Override
         public void notifyMoney(String title, String body) {
             Bridge.notifyMoney(ctx, title, body);
         }
