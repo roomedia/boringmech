@@ -57,6 +57,24 @@ for (const id of ["settledCount", "settledWL", "settledSL"]) {
 check(!html.includes("settledCount + '건 · '"), "html-guard: 정산 요약 합본 문자열이 남아 있지 않다");
 check(html.includes("expandedPos"), "html-guard: 포지션 펼침 상태 유지 코드가 있다");
 
+// 보유 종목 접힘 가드 (v0.3.47) — 종목 목록은 기본 접힘이고 접힌
+// 상태에서는 요약만 보인다. 매도 버튼은 전폭 큰 버튼이 아니라 행
+// 오른쪽 끝의 작은 버튼이다. 요약 수치 계산은 summarizePositions가
+// 정본이다 (수치 검증은 positions 테스트).
+check(html.includes('id="posSummary"'), "html-guard: posSummary 마크업 존재");
+check(html.includes('id="btnPosToggle"'), "html-guard: 종목 목록 접기 버튼 존재");
+check(html.includes("var posListOpen = false;"), "html-guard: 종목 목록은 기본 접힘으로 시작한다");
+check(html.includes("function summarizePositions("), "html-guard: summarizePositions 정의 존재");
+check(html.includes("list.classList.toggle('hidden', !posListOpen)"),
+  "html-guard: 재렌더가 접힘 상태를 다시 적용한다");
+for (const label of ["'포지션 가치'", "'전체 손익'", "'수익 종목'", "'손실 종목'"]) {
+  check(html.includes(label), `html-guard: 접힌 요약에 ${label} 항목이 있다`);
+}
+const sellRule = /\.pos \.sell\{[^}]*\}/.exec(html)?.[0] || "";
+check(sellRule.length > 0, "html-guard: 매도 버튼 규칙이 있다");
+check(!sellRule.includes("width:100%"), "html-guard: 매도 버튼은 전폭이 아니다");
+check(sellRule.includes("border-radius:999px"), "html-guard: 매도 버튼은 작은 알약형이다");
+
 // 설정 잠금 가드 (v0.3.45, 카드별 v0.3.46) — 잠금은 요소를 숨기거나
 // 값 표시로 대체하지 않고 disabled로만 표현한다. 잠금은 카드별 독립
 // 이라 편집 아이콘은 카드마다 있고, 재잠금은 그 카드만 잠근다. 설정

@@ -74,7 +74,11 @@
   .pos .t{font-size:15px;font-weight:700;line-height:1.35}
   .pos .meta{display:flex;justify-content:space-between;align-items:baseline;margin-top:5px;font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums}
   .pos .meta .v{font-weight:700;color:var(--ink)}
-  .pos .sell{margin-top:10px;width:100%;font:inherit;font-size:14px;font-weight:700;padding:11px;border:1px solid var(--danger);border-radius:12px;background:#fff;color:var(--danger);cursor:pointer}
+  .pos .top{display:flex;gap:10px;align-items:flex-start}
+  .pos .main{flex:1;min-width:0}
+  .pos .sell{flex:none;font:inherit;font-size:12.5px;font-weight:700;padding:6px 12px;border:1px solid var(--danger);border-radius:999px;background:#fff;color:var(--danger);cursor:pointer}
+  .pos-summary .row{display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13.5px;color:var(--sub);font-variant-numeric:tabular-nums}
+  .pos-summary .row .v{font-weight:700;color:var(--ink)}
   .detail-toggle{margin-top:12px}
   .icon-btn{width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:#fff;color:var(--sub);cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none;padding:0}
   .icon-btn.editing{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
@@ -145,7 +149,9 @@
 
     <div class="card" id="posCard">
       <h2>보유 종목</h2>
+      <div id="posSummary" class="pos-summary hidden"></div>
       <div id="posList"><div class="note">보유 종목 없음</div></div>
+      <button class="btn ghost sm detail-toggle hidden" id="btnPosToggle">종목 목록</button>
       <div class="note" id="manualSellStatus" style="display:none;margin-top:8px"></div>
     </div>
 
@@ -665,6 +671,35 @@
     var pendingSell = null;
     // 포지션 펼침 상태 — 재렌더(10초 주기)에도 유지한다.
     var expandedPos = {};
+    // 종목 목록 접힘 상태 — 기본은 접힘(요약만), 재렌더에도 유지한다.
+    var posListOpen = false;
+
+    // 접힌 요약 수치 — 행별 손익은 목록 행과 같은 기준(평가액 − 진입
+    // 원금)으로 계산한다. 그룹 손익률은 그룹 손익 합 ÷ 그룹 진입 원금
+    // 합이다. 본전(손익 0)은 수익·손실 어느 쪽에도 세지 않고, 손익을
+    // 계산할 수 없는 행은 건수·가치에만 들어가고 손익 합에서는 빠진다.
+    function summarizePositions(rows){
+      var out = { count: 0, value: 0, pnl: 0,
+        winCount: 0, winPnl: 0, winCost: 0,
+        lossCount: 0, lossPnl: 0, lossCost: 0,
+        winPct: null, lossPct: null };
+      (Array.isArray(rows) ? rows : []).forEach(function(p){
+        out.count++;
+        if (p.current_value != null && isFinite(Number(p.current_value)))
+          out.value += Number(p.current_value);
+        var cost = (p.current_size != null && p.avg_price != null)
+          ? Number(p.current_size) * Number(p.avg_price) : null;
+        var pnl = (p.current_value != null && cost != null)
+          ? Number(p.current_value) - cost : null;
+        if (pnl == null || !isFinite(pnl)) return;
+        out.pnl += pnl;
+        if (pnl > 0){ out.winCount++; out.winPnl += pnl; out.winCost += cost; }
+        else if (pnl < 0){ out.lossCount++; out.lossPnl += pnl; out.lossCost += cost; }
+      });
+      out.winPct = out.winCost > 0 ? out.winPnl / out.winCost * 100 : null;
+      out.lossPct = out.lossCost > 0 ? out.lossPnl / out.lossCost * 100 : null;
+      return out;
+    }
 
     // ── 공용 확인 팝업 ───────────────────────────────────────────
     // window.confirm은 WebChromeClient를 설정하지 않은 기기 WebView에서
@@ -694,25 +729,64 @@
     function renderPositions(snap){
       var card = $('posCard');
       var list = $('posList');
+      var summary = $('posSummary');
+      var toggle = $('btnPosToggle');
       var rows = snap && Array.isArray(snap.positions) ? snap.positions : null;
       // 카드는 항상 보인다 — 보유가 없을 때도 "없음"을 표시해야
       // 수동 매도 진입점이 데이터 상태에 따라 사라지지 않는다.
       card.classList.remove('hidden');
       list.textContent = '';
+      summary.textContent = '';
       if (!rows || !rows.length){
+        summary.classList.add('hidden');
+        toggle.classList.add('hidden');
+        list.classList.remove('hidden');
         var empty = document.createElement('div');
         empty.className = 'note';
         empty.textContent = '보유 종목 없음';
         list.appendChild(empty);
         return;
       }
+      // 접힌 상태에서는 요약만 보인다 — 보유 건수, 포지션 가치와 전체
+      // 손익, 수익·손실 종목 수와 그룹 손익률.
+      var sum = summarizePositions(rows);
+      var sumLines = [
+        ['보유', sum.count + '건', null],
+        ['포지션 가치', fmt(sum.value), null],
+        ['전체 손익', (sum.pnl < 0 ? '-' : '+') + fmt(Math.abs(sum.pnl)),
+          sum.pnl < 0 ? 'var(--danger)' : 'var(--accent)'],
+        ['수익 종목', sum.winCount + '건' + (sum.winPct != null ? ' · ' + fmtPct(sum.winPct) : ''),
+          sum.winCount ? 'var(--accent)' : null],
+        ['손실 종목', sum.lossCount + '건' + (sum.lossPct != null ? ' · ' + fmtPct(sum.lossPct) : ''),
+          sum.lossCount ? 'var(--danger)' : null]
+      ];
+      sumLines.forEach(function(kv){
+        var row = document.createElement('div');
+        row.className = 'row';
+        var k = document.createElement('span');
+        k.textContent = kv[0];
+        var v = document.createElement('span');
+        v.className = 'v';
+        v.textContent = kv[1];
+        if (kv[2]) v.style.color = kv[2];
+        row.appendChild(k);
+        row.appendChild(v);
+        summary.appendChild(row);
+      });
+      summary.classList.remove('hidden');
+      toggle.classList.remove('hidden');
+      list.classList.toggle('hidden', !posListOpen);
       rows.forEach(function(p){
         var box = document.createElement('div');
         box.className = 'pos';
+        var top = document.createElement('div');
+        top.className = 'top';
+        var main = document.createElement('div');
+        main.className = 'main';
         var t = document.createElement('div');
         t.className = 't';
         t.textContent = (p.title || p.slug || '—') + (p.outcome ? ' · ' + p.outcome : '');
-        box.appendChild(t);
+        main.appendChild(t);
         var cost = (p.current_size != null && p.avg_price != null)
           ? Number(p.current_size) * Number(p.avg_price) : null;
         var pnl = (p.current_value != null && cost != null)
@@ -729,7 +803,7 @@
         if (pnl != null) hv.style.color = pnl < 0 ? 'var(--danger)' : 'var(--accent)';
         head.appendChild(hk);
         head.appendChild(hv);
-        box.appendChild(head);
+        main.appendChild(head);
         var key = p.token_id || p.slug || '';
         var detail = document.createElement('div');
         if (!expandedPos[key]) detail.className = 'hidden';
@@ -752,11 +826,14 @@
           meta.appendChild(v);
           detail.appendChild(meta);
         });
-        box.appendChild(detail);
+        main.appendChild(detail);
         box.addEventListener('click', function(){
           expandedPos[key] = !expandedPos[key];
           detail.classList.toggle('hidden', !expandedPos[key]);
         });
+        top.appendChild(main);
+        // 매도 버튼은 작은 알약형으로 행 오른쪽 끝에 둔다. 펼침 토글과
+        // 동시 발화하지 않게 클릭 전파를 끊는 것은 기존과 같다.
         var btn = document.createElement('button');
         btn.className = 'sell';
         btn.textContent = '매도';
@@ -764,7 +841,8 @@
           if (e && e.stopPropagation) e.stopPropagation();
           openSellPopup(p);
         });
-        box.appendChild(btn);
+        top.appendChild(btn);
+        box.appendChild(top);
         list.appendChild(box);
       });
     }
@@ -1518,6 +1596,10 @@
     });
     $('btnSizingDetail').addEventListener('click', function(){
       $('sizingDetail').classList.toggle('hidden');
+    });
+    $('btnPosToggle').addEventListener('click', function(){
+      posListOpen = !posListOpen;
+      $('posList').classList.toggle('hidden', !posListOpen);
     });
     $('btnBattery').addEventListener('click', function(){
       try { AndroidBridge.requestBatteryExemption(); } catch (e) {}
