@@ -1397,9 +1397,9 @@ public class NativeCycleTest {
     }
 
     /** 측정 대상 무대 — 활성 시장 1개 + 최소 수량·틱이 읽히는 오더북. */
-    /** 수동 매도 집계 가드 — 수동 매도로 청산된 토큰은 CLOSED 행의 최종가가
-     *  아니라 실제 매도 실현손익으로 집계되고, 손절 건수에는 안 잡힌다
-     *  (v0.3.33 감사: 원장이 쓰기만 되고 읽히지 않던 결함). */
+    /** 수동 매도 표시 독립 가드 — 수동 매도 기록은 감사 원장으로 남지만
+     *  정산 표시는 CLOSED 행의 realized_pnl을 따른다 (2026-11-24 API 표시
+     *  교체: 종전에는 기록의 매도 실현손익이 표시를 덮었다). */
     private static void manualSellSettledAggregation() {
         FakeEnv env = new FakeEnv();
         FakeNet net = new FakeNet();
@@ -1413,8 +1413,8 @@ public class NativeCycleTest {
                 "{\"token_id\":\"123456789\",\"slug\":\"test-ms-market\",\"ts\":" + NOW + "}");
         c.runIteration(1);
         check("manual-book: 매도 실행", t.posts == 1);
-        // 다음 사이클 — 포지션은 사라지고, 최종가 1.0(승으로 보일) CLOSED
-        // 행만 남는다. 실제 매도는 진입 0.75 → 0.55, 실현 -2.0이다.
+        // 다음 사이클 — 포지션은 사라지고 CLOSED 행만 남는다. 실제 매도는
+        // 진입 0.75 → 0.55, 실현 -2.0으로 기록되지만 표시는 행의 +2.5를 따른다.
         net.positions = new ArrayList<>();
         Map<String, Object> closed = manualRow();
         closed.put("status", "CLOSED");
@@ -1426,10 +1426,43 @@ public class NativeCycleTest {
         c.runIteration(1);
         check("manual-book: 정산 1건", env.snapCache != null
                 && env.snapCache.contains("\"settledCount\":1"));
-        check("manual-book: 실제 매도 기준 패 판정", env.snapCache.contains("\"settledLosses\":1")
-                && env.snapCache.contains("\"settledWins\":0"));
-        check("manual-book: 실현손익은 매도값 -2", env.snapCache.contains("\"settledRealizedPnl\":-2"));
+        check("manual-book: 표시는 API 행 기준 승 판정", env.snapCache.contains("\"settledWins\":1")
+                && env.snapCache.contains("\"settledLosses\":0"));
+        check("manual-book: 실현손익은 API 행값 2.5", env.snapCache.contains("\"settledRealizedPnl\":2.5"));
         check("manual-book: 손절 건수 무오염", env.snapCache.contains("\"settledStopLoss\":0"));
+    }
+
+    /** 정산 표시 폴백 가드 (2026-11-24) — CLOSED 조회 실패 사이클은 마지막
+     *  성공 API 표시값을 유지하고, 성공 이력이 없으면 미상(null)이다.
+     *  내부 계산값으로 대체하지 않는다. */
+    private static void settledDisplayFallback() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        Map<String, Object> closed = manualRow();
+        closed.put("status", "CLOSED");
+        closed.put("current_price", 0.0);
+        closed.put("current_size", 0.0);
+        closed.put("current_value", 0.0);
+        closed.put("realized_pnl", -2.5);
+        net.closedRows = new ArrayList<>(List.of(closed));
+        NativeCycle c = newCycle(env, net, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        c.runIteration(1);
+        check("fallback: 성공 사이클 표시", env.snapCache != null
+                && env.snapCache.contains("\"settledRealizedPnl\":-2.5")
+                && env.snapCache.contains("\"settledCount\":1"));
+        net.failSettled = true;
+        c.runIteration(1);
+        check("fallback: 실패 사이클은 마지막 성공값 유지", env.snapCache != null
+                && env.snapCache.contains("\"settledRealizedPnl\":-2.5")
+                && env.snapCache.contains("\"settledCount\":1"));
+        // 성공 이력이 없는 엔진은 실패 사이클에서 미상(null)이다
+        FakeEnv env2 = new FakeEnv();
+        FakeNet net2 = new FakeNet();
+        net2.failSettled = true;
+        NativeCycle c2 = newCycle(env2, net2, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        c2.runIteration(1);
+        check("fallback: 성공 이력 없으면 미상", env2.snapCache != null
+                && env2.snapCache.contains("\"settledCount\":null"));
     }
 
     private static void manualSellStale() {
@@ -2339,6 +2372,7 @@ public class NativeCycleTest {
         updateCheck();
         manualSellPath();
         manualSellSettledAggregation();
+        settledDisplayFallback();
         manualSellStale();
         manualSellZeroShares();
         manualSellUnknownToken();

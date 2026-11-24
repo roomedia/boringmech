@@ -1,10 +1,9 @@
 package com.roomedia.boringmech.engine;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -13,7 +12,7 @@ import java.util.Set;
  * 원장 원본 전체의 slug를 검증 없이 수집, open 행은 dedupe하지 않음).
  *
  * 인자 규약: 행 목록은 List&lt;Object&gt; (원소는 Map 모델), 조회 실패처럼
- * JS에서 배열이 아닌 값은 null로 넘긴다 (summarizeBook의 settledKnown 판정).
+ * JS에서 배열이 아닌 값은 null로 넘긴다 (summarizeBook의 정산 미상 판정).
  */
 public final class PositionBook {
     private PositionBook() {}
@@ -42,49 +41,10 @@ public final class PositionBook {
         return null;
     }
 
-    /**
-     * CLOSED 행의 승패 판정 — 1순위 current_price (1 이상이면 승, 0 이하면 패),
-     * 2순위 realized_pnl 부호. 둘 다로 못 가르면 null.
-     */
-    public static String judgeClosedRow(Object p) {
-        double cp = Js.fieldNum(p, "current_price");
-        if (Double.isFinite(cp)) {
-            if (cp >= 1) {
-                return "win";
-            }
-            if (cp <= 0) {
-                return "loss";
-            }
-        }
-        double rp = Js.fieldNum(p, "realized_pnl");
-        if (Double.isFinite(rp)) {
-            if (rp > 0) {
-                return "win";
-            }
-            if (rp < 0) {
-                return "loss";
-            }
-        }
-        return null;
-    }
-
-    /**
-     * 정산 행의 실현손익 — win: current_value − entry_cost_usdc,
-     * loss: −entry_cost_usdc, closed: realized_pnl.
-     * 필요한 필드가 숫자가 아니면 null (합산 제외 대상).
-     */
-    static Double realizedOf(String kind, Object p) {
-        double cost = Js.fieldNum(p, "entry_cost_usdc");
-        if ("win".equals(kind)) {
-            double value = Js.fieldNum(p, "current_value");
-            return Double.isFinite(value) && Double.isFinite(cost) ? value - cost : null;
-        }
-        if ("loss".equals(kind)) {
-            return Double.isFinite(cost) ? -cost : null;
-        }
-        double rp = Js.fieldNum(p, "realized_pnl");
-        return Double.isFinite(rp) ? rp : null;
-    }
+    // 정산·손익 표시의 정본은 Data API v2 포지션 행 자체다 (2026-11-24 방향
+    // 전환, engine.js summarizeBook 앞 주석과 동일). 정산 표시 = CLOSED
+    // 조회분의 realized_pnl 합산, 승패도 그 부호. 내부 원장 기록은 표시
+    // 경로에서 빼고 손절 건수 분류(토큰 교집합)에만 쓴다.
 
     /** 건당 베팅액 — 평가금의 1%, 하한 $5. (equity || 0) 의미론 포함. */
     public static double betUsdFor(double equity) {
@@ -144,18 +104,6 @@ public final class PositionBook {
         public final LinkedHashSet<String> stopLossSlugs = new LinkedHashSet<>();
     }
 
-    private static final class Entry {
-        final String verdict;
-        final Double pnl;
-        final String kind;
-
-        Entry(String verdict, Double pnl, String kind) {
-            this.verdict = verdict;
-            this.pnl = pnl;
-            this.kind = kind;
-        }
-    }
-
     /**
      * open 판정 단일 기준 — 장부 집계·스냅샷 종목 목록·손절 대상이 전부
      * 이 판정을 공유한다. status가 "OPEN"인 행이 본체. status가 비어 있는
@@ -187,60 +135,46 @@ public final class PositionBook {
         return open;
     }
 
-    private interface VerdictFn {
-        String of(Object row);
-    }
-
     /**
      * 포지션 장부 집계 — engine.js summarizeBook의 동등 이식.
-     * attemptedTokens는 JS Set 대응 (원소 자료형까지 같은 값으로 조회한다).
+     * 정산 표시는 CLOSED 조회분의 realized_pnl만으로 만든다 (2026-11-24
+     * 방향 전환). 손절 기록은 손절 건수 분류(토큰 교집합)와 stopLossSlugs
+     * (재매수 차단)에만 쓰인다.
      */
     public static Book summarizeBook(
             List<Object> allRows,
-            List<Object> winRows,
-            List<Object> lostRows,
             List<Object> closedRows,
-            List<Object> stopLossRecords,
-            Set<Object> attemptedTokens) {
-        return summarizeBook(allRows, winRows, lostRows, closedRows,
-                stopLossRecords, null, attemptedTokens);
-    }
-
-    /**
-     * manualSellRecords — 수동 매도 원장 기록. 손절 기록과 같은 우선순위로
-     * 집계에 먼저 들어가되 kind가 달라 settledStopLoss에는 세지 않는다.
-     * 기록이 없으면 수동 매도로 청산된 토큰이 CLOSED 행의 최종가로 잘못
-     * 가려지고 실현손익도 실제 회수액과 어긋난다 (v0.3.33 감사).
-     */
-    public static Book summarizeBook(
-            List<Object> allRows,
-            List<Object> winRows,
-            List<Object> lostRows,
-            List<Object> closedRows,
-            List<Object> stopLossRecords,
-            List<Object> manualSellRecords,
-            Set<Object> attemptedTokens) {
-        Set<Object> attempted = attemptedTokens != null ? attemptedTokens : Set.of();
+            List<Object> stopLossRecords) {
         Book book = new Book();
 
         // open 판정은 isOpenRow 단일 기준을 쓴다 (스냅샷 종목 목록과 동일).
         List<Object> open = openRows(allRows);
         book.openCount = open.size();
 
-        double value = 0;
-        double cost = 0;
+        // 보유 등락 — 행의 total_pnl을 그대로 합산하고, 없는 행만
+        // 현재가치 − 수량×평균가로 폴백한다 (전부 API 필드).
+        double openPnlSum = 0;
+        double openCostBasis = 0;
+        int openPnlRows = 0;
         for (Object p : open) {
             double v = Js.fieldNum(p, "current_value");
-            double c = Js.fieldNum(p, "current_size") * Js.fieldNum(p, "avg_price");
-            if (Double.isFinite(v)) {
-                value += v;
+            if (!Double.isFinite(v)) {
+                continue;
             }
-            if (Double.isFinite(c)) {
-                cost += c;
+            double pnl = Js.fieldNum(p, "total_pnl");
+            if (!Double.isFinite(pnl)) {
+                double c = Js.fieldNum(p, "current_size") * Js.fieldNum(p, "avg_price");
+                if (!Double.isFinite(c)) {
+                    continue;
+                }
+                pnl = v - c;
             }
+            openPnlSum += pnl;
+            openCostBasis += v - pnl;
+            openPnlRows += 1;
         }
         book.positionsPnlPct =
-                open.size() > 0 && cost > 0 ? ((value - cost) / cost) * 100 : null;
+                openPnlRows > 0 && openCostBasis > 0 ? (openPnlSum / openCostBasis) * 100 : null;
 
         for (Object p : open) {
             Object slug = Js.field(p, "slug");
@@ -258,119 +192,61 @@ public final class PositionBook {
             }
         }
 
-        boolean settledKnown = winRows != null && lostRows != null && closedRows != null;
-        if (settledKnown) {
-            Map<String, Entry> entries = new LinkedHashMap<>();
-            int[] seq = {0};
-
-            // 손절 기록이 조회 목록보다 먼저다 — 같은 토큰의 CLOSED 행은
-            // dedupe로 걸러져 기록을 덮지 못한다.
+        if (closedRows != null) {
+            // 손절 분류용 토큰 집합 — 기록의 금액·승패는 표시로 가져오지 않는다.
+            Set<String> stopTokens = new HashSet<>();
             if (stopLossRecords != null) {
                 for (Object r : stopLossRecords) {
-                    if (!Js.truthy(r)) {
-                        continue;
-                    }
                     Object tokenId = Js.field(r, "token_id");
-                    if (!(tokenId instanceof String) || ((String) tokenId).isEmpty()) {
-                        continue;
+                    if (tokenId instanceof String && !((String) tokenId).isEmpty()) {
+                        stopTokens.add("t:" + tokenId);
                     }
-                    String key = "t:" + tokenId;
-                    if (entries.containsKey(key)) {
-                        continue;
-                    }
-                    double rp = Js.fieldNum(r, "realized_pnl");
-                    boolean known = Double.isFinite(rp);
-                    String verdict = known ? (rp > 0 ? "win" : rp < 0 ? "loss" : null) : null;
-                    entries.put(key, new Entry(verdict, known ? rp : null, "stoploss"));
                 }
             }
-            // 수동 매도 기록도 조회 목록보다 먼저다 — 실제 매도 실현손익으로
-            // 가르고, 손절 건수에는 넣지 않는다 (kind "manual").
-            if (manualSellRecords != null) {
-                for (Object r : manualSellRecords) {
-                    if (!Js.truthy(r)) {
-                        continue;
-                    }
-                    Object tokenId = Js.field(r, "token_id");
-                    if (!(tokenId instanceof String) || ((String) tokenId).isEmpty()) {
-                        continue;
-                    }
-                    String key = "t:" + tokenId;
-                    if (entries.containsKey(key)) {
-                        continue;
-                    }
-                    double rp = Js.fieldNum(r, "realized_pnl");
-                    boolean known = Double.isFinite(rp);
-                    String verdict = known ? (rp > 0 ? "win" : rp < 0 ? "loss" : null) : null;
-                    entries.put(key, new Entry(verdict, known ? rp : null, "manual"));
-                }
-            }
-            // REDEEMABLE 조회분은 행 필드로 검증해 가르고, 못 가릴 때만 출처 폴백.
-            add(entries, winRows, "win", p -> {
-                String v = judgeClosedRow(p);
-                return v != null ? v : "win";
-            }, seq);
-            add(entries, lostRows, "loss", p -> "loss", seq);
-            // 결과 불명 손절을 시도한 토큰의 CLOSED 행은 realized_pnl 부호로 판정.
-            add(entries, closedRows, "closed", p -> {
-                if (attempted.contains(Js.field(p, "token_id"))) {
-                    double rp = Js.fieldNum(p, "realized_pnl");
-                    if (Double.isFinite(rp)) {
-                        return rp > 0 ? "win" : rp < 0 ? "loss" : null;
-                    }
-                    return null;
-                }
-                return judgeClosedRow(p);
-            }, seq);
-
+            Set<String> seen = new HashSet<>();
+            int seq = 0;
+            int settledCount = 0;
             int settledWins = 0;
             int settledLosses = 0;
             int settledStopLoss = 0;
             int settledRealizedExcluded = 0;
             double pnlSum = 0;
             int pnlKnown = 0;
-            for (Entry e : entries.values()) {
-                if ("win".equals(e.verdict)) {
-                    settledWins += 1;
-                } else if ("loss".equals(e.verdict)) {
-                    settledLosses += 1;
+            for (Object p : closedRows) {
+                String key = PositionBook.positionKey(p);
+                if (key == null) {
+                    key = "u:" + (seq++);
                 }
-                if ("stoploss".equals(e.kind)) {
+                if (!seen.add(key)) {
+                    continue;
+                }
+                settledCount += 1;
+                if (stopTokens.contains(key)) {
                     settledStopLoss += 1;
                 }
-                if (e.pnl == null) {
+                double rp = Js.fieldNum(p, "realized_pnl");
+                if (!Double.isFinite(rp)) {
                     settledRealizedExcluded += 1;
-                } else {
-                    pnlSum += e.pnl;
-                    pnlKnown += 1;
+                    continue;
                 }
+                if (rp > 0) {
+                    settledWins += 1;
+                } else if (rp < 0) {
+                    settledLosses += 1;
+                }
+                pnlSum += rp;
+                pnlKnown += 1;
             }
-            book.settledCount = entries.size();
+            book.settledCount = settledCount;
             book.settledWins = settledWins;
             book.settledLosses = settledLosses;
             book.settledStopLoss = settledStopLoss;
             book.settledRealizedExcluded = settledRealizedExcluded;
             // 합산 가능한 행이 하나도 없는데 정산 건만 있으면 null — 0으로 지어내지 않는다.
-            if (pnlKnown > 0 || book.settledCount == 0) {
+            if (pnlKnown > 0 || settledCount == 0) {
                 book.settledRealizedPnl = Js.round2(pnlSum);
             }
         }
         return book;
-    }
-
-    private static void add(
-            Map<String, Entry> entries, List<Object> rows, String kind, VerdictFn verdictOf, int[] seq) {
-        for (Object p : rows) {
-            String key = PositionBook.positionKey(p);
-            if (key == null) {
-                key = "u:" + (seq[0]++);
-            }
-            if (!entries.containsKey(key)) {
-                String verdict = verdictOf.of(p);
-                // 실현손익 종류는 REDEEMABLE 조회분에 한해 확정 판정을 따른다.
-                String kindOf = "win".equals(kind) && "loss".equals(verdict) ? "loss" : kind;
-                entries.put(key, new Entry(verdict, realizedOf(kindOf, p), kind));
-            }
-        }
     }
 }

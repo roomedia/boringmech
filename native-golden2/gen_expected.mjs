@@ -5,7 +5,7 @@
 // 돌리는 것만으로 기대 출력이 원본 기준으로 재생성된다.
 // 추출 대상 (전부 summarizeBook과 snapshot() 사이징의 의존성):
 //   상수 BET_PCT, BET_MIN_USD, CASH_FLOOR_PCT, RESERVE_USD, MAX_POSITIONS
-//   round2, betUsdFor, sizing, positionKey, judgeClosedRow, realizedOf, summarizeBook
+//   round2, betUsdFor, sizing, positionKey, summarizeBook
 // 추출 후 원본 대조: 추출된 각 조각이 원본 파일에 verbatim으로 포함되는지
 // indexOf로 검증한다 (추출 자체가 부분 문자열 절단이라 항상 참이지만,
 // 마커를 못 찾으면 즉시 실패시켜 원본 구조 변경을 놓치지 않게 한다).
@@ -47,18 +47,28 @@ const parts = [
   ...["BET_PCT", "BET_MIN_USD", "CASH_FLOOR_PCT", "RESERVE_USD", "MAX_POSITIONS"].map(
     (n) => extractLine(`const ${n} =`),
   ),
+  // sizing·betUsdFor의 기본 인자 DEFAULT_TRADE_SETTINGS와 그것이 참조하는
+  // 상수 전부를 함께 추출한다 (설정화 이후 재생성에 필요 — 2026-11-24 보강).
+  ...(() => {
+    const raw = extractBlock("export const DEFAULT_TRADE_SETTINGS");
+    // 중괄호 매칭은 객체 리터럴 끝에서 멈추므로 Object.freeze( 의 닫는 괄호를 보탠다.
+    const block = raw.endsWith(")") ? raw : raw + ")";
+    const base = ["BET_PCT", "BET_MIN_USD", "CASH_FLOOR_PCT", "RESERVE_USD", "MAX_POSITIONS"];
+    const names = [...new Set([...block.matchAll(/:\s*([A-Z][A-Z0-9_]*)\b/g)].map((m) => m[1]))]
+      .filter((n) => !base.includes(n));
+    return [...names.map((n) => extractLine(`const ${n} =`)), block];
+  })(),
   extractLine("const round2 ="),
   extractBlock("export function betUsdFor"),
   extractBlock("export function sizing"),
   extractBlock("function positionKey"),
-  extractBlock("export function judgeClosedRow"),
-  extractBlock("function realizedOf"),
+  extractBlock("export function isOpenRow"),
   extractBlock("export function summarizeBook"),
 ];
 for (const p of parts) {
   if (!src.includes(p)) throw new Error("추출 조각이 원본에 verbatim으로 없음");
 }
-const code = parts.join("\n").replaceAll("export function", "function");
+const code = parts.join("\n").replaceAll("export function", "function").replaceAll("export const", "const");
 const { summarizeBook, sizing } = new Function(
   `${code}\nreturn { summarizeBook, sizing, round2 };`,
 )();
@@ -71,11 +81,8 @@ for (const c of fixtures.cases) {
   const inp = c.input;
   const book = summarizeBook(
     inp.allRows,
-    inp.winRows,
-    inp.lostRows,
     inp.closedRows,
     inp.stopLossRecords,
-    new Set(inp.stopLossAttempted || []),
   );
   let sizingOut = null;
   if (typeof inp.cash === "number" && typeof inp.positionsValue === "number") {

@@ -1,11 +1,10 @@
-// summarizeBook / judgeClosedRow 픽스처 테스트 — node_modules가 있는 사본에서 실행:
+// summarizeBook 픽스처 테스트 — node_modules가 있는 사본에서 실행:
 //   node test/book.test.mjs
 // engine.js는 모듈 최상위에서 window.BM을 대입하므로 스텁을 먼저 깐다.
 globalThis.window = {};
 const {
   summarizeBook,
   summarizeCycle,
-  judgeClosedRow,
   sizing,
   bootView,
   snapshotCacheOf,
@@ -138,85 +137,83 @@ const closedWinLive = row({
   realized_pnl: 0.7016,
 });
 
-// 1. 기존 집계 회귀: REDEEMABLE=승, REDEEMABLE_LOST=패, CLOSED 없음
+// 1. 정산 집계 (2026-11-24 API 표시 교체) — CLOSED 행의 realized_pnl 직독
 eq(
-  settled(summarizeBook([], [row({ token_id: "W1" }), row({ token_id: "W2" })], [row({ token_id: "L1" })], [])),
+  settled(summarizeBook([], [
+    row({ token_id: "W1", realized_pnl: 1.5 }),
+    row({ token_id: "W2", realized_pnl: 2 }),
+    row({ token_id: "L1", realized_pnl: -1 }),
+  ])),
   [3, 2, 1],
-  "redeemable-only regression",
+  "closed-only aggregation",
 );
 
-// 1b. REDEEMABLE 조회에 섞인 패자 행 — current_price 0이면 패로 분류하고
-// 실현손익도 패 종류(-진입원가)로 계산한다 (2026-11-15 LoL 0원 2건 실측)
+// 1b. 0원 확정 패자 행도 realized_pnl 그대로 — 내부 재판정·원가 계산 없음
 {
-  const loserInWinQuery = row({
-    token_id: "LX1", status: "REDEEMABLE", current_price: 0,
+  const loser = row({
+    token_id: "LX1", status: "CLOSED", current_price: 0,
     current_value: 0, entry_cost_usdc: 5.09, realized_pnl: -5.09,
   });
-  const book = summarizeBook([], [loserInWinQuery], [loserInWinQuery], []);
+  const book = summarizeBook([], [loser]);
   eq([book.settledCount, book.settledWins, book.settledLosses], [1, 0, 1],
-    "redeemable loser classified as loss, not win");
-  eq(book.settledRealizedPnl, -5.09, "redeemable loser realized as -cost");
+    "closed loser classified by realized pnl sign");
+  eq(book.settledRealizedPnl, -5.09, "closed loser realized is api value");
 }
 
 // 2. 우리 지갑 실측 예상값: 정산 완료 1건 · 1승 0패
-eq(settled(summarizeBook([], [], [], [closedWinLive])), [1, 1, 0], "live wallet closed win");
+eq(settled(summarizeBook([], [closedWinLive])), [1, 1, 0], "live wallet closed win");
 
-// 3. CLOSED 패 — current_price 0
+// 3. CLOSED 패 — realized_pnl 음수
 eq(
-  settled(summarizeBook([], [], [], [row({ status: "CLOSED", current_price: 0, realized_pnl: -5 })])),
+  settled(summarizeBook([], [row({ status: "CLOSED", current_price: 0, realized_pnl: -5 })])),
   [1, 0, 1],
-  "closed loss by final price",
+  "closed loss by realized pnl",
 );
 
-// 4·5. CLOSED 폴백 — current_price가 0/1이 아니면 realized_pnl 부호
+// 4·5. 승패는 realized_pnl 부호 — 최종가와 무관
 eq(
-  settled(summarizeBook([], [], [], [row({ status: "CLOSED", current_price: 0.5, realized_pnl: 2.5 })])),
+  settled(summarizeBook([], [row({ status: "CLOSED", current_price: 0.5, realized_pnl: 2.5 })])),
   [1, 1, 0],
-  "closed win by realized pnl fallback",
+  "closed win by realized pnl",
 );
 eq(
-  settled(summarizeBook([], [], [], [row({ status: "CLOSED", current_price: 0.5, realized_pnl: -2.5 })])),
+  settled(summarizeBook([], [row({ status: "CLOSED", current_price: 0.5, realized_pnl: -2.5 })])),
   [1, 0, 1],
-  "closed loss by realized pnl fallback",
+  "closed loss by realized pnl sign",
 );
 
-// 6. CLOSED 판정 불가 — 건수에만 더한다
+// 6. realized_pnl 0 — 건수에만 더한다
 eq(
-  settled(summarizeBook([], [], [], [row({ status: "CLOSED", realized_pnl: 0 })])),
+  settled(summarizeBook([], [row({ status: "CLOSED", realized_pnl: 0 })])),
   [1, 0, 0],
-  "closed unjudgeable counts only",
+  "closed zero pnl counts only",
 );
 
-// 7. dedupe — 상태 전이로 같은 토큰이 REDEEMABLE과 CLOSED에 동시 존재
+// 7. dedupe — 같은 토큰 행이 중복돼도 한 번만
 eq(
-  settled(summarizeBook([], [closedWinLive], [], [closedWinLive])),
-  [1, 1, 0],
-  "dedupe across redeemable and closed",
-);
-eq(
-  settled(summarizeBook([], [], [], [closedWinLive, closedWinLive])),
+  settled(summarizeBook([], [closedWinLive, closedWinLive])),
   [1, 1, 0],
   "dedupe within closed",
 );
 
-// 8. dedupe 폴백 키 — token_id 없으면 condition_id+outcome_index, 조회 판정 우선
+// 8. dedupe 폴백 키 — token_id 없으면 condition_id+outcome_index, 먼저 온 행 우선
 eq(
   settled(
     summarizeBook(
       [],
-      [],
-      [row({ token_id: undefined, status: "REDEEMABLE" })],
-      [row({ token_id: undefined, status: "CLOSED", current_price: 1, realized_pnl: 3 })],
+      [
+        row({ token_id: undefined, status: "CLOSED", realized_pnl: -2 }),
+        row({ token_id: undefined, status: "CLOSED", realized_pnl: 3 }),
+      ],
     ),
   ),
   [1, 0, 1],
-  "dedupe by condition fallback, query verdict wins",
+  "dedupe by condition fallback, first row wins",
 );
 
-// 9. 정산 미상 전파 — 어느 목록이든 못 읽으면 settled* 전부 null
-eq(settled(summarizeBook([], [], [], null)), [null, null, null], "closed null propagates");
-eq(settled(summarizeBook([], null, [], [])), [null, null, null], "win null propagates");
-eq(settled(summarizeBook([], [], null, [])), [null, null, null], "lost null propagates");
+// 9. 정산 미상 전파 — CLOSED를 못 읽으면 settled* 전부 null
+eq(settled(summarizeBook([], null)), [null, null, null], "closed null propagates");
+eq(settled(summarizeBook([], [])), [0, 0, 0], "closed empty is zero counts");
 
 // 10. OPEN 집계 회귀 — CLOSED 행이 섞여도 보유 통계는 OPEN만
 {
@@ -226,8 +223,6 @@ eq(settled(summarizeBook([], [], null, [])), [null, null, null], "lost null prop
       row({ token_id: "O2", slug: "o2", current_size: 10, avg_price: 0.5, current_value: 4 }),
       closedWinLive,
     ],
-    [],
-    [],
     [closedWinLive],
   );
   eq(book.openCount, 2, "open count excludes closed");
@@ -235,12 +230,14 @@ eq(settled(summarizeBook([], [], null, [])), [null, null, null], "lost null prop
   eq([...book.heldSlugs].sort(), ["o1", "o2"], "held slugs are open only");
 }
 
-// 11. judgeClosedRow 경계값
-eq(judgeClosedRow({ current_price: 1 }), "win", "judge cp=1");
-eq(judgeClosedRow({ current_price: 0 }), "loss", "judge cp=0");
-eq(judgeClosedRow({ current_price: 0.99, realized_pnl: 1 }), "win", "judge fallback win");
-eq(judgeClosedRow({}), null, "judge empty row");
-eq(judgeClosedRow(null), null, "judge null row");
+// 11. 보유 등락은 행의 total_pnl 우선 — 현재가치−원가로 재계산하지 않는다
+{
+  const book = summarizeBook(
+    [row({ token_id: "T1", current_size: 10, avg_price: 0.5, current_value: 6, total_pnl: 3 })],
+    [],
+  );
+  eq(book.positionsPnlPct, 100, "open pnl pct uses api total_pnl");
+}
 
 // 12. 사이징 스모크 (무변경 확인 — 0.3.9 실측 화면과 동일 조건)
 {
@@ -324,15 +321,14 @@ eq(snapshotFromCache('{"cash":18.83}'), null, "cache: missing equity rejected");
   eq(restored.settledRealizedPnl, null, "cache: unknown realized stays unknown");
 }
 
-// 17. 실현수익 합산 — 건수·승패와 같은 dedupe 집합 기준
+// 17. 실현수익 합산 — CLOSED 행 realized_pnl 직독, 건수·승패와 같은 dedupe 기준
 {
-  // 승 +2.5 (지급 7.5 − 원가 5), 패 −5 (원가 5), CLOSED +0.7016 → −1.7984 → −1.8
-  const book = summarizeBook(
-    [],
-    [row({ token_id: "RW", entry_cost_usdc: 5, current_value: 7.5 })],
-    [row({ token_id: "RL", entry_cost_usdc: 5, current_value: 0 })],
-    [closedWinLive],
-  );
+  // 승 +2.5, 패 −5, CLOSED +0.7016 → −1.7984 → −1.8
+  const book = summarizeBook([], [
+    row({ token_id: "RW", realized_pnl: 2.5 }),
+    row({ token_id: "RL", realized_pnl: -5 }),
+    closedWinLive,
+  ]);
   eq(settled(book), [3, 2, 1], "realized: mixed counts");
   eq(book.settledRealizedPnl, -1.8, "realized: mixed sum");
   eq(book.settledRealizedExcluded, 0, "realized: none excluded");
@@ -340,66 +336,50 @@ eq(snapshotFromCache('{"cash":18.83}'), null, "cache: missing equity rejected");
 {
   // 우리 지갑 실측: CLOSED 승 1건의 realized_pnl 0.7016 → 0.7
   eq(
-    summarizeBook([], [], [], [closedWinLive]).settledRealizedPnl,
+    summarizeBook([], [closedWinLive]).settledRealizedPnl,
     0.7,
     "realized: live wallet closed win",
   );
 }
 {
-  // dedupe — 같은 토큰이 승 목록과 CLOSED에 있으면 살아남은 쪽(승)의 공식을 한 번만
-  const asWin = row({
-    token_id: "DUP",
-    status: "REDEEMABLE",
-    entry_cost_usdc: 5,
-    current_value: 7.5,
-  });
-  const asClosed = row({
-    token_id: "DUP",
-    status: "CLOSED",
-    current_price: 1,
-    realized_pnl: 99,
-    entry_cost_usdc: 5,
-    current_value: 0,
-  });
-  const book = summarizeBook([], [asWin], [], [asClosed]);
+  // dedupe — 같은 토큰 행이 중복되면 먼저 온 행의 realized_pnl만 한 번
+  const first = row({ token_id: "DUP", status: "CLOSED", realized_pnl: 2.5 });
+  const second = row({ token_id: "DUP", status: "CLOSED", realized_pnl: 99 });
+  const book = summarizeBook([], [first, second]);
   eq(settled(book), [1, 1, 0], "realized dedupe: counted once");
-  eq(book.settledRealizedPnl, 2.5, "realized dedupe: surviving list formula wins");
+  eq(book.settledRealizedPnl, 2.5, "realized dedupe: first row wins");
 }
 {
   // 승패 판정 불가(건수만) 행도 realized_pnl이 있으면 합산한다 — 0도 값이다
   const book = summarizeBook(
     [],
-    [],
-    [],
     [row({ status: "CLOSED", current_price: 0.5, realized_pnl: 0 })],
   );
-  eq(settled(book), [1, 0, 0], "realized: unjudgeable counts only");
+  eq(settled(book), [1, 0, 0], "realized: zero pnl counts only");
   eq(book.settledRealizedPnl, 0, "realized: zero pnl still sums");
   eq(book.settledRealizedExcluded, 0, "realized: zero pnl not excluded");
 }
 {
-  // 실현을 계산할 필드가 없는 행은 합산에서 빼고 excluded로 센다 — 0으로 만들지 않는다
+  // realized_pnl이 없는 행은 합산에서 빼고 excluded로 센다 — 0으로 만들지 않는다
   const noPnl = row({ status: "CLOSED", current_price: undefined, realized_pnl: undefined });
-  const book = summarizeBook([], [], [], [noPnl]);
+  const book = summarizeBook([], [noPnl]);
   eq(settled(book), [1, 0, 0], "realized excluded: still counted");
   eq(book.settledRealizedPnl, null, "realized excluded: no fabricated number");
   eq(book.settledRealizedExcluded, 1, "realized excluded: counted as excluded");
 }
 {
-  // 일부만 계산 가능하면 가능한 행만 합산하고 나머지는 excluded
-  const book = summarizeBook(
-    [],
-    [row({ token_id: "GW", entry_cost_usdc: 4, current_value: 6 })],
-    [],
-    [row({ token_id: "BX", status: "CLOSED" })],
-  );
+  // 일부만 합산 가능하면 가능한 행만 합산하고 나머지는 excluded
+  const book = summarizeBook([], [
+    row({ token_id: "GW", realized_pnl: 2 }),
+    row({ token_id: "BX", status: "CLOSED", realized_pnl: undefined }),
+  ]);
   eq(settled(book), [2, 1, 0], "realized partial: counts");
-  eq(book.settledRealizedPnl, 2, "realized partial: sums computable only");
+  eq(book.settledRealizedPnl, 2, "realized partial: sums known only");
   eq(book.settledRealizedExcluded, 1, "realized partial: excluded counted");
 }
 // 정산 미상이면 실현도 미상, 정산 0건이면 실현 0이 사실이다
-eq(summarizeBook([], [], [], null).settledRealizedPnl, null, "realized: unknown propagates");
-eq(summarizeBook([], [], [], []).settledRealizedPnl, 0, "realized: empty settled is zero");
+eq(summarizeBook([], null).settledRealizedPnl, null, "realized: unknown propagates");
+eq(summarizeBook([], []).settledRealizedPnl, 0, "realized: empty settled is zero");
 
 // 18. 호스트 모드 판정 — "engine"만 엔진, 나머지는 전부 뷰어(안전한 쪽)
 eq(resolveHostMode("engine"), "engine", "host: engine");
@@ -477,11 +457,12 @@ eq(pickOutcomeIndex([], { outcome_index: 2 }), 2, "index: fallback without outco
 eq(pickOutcomeIndex(["Yes", "No"], { outcome_index: 1.5 }), -1, "index: non-integer rejected");
 eq(pickOutcomeIndex(["Yes", "No"], { outcome_index: -1 }), -1, "index: negative rejected");
 
-// 23. 손절 기록의 정산 분류 — 현재가가 아닌 매도 실현손익으로 가른다
+// 23. 손절 건수 분류 — CLOSED 행과 기록의 토큰 교집합만 센다.
+// 기록의 금액·승패는 표시로 가져오지 않는다 (2026-11-24 API 표시 교체).
 {
-  // 손절로 판 토큰이 나중에 승으로 정산돼 CLOSED current_price가 1이어도
-  // 판정은 기록의 실현손익(-30 → 패)을 따라야 한다
-  const closedWouldBeWin = row({
+  // 손절로 판 토큰이 승으로 정산돼도 표시는 API 행(+55 → 승)을 따르고
+  // 손절 건수에만 잡힌다
+  const closedRow = row({
     token_id: "SL1",
     status: "CLOSED",
     current_price: 1,
@@ -489,35 +470,30 @@ eq(pickOutcomeIndex(["Yes", "No"], { outcome_index: -1 }), -1, "index: negative 
     entry_cost_usdc: 100,
     current_value: 0,
   });
-  const book = summarizeBook([], [], [], [closedWouldBeWin], [
+  const book = summarizeBook([], [closedRow], [
     { token_id: "SL1", realized_pnl: -30 },
   ]);
-  eq(settled(book), [1, 0, 1], "stoploss settled: record verdict beats final price");
-  eq(book.settledRealizedPnl, -30, "stoploss settled: record pnl beats row pnl");
+  eq(settled(book), [1, 1, 0], "stoploss settled: api row verdict wins");
+  eq(book.settledRealizedPnl, 55, "stoploss settled: api row pnl wins");
   eq(book.settledStopLoss, 1, "stoploss settled: counted as stoploss");
 }
 {
-  // CLOSED 행이 아직 없어도 손절 기록만으로 정산에 잡힌다
-  const book = summarizeBook([], [], [], [], [{ token_id: "SL2", realized_pnl: -12.5 }]);
-  eq(settled(book), [1, 0, 1], "stoploss settled: record alone counts");
-  eq(book.settledRealizedPnl, -12.5, "stoploss settled: record alone pnl");
-  eq(book.settledStopLoss, 1, "stoploss settled: record alone flagged");
+  // CLOSED 행이 없으면 손절 기록만으로는 정산에 잡히지 않는다
+  const book = summarizeBook([], [], [{ token_id: "SL2", realized_pnl: -12.5 }]);
+  eq(settled(book), [0, 0, 0], "stoploss settled: record alone does not count");
+  eq(book.settledRealizedPnl, 0, "stoploss settled: record alone no pnl");
+  eq(book.settledStopLoss, 0, "stoploss settled: record alone not flagged");
 }
 {
-  // 손절이 이긴 경우(실현 양수)도 부호로 판정한다
-  const book = summarizeBook([], [], [], [], [{ token_id: "SL3", realized_pnl: 4 }]);
-  eq(settled(book), [1, 1, 0], "stoploss settled: positive record is a win");
-}
-{
-  // 기록이 없으면 기존 집계와 동일하고 손절 건수는 0이다
-  const book = summarizeBook([], [row({ token_id: "W1" })], [], [], []);
+  // 기록이 없으면 손절 건수는 0이다
+  const book = summarizeBook([], [row({ token_id: "W1", realized_pnl: 1.5 })], []);
   eq(settled(book), [1, 1, 0], "stoploss settled: no records regression");
   eq(book.settledStopLoss, 0, "stoploss settled: zero without records");
-  eq(summarizeBook([], [], [], []).settledStopLoss, 0, "stoploss settled: omitted arg is zero");
+  eq(summarizeBook([], []).settledStopLoss, 0, "stoploss settled: omitted arg is zero");
 }
 {
-  // 깨진 기록은 건너뛴다 — 토큰 없는 기록이 집계를 오염시키지 않는다
-  const book = summarizeBook([], [], [], [], [
+  // 깨진 기록은 건너뛴다 — 토큰 없는 기록이 분류를 오염시키지 않는다
+  const book = summarizeBook([], [row({ token_id: "OK1", realized_pnl: -5 })], [
     { realized_pnl: -5 },
     { token_id: "OK1", realized_pnl: -5 },
     null,
@@ -527,7 +503,43 @@ eq(pickOutcomeIndex(["Yes", "No"], { outcome_index: -1 }), -1, "index: negative 
 }
 {
   // 정산 미상이면 손절 건수도 미상이다
-  eq(summarizeBook([], null, [], [], []).settledStopLoss, null, "stoploss settled: unknown propagates");
+  eq(summarizeBook([], null, []).settledStopLoss, null, "stoploss settled: unknown propagates");
+}
+
+// 23b. 가드 (2026-11-24 정산 손익 차이 분석) — 실측 8건 픽스처.
+// 내부 기록에 틀린 실현손익이 있어도 표시는 API 행만으로 만들어져야 한다.
+// 실측: 앱 내부 기록 합계 −11.10 (손절 2건 총액 계산 −4.43·−3.38,
+// 수동 매도 1건 +4.06) vs API realized_pnl 합계 −12.13.
+{
+  const closedLive = [
+    { token_id: "T675", status: "CLOSED", realized_pnl: 0.7016 },
+    { token_id: "T65", status: "CLOSED", realized_pnl: 2.1378 },
+    { token_id: "T625", status: "CLOSED", realized_pnl: -4.9612 },
+    { token_id: "TGENG", status: "CLOSED", realized_pnl: -5.0924 },
+    { token_id: "TBILI", status: "CLOSED", realized_pnl: -5.0952 },
+    { token_id: "T725", status: "CLOSED", realized_pnl: 3.7108 },
+    { token_id: "T60", status: "CLOSED", realized_pnl: -3.5368 },
+    { token_id: "THEL", status: "CLOSED", realized_pnl: 0.0048 },
+  ];
+  // 내부 기록 — 손절 2건의 realized_pnl은 수수료 미반영 총액 계산값(틀림),
+  // 수동 매도 1건도 마찬가지. 표시에 새면 합계가 −11.10으로 어긋난다.
+  const wrongRecords = [
+    { token_id: "T625", realized_pnl: -4.43 },
+    { token_id: "T60", realized_pnl: -3.38 },
+  ];
+  const book = summarizeBook([], closedLive, wrongRecords);
+  eq(settled(book), [8, 4, 4], "guard live8: counts from api rows");
+  eq(book.settledRealizedPnl, -12.13, "guard live8: realized is api sum, not record sum");
+  eq(book.settledStopLoss, 2, "guard live8: stoploss count by token intersection");
+  eq(book.settledRealizedExcluded, 0, "guard live8: none excluded");
+}
+{
+  // CLOSED 조회 실패(null)면 내부 기록이 있어도 정산 표시는 미상이다 —
+  // 내부 계산값으로 조용히 대체하지 않는다.
+  const book = summarizeBook([], null, [{ token_id: "T625", realized_pnl: -4.43 }]);
+  eq(settled(book), [null, null, null], "guard: closed null stays unknown despite records");
+  eq(book.settledRealizedPnl, null, "guard: closed null realized stays null");
+  eq(book.settledStopLoss, null, "guard: closed null stoploss stays null");
 }
 
 // 24. 페이지 구조 가드 — 뷰어 블록은 루프를 시작하지 않고,
@@ -938,7 +950,7 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   delete globalThis.window.AndroidBridge;
 }
 
-// 37. 부수4 — 손절 원장 아카이브: 캡을 넘어도 정산 분류가 유지된다
+// 37. 부수4 — 손절 원장 아카이브: 캡을 넘어도 기록이 남고 분류가 유지된다
 {
   const ls = new Map();
   globalThis.localStorage = {
@@ -952,10 +964,11 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   }
   const recs = stopLossRecords();
   eq(recs.length, total, "archive: records beyond cap survive");
-  const book = summarizeBook([], [], [], [], recs);
-  eq(book.settledCount, total, "archive: settled count keeps archived records");
+  const closedRows = recs.map((r) => ({ token_id: r.token_id, status: "CLOSED", realized_pnl: -1 }));
+  const book = summarizeBook([], closedRows, recs);
+  eq(book.settledCount, total, "archive: settled count from closed rows");
   eq(book.settledStopLoss, total, "archive: all classified as stoploss");
-  eq(book.settledRealizedPnl, -total, "archive: realized sum keeps archived records");
+  eq(book.settledRealizedPnl, -total, "archive: realized sum from closed rows");
 }
 
 // 37. SDK 타임아웃 래퍼 — 느린 메서드는 시간 초과로 끊기고, 빠른 메서드는
@@ -1097,32 +1110,32 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
 
   // summarizeBook: status 누락 + 수량 있는 행은 보유로 본다
   const noStatus = row({ token_id: "NS1", status: undefined, current_size: 5 });
-  eq(summarizeBook([noStatus], [], [], []).openCount, 1, "audit: status-less row with size is open");
+  eq(summarizeBook([noStatus], []).openCount, 1, "audit: status-less row with size is open");
   const redeemable = row({ token_id: "NS2", status: "REDEEMABLE", current_size: 5 });
-  eq(summarizeBook([redeemable], [], [], []).openCount, 0, "audit: redeemable row is not open");
+  eq(summarizeBook([redeemable], []).openCount, 0, "audit: redeemable row is not open");
 
-  // summarizeBook: 필드가 실린 패자 행은 출처가 승 조회여도 패로 가른다
-  const loserRow = row({ token_id: "U1", status: "REDEEMABLE", current_price: 0, realized_pnl: -5, entry_cost_usdc: 5, current_value: 0 });
-  const ub = summarizeBook([], [loserRow], [], []);
+  // summarizeBook: CLOSED 패자 행은 최종가가 아니라 realized_pnl 부호로 가른다
+  const loserRow = row({ token_id: "U1", status: "CLOSED", current_price: 1, realized_pnl: -5, entry_cost_usdc: 5, current_value: 0 });
+  const ub = summarizeBook([], [loserRow]);
   eq([ub.settledCount, ub.settledWins, ub.settledLosses], [1, 0, 1],
-    "audit: redeemable-listed loser judged by fields, not source");
-  eq(ub.settledRealizedPnl, -5, "audit: loser realized as -cost");
+    "audit: closed loser judged by realized pnl, not final price");
+  eq(ub.settledRealizedPnl, -5, "audit: loser realized is api value");
 
-  // summarizeBook: 손절 시도 토큰의 CLOSED 행은 최종가가 아니라 실현손익으로 판정
-  const attempted = row({ token_id: "AT1", status: "CLOSED", current_price: 1, realized_pnl: -4.5 });
-  const ab = summarizeBook([], [], [], [attempted], [], new Set(["AT1"]));
-  eq([ab.settledWins, ab.settledLosses], [0, 1], "audit: attempted stoploss token judged by realized pnl");
-  const ab2 = summarizeBook([], [], [], [attempted], [], new Set());
-  eq([ab2.settledWins, ab2.settledLosses], [1, 0], "audit: same row without attempt mark judged by price");
+  // summarizeBook: 내부 기록은 CLOSED 행의 판정을 바꾸지 않는다
+  const closedRow2 = row({ token_id: "AT1", status: "CLOSED", current_price: 1, realized_pnl: -4.5 });
+  const ab = summarizeBook([], [closedRow2], [{ token_id: "AT1", realized_pnl: 9 }]);
+  eq([ab.settledWins, ab.settledLosses], [0, 1], "audit: record does not flip api verdict");
+  const ab2 = summarizeBook([], [closedRow2]);
+  eq([ab2.settledWins, ab2.settledLosses], [0, 1], "audit: same verdict without record");
 
-  // summarizeBook: 손절 기록이 REDEEMABLE 조회보다 우선한다
-  const slRow = row({ token_id: "SL1", status: "REDEEMABLE", current_price: 1, current_value: 9, entry_cost_usdc: 5 });
-  const sb = summarizeBook([], [slRow], [], [], [{ token_id: "SL1", realized_pnl: -3 }]);
-  eq([sb.settledWins, sb.settledLosses, sb.settledStopLoss], [0, 1, 1],
-    "audit: stoploss record wins over redeemable listing");
+  // summarizeBook: 손절 건수는 CLOSED 행과 기록 토큰의 교집합으로만 센다
+  const slRow = row({ token_id: "SL1", status: "CLOSED", current_price: 1, realized_pnl: 4 });
+  const sb = summarizeBook([], [slRow], [{ token_id: "SL1", realized_pnl: -3 }]);
+  eq([sb.settledWins, sb.settledLosses, sb.settledStopLoss], [1, 0, 1],
+    "audit: stoploss counted by intersection, verdict from api row");
 
   // summarizeBook: 손절 원장 slug가 반환에 실린다 (재매수 차단 합류용)
-  const sb2 = summarizeBook([], [], [], [], [{ token_id: "SL2", slug: "sold-mkt", realized_pnl: -1 }]);
+  const sb2 = summarizeBook([], [], [{ token_id: "SL2", slug: "sold-mkt", realized_pnl: -1 }]);
   eq(sb2.stopLossSlugs.has("sold-mkt"), true, "audit: stopLossSlugs carries sold slugs");
 
   // boughtCorrupted: 손상 원문과 정상 기록을 구분한다
@@ -1244,33 +1257,29 @@ eq(SUBMIT_GUARD_MAX_MS, 600000, "f1: submit guard max");
   eq(snapSrc.includes("positions: openRows.map"), true, "open: snapshot fills snap.positions");
 }
 
-// 41. 수동 매도 장부 주입 가드 — 수동 매도로 청산된 토큰은 CLOSED 행의
-// 최종가가 아니라 실제 매도 실현손익으로 집계되고 손절 건수에는 안 잡힌다
-// (v0.3.33 감사: bm_manual_sell이 쓰기만 되고 읽히지 않던 결함)
+// 41. 수동 매도 기록 표시 독립 가드 — 수동 매도 기록은 표시 경로에서
+// 빠졌다 (2026-11-24 API 표시 교체). 기록이 있어도 표시는 CLOSED 행의
+// realized_pnl을 따르고, 기록 자체는 감사 원장으로 남는다.
 {
   const closedRow = {
     token_id: "mtok", slug: "m-mkt", status: "CLOSED",
     current_price: 1, current_size: 0, current_value: 0, realized_pnl: 2.5,
   };
-  const withManual = summarizeBook(
-    [], [], [], [closedRow], [], new Set(),
-    [{ token_id: "mtok", slug: "m-mkt", realized_pnl: -2 }],
-  );
-  eq(withManual.settledCount, 1, "manual-book: settled count");
-  eq(withManual.settledLosses, 1, "manual-book: judged by sell pnl");
-  eq(withManual.settledWins, 0, "manual-book: final price does not flip to win");
-  eq(withManual.settledRealizedPnl, -2, "manual-book: realized is sell value");
-  eq(withManual.settledStopLoss, 0, "manual-book: not counted as stop loss");
-  const withoutManual = summarizeBook([], [], [], [closedRow], [], new Set());
-  eq(withoutManual.settledWins, 1, "manual-book: baseline judges by final price");
+  const book = summarizeBook([], [closedRow]);
+  eq(book.settledCount, 1, "manual-book: settled count");
+  eq(book.settledWins, 1, "manual-book: judged by api realized pnl");
+  eq(book.settledLosses, 0, "manual-book: record does not flip verdict");
+  eq(book.settledRealizedPnl, 2.5, "manual-book: realized is api value");
+  eq(book.settledStopLoss, 0, "manual-book: not counted as stop loss");
 
   const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
-  eq(src.includes("manualSellRecords()"), true, "manual-book: snapshot wires records");
-  eq(src.includes("manualSellAttemptedTokens()"), true, "manual-book: snapshot wires attempted");
+  const snapSrc = src.slice(src.indexOf("async function snapshot("), src.indexOf("async function verifyCandidate"));
+  eq(snapSrc.includes("manualSellRecords()"), false, "manual-book: snapshot no longer wires records");
+  eq(snapSrc.includes("stopLossAttemptedTokens()"), false, "manual-book: snapshot no longer wires attempted");
 }
 
 // 42. 캡 회전 아카이브 읽기 가드 — 수동 매도 원장·시도가 아카이브로
-// 회전돼도 집계 입력에서 사라지지 않고, 손절 시도 slug·리딤 done
+// 회전돼도 감사 원장 읽기에서 사라지지 않고, 손절 시도 slug·리딤 done
 // 아카이브도 같은 입력으로 읽힌다 (v0.3.35 감사 축 2·3)
 {
   const ls = new Map();

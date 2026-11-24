@@ -50,18 +50,11 @@ public class Golden2Test {
     private static void runCase(String name, Map<String, Object> inp, Map<String, Object> exp) {
         int before = failures;
         List<Object> allRows = asListOrNull(inp.get("allRows"));
-        List<Object> winRows = asListOrNull(inp.get("winRows"));
-        List<Object> lostRows = asListOrNull(inp.get("lostRows"));
         List<Object> closedRows = asListOrNull(inp.get("closedRows"));
         List<Object> stopLossRecords = asListOrNull(inp.get("stopLossRecords"));
-        Set<Object> attempted = new LinkedHashSet<>();
-        List<Object> att = asListOrNull(inp.get("stopLossAttempted"));
-        if (att != null) {
-            attempted.addAll(att);
-        }
 
         PositionBook.Book book = PositionBook.summarizeBook(
-                allRows, winRows, lostRows, closedRows, stopLossRecords, attempted);
+                allRows, closedRows, stopLossRecords);
 
         eqNum(name, "openCount", exp.get("openCount"), book.openCount);
         eqNum(name, "positionsPnlPct", exp.get("positionsPnlPct"), book.positionsPnlPct);

@@ -75,24 +75,17 @@ final class ShadowSnapshot {
         double positionsValue = Js.round2(fetchPositionsValue(funder));
         double equity = Js.round2(cash + positionsValue);
 
-        List<Object> winRows = null;
-        List<Object> lostRows = null;
         List<Object> closedRows = null;
         try {
-            winRows = PositionsFetcher.fetchPositions(funder, "REDEEMABLE", source);
-            lostRows = PositionsFetcher.fetchPositions(funder, "REDEEMABLE_LOST", source);
             closedRows = PositionsFetcher.fetchPositions(funder, "CLOSED", source);
         } catch (Exception e) {
-            // JS snapshot()과 동일 — 정산 집계를 못 읽으면 셋 다 null로 남긴다
-            winRows = null;
-            lostRows = null;
+            // 정산 표시(2026-11-24~)는 CLOSED 조회만으로 만든다 — 못 읽으면
+            // settled*가 null로 남아 JS 스냅샷 캐시와 대조에서 드러난다.
             closedRows = null;
         }
 
         PositionBook.Book book = PositionBook.summarizeBook(
-                positions, winRows, lostRows, closedRows,
-                stopLossRecords(ctx), manualSellRecords(ctx),
-                mergedAttemptedTokens(ctx));
+                positions, closedRows, stopLossRecords(ctx));
         // 실운용 스냅샷과 같은 설정으로 사이징한다 — 기본값 오버로드를
         // 쓰면 설정 변경 시 대조가 상시 거짓 불일치가 된다 (v0.3.38 감사 축 3).
         PositionBook.Sizing sizing = PositionBook.sizing(cash, equity, book.openCount,
@@ -186,44 +179,6 @@ final class ShadowSnapshot {
                         && Js.field(r, "token_id") instanceof String
                         && Double.isFinite(Js.fieldNum(r, "realized_pnl"))) {
                     out.add(r);
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        return out;
-    }
-
-    private static Set<Object> stopLossAttemptedTokens(Context ctx) {
-        return parseTokenList(durable(ctx, "bm_stoploss_attempted"));
-    }
-
-    // 수동 매도 원장·시도 토큰 — NativeCycle 집계와 같은 입력으로 대조한다.
-    // 아카이브로 회전된 기록·토큰도 같은 입력에 포함한다 (v0.3.35 감사 축 3).
-    private static List<Object> manualSellRecords(Context ctx) {
-        List<Object> out = parseStopLossList(durable(ctx, "bm_manual_sell_archive"));
-        out.addAll(parseStopLossList(durable(ctx, "bm_manual_sell")));
-        return out;
-    }
-
-    private static Set<Object> mergedAttemptedTokens(Context ctx) {
-        Set<Object> out = stopLossAttemptedTokens(ctx);
-        out.addAll(parseTokenList(durable(ctx, "bm_manual_sell_attempted_archive")));
-        out.addAll(parseTokenList(durable(ctx, "bm_manual_sell_attempted")));
-        return out;
-    }
-
-    private static Set<Object> parseTokenList(String raw) {
-        Set<Object> out = new HashSet<>();
-        if (raw == null) {
-            return out;
-        }
-        try {
-            Object model = JsonModel.fromJson(new org.json.JSONArray(raw));
-            if (model instanceof List) {
-                for (Object t : (List<?>) model) {
-                    if (t instanceof String) {
-                        out.add(t);
-                    }
                 }
             }
         } catch (Exception ignored) {

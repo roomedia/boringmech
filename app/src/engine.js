@@ -274,64 +274,24 @@ function positionKey(p) {
   return null;
 }
 
-// CLOSED 행의 승패 판정 — 행 status만으로는 못 가른다.
-// 1순위 current_price(문서: 주당 라이브 마크; 정산이 끝난 토큰은 1 또는 0으로
-// 확정된다 — 실응답 승 건에서 1.0 확인): 1이면 보유 토큰 쪽 승리, 0이면 패배.
-// 2순위 realized_pnl(문서: 포지션 누적 실현 손익) 부호 — 정산 전 전량 청산으로
-// 닫힌 행처럼 current_price가 0/1이 아닌 경우의 폴백.
-// 둘 다로 못 가르면 null (건수에만 더하고 승패에서는 뺀다).
-export function judgeClosedRow(p) {
-  const cp = Number(p?.current_price);
-  if (Number.isFinite(cp)) {
-    if (cp >= 1) return "win";
-    if (cp <= 0) return "loss";
-  }
-  const rp = Number(p?.realized_pnl);
-  if (Number.isFinite(rp)) {
-    if (rp > 0) return "win";
-    if (rp < 0) return "loss";
-  }
-  return null;
-}
-
-// 정산 행의 실현손익 — 건수·승패와 같은 dedupe 집합 기준으로, 살아남은 행이
-// 속한 조회 목록의 정의를 따른다. 전 상태 행이 같은 필드를 갖는다(문서 List
-// positions의 Position 스키마 + CLOSED 실응답 대조 — REDEEMABLE 행은 현재
-// 지갑에 0건이라 실응답으로는 미확인, 문서 스키마로 대조).
-// 승(REDEEMABLE): 확정 지급액 − 진입 원가 = current_value − entry_cost_usdc.
-// 패(REDEEMABLE_LOST): 토큰 가치가 0으로 확정 — −entry_cost_usdc.
-// CLOSED: 행의 realized_pnl(문서: 포지션 누적 실현 손익).
-// 필요한 필드가 숫자가 아니면 null — 합산에서 빼고 settledRealizedExcluded로
-// 센다. 승패 판정 불가로 건수에만 들어간 행도 realized_pnl이 있으면 합산한다.
-function realizedOf(kind, p) {
-  const cost = Number(p?.entry_cost_usdc);
-  if (kind === "win") {
-    const value = Number(p?.current_value);
-    return Number.isFinite(value) && Number.isFinite(cost) ? value - cost : null;
-  }
-  if (kind === "loss") return Number.isFinite(cost) ? -cost : null;
-  const rp = Number(p?.realized_pnl);
-  return Number.isFinite(rp) ? rp : null;
-}
-
-// 포지션 장부 집계 — Data API v2 필드 기준 (문서 List positions + 실응답 대조):
-// 수량 current_size, 평균 진입가 avg_price, 현재 가치 current_value.
-// 등락 %는 보유(OPEN) 행만으로 (현재가치 합 − 진입원가 합) / 진입원가 합.
-// 정산 승패는 행의 status 값으로 가르지 않는다 — 상환 가능 패자 행도 status가
-// REDEEMABLE로 보존되고 REDEEMABLE·REDEEMABLE_LOST 양쪽 조회에 동시에
-// 잡히므로(2026-11-15 실측), REDEEMABLE 조회분은 행 필드(judgeClosedRow)로
-// 검증해 가르고 REDEEMABLE_LOST 조회분만 출처 그대로 패로 본다.
-// CLOSED 조회분은 행 필드로 판정한다(judgeClosedRow — 2026-11-14 사용자 결정으로
-// 정산 완료 집계에 포함). 세 목록의 합집합은 positionKey로 중복을 제거한다 —
-// 상태 전이 타이밍에 같은 포지션이 두 목록에 걸려도 한 번만 센다.
-// 실현손익도 같은 합집합으로 합산한다(realizedOf). 합산 가능한 행이 하나도
-// 없는데 정산 건만 있으면 settledRealizedPnl은 null — 0으로 지어내지 않는다.
-// 정산 조회를 하나라도 못 읽으면 settled*는 null —
-// 화면은 숫자를 지어내지 않고 미표시로 남긴다.
-// 손절 실행 기록(stopLossRecords: {token_id, realized_pnl})은 CLOSED 행보다
-// 먼저 합집합에 넣는다 — 손절로 닫힌 건은 현재가로 승패를 가르지 않고
-// 매도 실현손익 부호로 가르고, 실현도 기록값을 쓴다. 같은 토큰의 CLOSED
-// 행은 dedupe로 걸러져 기록을 덮지 못한다.
+// 정산·손익 표시의 정본은 Data API v2 포지션 행 자체다 (2026-11-24 방향 전환).
+// 정산 표시 = status=CLOSED 조회분의 realized_pnl을 그대로 합산하고, 승패도
+// realized_pnl 부호로 가른다 — 매도로 닫힌 행은 최종가(current_price)가 매도
+// 뒤 정산 결과로 뒤집혀도 실현손익이 사실이다.
+// 내부 원장(손절·수동 매도 기록)의 realized_pnl은 수수료를 뺀 총액 계산이라
+// 실측이 API와 어긋났다 (2026-11-24 현금흐름 대조: 기록 3건에서 +$1.04
+// 과대 계상, 앱 합계 -$11.10 vs 진실값 -$12.13). 기록은 표시 경로에서
+// 완전히 빼고 매매 판단(기매수 추적·재매수 차단)에만 남긴다. 손절 건수라는
+// 분류만 CLOSED 행 토큰과 손절 기록 토큰의 교집합으로 센다 — 금액·승패는
+// 기록에서 가져오지 않는다.
+// REDEEMABLE·REDEEMABLE_LOST 조회분은 정산 표시에 넣지 않는다 — 상환 전
+// 행은 아직 CLOSED가 아니고, 앱이 매 사이클 상환하므로 CLOSED 전이는
+// 한 사이클 안에 따라잡는다.
+// realized_pnl이 숫자가 아닌 행은 건수에만 넣고 합산에서 빼
+// settledRealizedExcluded로 센다. 합산 가능한 행이 하나도 없는데 정산
+// 건만 있으면 settledRealizedPnl은 null — 0으로 지어내지 않는다.
+// CLOSED 조회를 못 읽으면 settled*는 전부 null이고, snapshot()이 마지막으로
+// 성공한 API 표시값을 유지한다 — 내부 계산값으로 대체하지 않는다.
 // open 판정 단일 기준 — 네이티브 PositionBook.isOpenRow와 동일하다.
 // status가 "OPEN"인 행이 본체. status가 비어 있는 행은 종료 상태
 // (REDEEMABLE·CLOSED)가 아니고 수량이 있으면 보유로 본다 (표기 누락
@@ -346,20 +306,30 @@ export function isOpenRow(p) {
   return false;
 }
 
-export function summarizeBook(allRows, winRows, lostRows, closedRows, stopLossRecords, attemptedTokens = new Set(), manualSellRecords = []) {
+export function summarizeBook(allRows, closedRows, stopLossRecords) {
   const open = (allRows || []).filter(isOpenRow);
-  let value = 0;
-  let cost = 0;
+  // 보유 등락 — 행의 total_pnl(API 누적 손익)을 그대로 합산한다.
+  // total_pnl이 없는 행만 현재가치 − 수량×평균가로 행 단위 폴백한다
+  // (폴백 재료도 전부 API 필드다). 분모는 손익을 도로 뺀 원가 기준 합.
+  let openPnlSum = 0;
+  let openCostBasis = 0;
+  let openPnlRows = 0;
   for (const p of open) {
     const v = Number(p.current_value);
-    const c = Number(p.current_size) * Number(p.avg_price);
-    if (Number.isFinite(v)) value += v;
-    if (Number.isFinite(c)) cost += c;
+    if (!Number.isFinite(v)) continue;
+    let pnl = Number(p.total_pnl);
+    if (!Number.isFinite(pnl)) {
+      const c = Number(p.current_size) * Number(p.avg_price);
+      if (!Number.isFinite(c)) continue;
+      pnl = v - c;
+    }
+    openPnlSum += pnl;
+    openCostBasis += v - pnl;
+    openPnlRows += 1;
   }
   const positionsPnlPct =
-    open.length > 0 && cost > 0 ? ((value - cost) / cost) * 100 : null;
-  const settledKnown =
-    Array.isArray(winRows) && Array.isArray(lostRows) && Array.isArray(closedRows);
+    openPnlRows > 0 && openCostBasis > 0 ? (openPnlSum / openCostBasis) * 100 : null;
+  const settledKnown = Array.isArray(closedRows);
   let settledCount = null;
   let settledWins = null;
   let settledLosses = null;
@@ -367,85 +337,37 @@ export function summarizeBook(allRows, winRows, lostRows, closedRows, stopLossRe
   let settledRealizedExcluded = null;
   let settledStopLoss = null;
   if (settledKnown) {
-    const entries = new Map();
-    let seq = 0;
-    const add = (rows, kind, verdictOf) => {
-      for (const p of rows) {
-        const key = positionKey(p) ?? `u:${seq++}`;
-        if (!entries.has(key)) {
-          const verdict = verdictOf(p);
-          // 실현손익 종류는 REDEEMABLE 조회분에 한해 확정 판정을 따른다 —
-          // 그 조회에 섞인 패자 행이 승 종류로 계산되지 않게. CLOSED 행은
-          // 종전대로 realized_pnl 기준(closed 종류)을 유지한다.
-          const kindOf =
-            kind === "win" && verdict === "loss" ? "loss" : kind;
-          entries.set(key, { verdict, pnl: realizedOf(kindOf, p), kind });
-        }
-      }
-    };
-    // 손절 기록이 조회 목록보다 먼저다 — 손절로 닫힌 건은 현재가로
-    // 가르지 않고 매도 실현손익으로 가른다는 주석의 우선순위를 코드와
-    // 일치시킨다 (종전에는 조회 쪽이 먼저 들어가 주석과 달랐다).
+    // 손절 분류용 토큰 집합 — 기록의 금액·승패는 표시로 가져오지 않는다.
+    const stopTokens = new Set();
     for (const r of stopLossRecords || []) {
-      if (!r || typeof r.token_id !== "string" || !r.token_id) continue;
-      const key = `t:${r.token_id}`;
-      if (entries.has(key)) continue;
-      const rp = Number(r.realized_pnl);
-      const known = Number.isFinite(rp);
-      entries.set(key, {
-        verdict: known ? (rp > 0 ? "win" : rp < 0 ? "loss" : null) : null,
-        pnl: known ? rp : null,
-        kind: "stoploss",
-      });
+      if (r && typeof r.token_id === "string" && r.token_id) {
+        stopTokens.add(`t:${r.token_id}`);
+      }
     }
-    // 수동 매도 기록도 조회 목록보다 먼저다 — 실제 매도 실현손익으로
-    // 가르고, 손절 건수에는 넣지 않는다 (kind "manual", v0.3.33 감사).
-    for (const r of manualSellRecords || []) {
-      if (!r || typeof r.token_id !== "string" || !r.token_id) continue;
-      const key = `t:${r.token_id}`;
-      if (entries.has(key)) continue;
-      const rp = Number(r.realized_pnl);
-      const known = Number.isFinite(rp);
-      entries.set(key, {
-        verdict: known ? (rp > 0 ? "win" : rp < 0 ? "loss" : null) : null,
-        pnl: known ? rp : null,
-        kind: "manual",
-      });
-    }
-    // 패자 행도 REDEEMABLE 조회에 함께 잡힌다 (2026-11-15 실측: 0원 확정
-    // 2건이 REDEEMABLE·REDEEMABLE_LOST 양쪽에 동시 존재). 조회 출처만으로
-    // 승 고정하면 패가 승으로 오분류되므로 행 필드로 검증한다 — 필드
-    // 판정이 가능하면 그쪽이 이기고, 필드가 없어 못 가릴 때만 출처를
-    // 폴백으로 쓴다 (실응답은 current_price가 항상 실리는 스키마).
-    add(winRows, "win", (p) => judgeClosedRow(p) ?? "win");
-    add(lostRows, "loss", () => "loss");
-    // 결과 불명 손절을 시도한 토큰의 CLOSED 행은 최종가(1.0이면 승으로
-    // 뒤집힘)가 아니라 realized_pnl 부호로 판정한다.
-    add(closedRows, "closed", (p) =>
-      attemptedTokens.has(p?.token_id)
-        ? (() => {
-            const rp = Number(p?.realized_pnl);
-            if (Number.isFinite(rp)) return rp > 0 ? "win" : rp < 0 ? "loss" : null;
-            return null;
-          })()
-        : judgeClosedRow(p),
-    );
-    settledCount = entries.size;
+    const seen = new Set();
+    let seq = 0;
+    settledCount = 0;
     settledWins = 0;
     settledLosses = 0;
     settledStopLoss = 0;
     settledRealizedExcluded = 0;
     let pnlSum = 0;
     let pnlKnown = 0;
-    for (const e of entries.values()) {
-      if (e.verdict === "win") settledWins += 1;
-      else if (e.verdict === "loss") settledLosses += 1;
-      if (e.kind === "stoploss") settledStopLoss += 1;
-      if (e.pnl == null) settledRealizedExcluded += 1;
-      else {
-        pnlSum += e.pnl;
-        pnlKnown += 1;
+    for (const p of closedRows) {
+      const key = positionKey(p) ?? `u:${seq++}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      settledCount += 1;
+      if (stopTokens.has(key)) settledStopLoss += 1;
+      const rp = Number(p?.realized_pnl);
+      if (!Number.isFinite(rp)) {
+        settledRealizedExcluded += 1;
+        continue;
       }
+      if (rp > 0) settledWins += 1;
+      else if (rp < 0) settledLosses += 1;
+      pnlSum += rp;
+      pnlKnown += 1;
     }
     if (pnlKnown > 0 || settledCount === 0) settledRealizedPnl = round2(pnlSum);
   }
@@ -1110,6 +1032,7 @@ const state = {
   lastWinRows: null,
   lastLostRows: null,
   lastClosedRows: null,
+  lastSettledApi: null,
   redeemKeyWarnedDay: "",
   settledBaseline: null,
   settledBaselineLoaded: false,
@@ -1588,20 +1511,36 @@ async function snapshot(cfg) {
   let lostRows = null;
   let closedRows = null;
   try {
-    [winRows, lostRows, closedRows] = await Promise.all([
+    [winRows, lostRows] = await Promise.all([
       fetchPositions(state.funder, "REDEEMABLE"),
       fetchPositions(state.funder, "REDEEMABLE_LOST"),
-      fetchPositions(state.funder, "CLOSED"),
     ]);
   } catch {
-    // 정산 집계를 못 읽으면 settled*는 null로 남아 화면이 미표시한다
+    // 상환 판정용 조회 실패 — lastWinRows가 null로 남아 runRedeems가
+    // 정산 미상으로 취급한다 (기존 동작).
   }
-  const book = summarizeBook(
-    positions, winRows, lostRows, closedRows, stopLossRecords(),
-    new Set([...stopLossAttemptedTokens(), ...manualSellAttemptedTokens()]),
-    manualSellRecords(),
-  );
+  try {
+    closedRows = await fetchPositions(state.funder, "CLOSED");
+  } catch {
+    // 정산 표시용 조회 실패 — settled*는 마지막 성공값을 유지한다 (아래).
+  }
+  const book = summarizeBook(positions, closedRows, stopLossRecords());
   state.lastClosedRows = closedRows;
+  // 정산 표시 폴백 — CLOSED 조회를 못 읽은 사이클은 마지막으로 성공한
+  // API 표시값을 그대로 싣는다. 성공한 적이 없으면 null로 남아 화면이
+  // 미표시(—)한다. 내부 원장 계산값으로 대체하지 않는다 (2026-11-24).
+  let settledDisplay = {
+    settledCount: book.settledCount,
+    settledWins: book.settledWins,
+    settledLosses: book.settledLosses,
+    settledStopLoss: book.settledStopLoss,
+    settledRealizedPnl: book.settledRealizedPnl,
+  };
+  if (closedRows != null) {
+    state.lastSettledApi = settledDisplay;
+  } else if (state.lastSettledApi) {
+    settledDisplay = state.lastSettledApi;
+  }
   // 설정은 사이클당 1회만 파싱한다 — runCycle이 파싱한 cfg를 그대로 쓰고,
   // 사이클 밖 호출자(연동·복원)는 인자가 없어 이 진입점에서 새로 파싱한다
   // (v0.3.38 감사 축 1/4).
@@ -1614,11 +1553,11 @@ async function snapshot(cfg) {
     positionsValue,
     equity,
     openCount: book.openCount,
-    settledCount: book.settledCount,
-    settledWins: book.settledWins,
-    settledLosses: book.settledLosses,
-    settledStopLoss: book.settledStopLoss,
-    settledRealizedPnl: book.settledRealizedPnl,
+    settledCount: settledDisplay.settledCount,
+    settledWins: settledDisplay.settledWins,
+    settledLosses: settledDisplay.settledLosses,
+    settledStopLoss: settledDisplay.settledStopLoss,
+    settledRealizedPnl: settledDisplay.settledRealizedPnl,
     positionsPnlPct: book.positionsPnlPct,
     heldSlugs: book.heldSlugs,
     stopLossSlugs: book.stopLossSlugs,
@@ -2348,9 +2287,9 @@ async function runCycle(gen) {
     `사이클 ${state.cycle} · 잔고 $${snap.cash} · 평가 $${snap.equity} · ` +
     `건당 $${snap.bet} · 슬롯 ${snap.slots} · 보유 ${snap.openCount}`,
   );
-  // 정산 확정 감지 — 기준선(영속) 대비 신규 정산분.
-  // 손절 기록분은 이 스냅샷에 이미 들어 있고 기준선에도 반영되므로 여기서
-  // 다시 세지 않는다 (손절 알림은 실행 시점에 따로 간다).
+  // 정산 확정 감지 — 기준선(영속) 대비 신규 정산분. 스냅샷의 정산 수치는
+  // API CLOSED 합산만으로 만들어지므로 손절·수동 매도분도 CLOSED 전이
+  // 시점에 한 번만 잡힌다 (손절 알림은 실행 시점에 따로 간다).
   if (!state.settledBaselineLoaded) {
     state.settledBaseline = loadSettledBaseline();
     state.settledBaselineLoaded = true;

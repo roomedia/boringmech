@@ -1,14 +1,14 @@
 {
  "meta": {
-  "target": "app/src/engine.js summarizeBook(allRows, winRows, lostRows, closedRows, stopLossRecords, attemptedTokens:Set) + snapshot()의 sizing(cash, equity, openCount)",
-  "note": "cash/positionsValue는 summarizeBook 인자가 아니라 snapshot()이 sizing에 넘기는 값 — fixture에 함께 실어 네이티브 스냅샷 전체를 대조할 수 있게 했다. equity = round2(cash + positionsValue). stopLossAttempted는 Set을 배열로 직렬화한 것.",
+  "target": "app/src/engine.js summarizeBook(allRows, closedRows, stopLossRecords) + snapshot()의 sizing(cash, equity, openCount)",
+  "note": "cash/positionsValue는 summarizeBook 인자가 아니라 snapshot()이 sizing에 넘기는 값 — fixture에 함께 실어 네이티브 스냅샷 전체를 대조할 수 있게 했다. equity = round2(cash + positionsValue). 2026-11-24: 정산 표시가 data-api CLOSED 행 직독으로 바뀌어 입력에서 winRows/lostRows/stopLossAttempted를 제거했다.",
   "generated_at": "2026-11-15T07:34:12Z",
   "expected_from": "app/src/engine.js (추출 실행)"
  },
  "cases": {
   "live-account-20261115": {
    "openCount": 4,
-   "positionsPnlPct": 9.401473626940856,
+   "positionsPnlPct": 9.393712724552696,
    "settledCount": 6,
    "settledWins": 2,
    "settledLosses": 4,
@@ -24,7 +24,7 @@
    "stopLossSlugs": [],
    "sizing": null
   },
-  "redeemable-contains-losers": {
+  "closed-rows-are-source": {
    "openCount": 1,
    "positionsPnlPct": 14.285714285714285,
    "settledCount": 3,
@@ -45,7 +45,7 @@
     "slots": 2
    }
   },
-  "attempted-token-in-closed": {
+  "records-do-not-flip-verdict": {
    "openCount": 0,
    "positionsPnlPct": null,
    "settledCount": 3,
@@ -55,24 +55,20 @@
    "settledRealizedExcluded": 1,
    "settledStopLoss": 0,
    "heldSlugs": [],
-   "stopLossSlugs": [],
-   "sizing": {
-    "equity": 30,
-    "cashFloor": 9,
-    "available": 21,
-    "bet": 5,
-    "slots": 4
-   }
+   "stopLossSlugs": [
+    "att-mkt"
+   ],
+   "sizing": null
   },
   "stoploss-ledger-overlaps-closed": {
    "openCount": 0,
    "positionsPnlPct": null,
-   "settledCount": 4,
+   "settledCount": 2,
    "settledWins": 1,
-   "settledLosses": 2,
-   "settledRealizedPnl": -5.3,
+   "settledLosses": 1,
+   "settledRealizedPnl": -2.34,
    "settledRealizedExcluded": 0,
-   "settledStopLoss": 3,
+   "settledStopLoss": 1,
    "heldSlugs": [],
    "stopLossSlugs": [
     "sl-flat",
@@ -110,39 +106,27 @@
    "openCount": 0,
    "positionsPnlPct": null,
    "settledCount": 3,
-   "settledWins": 2,
+   "settledWins": 1,
    "settledLosses": 0,
-   "settledRealizedPnl": 5,
+   "settledRealizedPnl": 2,
    "settledRealizedExcluded": 2,
    "settledStopLoss": 0,
    "heldSlugs": [],
    "stopLossSlugs": [],
-   "sizing": {
-    "equity": 10,
-    "cashFloor": 3,
-    "available": 7,
-    "bet": 5,
-    "slots": 1
-   }
+   "sizing": null
   },
   "realized-all-uncomputable": {
    "openCount": 0,
    "positionsPnlPct": null,
    "settledCount": 2,
-   "settledWins": 1,
-   "settledLosses": 1,
+   "settledWins": 0,
+   "settledLosses": 0,
    "settledRealizedPnl": null,
    "settledRealizedExcluded": 2,
    "settledStopLoss": 0,
    "heldSlugs": [],
    "stopLossSlugs": [],
-   "sizing": {
-    "equity": 10,
-    "cashFloor": 3,
-    "available": 7,
-    "bet": 5,
-    "slots": 1
-   }
+   "sizing": null
   },
   "settled-fetch-failed": {
    "openCount": 2,
@@ -170,7 +154,7 @@
   },
   "open-status-edges": {
    "openCount": 4,
-   "positionsPnlPct": -12.5,
+   "positionsPnlPct": 16.666666666666664,
    "settledCount": 0,
    "settledWins": 0,
    "settledLosses": 0,
@@ -195,9 +179,9 @@
    "positionsPnlPct": null,
    "settledCount": 3,
    "settledWins": 1,
-   "settledLosses": 1,
-   "settledRealizedPnl": 1.25,
-   "settledRealizedExcluded": 1,
+   "settledLosses": 2,
+   "settledRealizedPnl": 0.25,
+   "settledRealizedExcluded": 0,
    "settledStopLoss": 3,
    "heldSlugs": [],
    "stopLossSlugs": [
@@ -207,20 +191,14 @@
     "no-token",
     "numeric-token"
    ],
-   "sizing": {
-    "equity": 15,
-    "cashFloor": 4.5,
-    "available": 10.5,
-    "bet": 5,
-    "slots": 2
-   }
+   "sizing": null
   },
   "closed-verdict-fallbacks": {
    "openCount": 0,
    "positionsPnlPct": null,
    "settledCount": 4,
-   "settledWins": 2,
-   "settledLosses": 1,
+   "settledWins": 1,
+   "settledLosses": 2,
    "settledRealizedPnl": -1.5,
    "settledRealizedExcluded": 0,
    "settledStopLoss": 0,
@@ -234,13 +212,26 @@
     "slots": 2
    }
   },
-  "redeemable-field-fallbacks": {
+  "closed-field-edges": {
+   "openCount": 0,
+   "positionsPnlPct": null,
+   "settledCount": 3,
+   "settledWins": 1,
+   "settledLosses": 1,
+   "settledRealizedPnl": 1,
+   "settledRealizedExcluded": 1,
+   "settledStopLoss": 0,
+   "heldSlugs": [],
+   "stopLossSlugs": [],
+   "sizing": null
+  },
+  "position-key-fallbacks": {
    "openCount": 0,
    "positionsPnlPct": null,
    "settledCount": 3,
    "settledWins": 2,
    "settledLosses": 1,
-   "settledRealizedPnl": 4,
+   "settledRealizedPnl": 0.5,
    "settledRealizedExcluded": 0,
    "settledStopLoss": 0,
    "heldSlugs": [],
@@ -253,24 +244,18 @@
     "slots": 2
    }
   },
-  "position-key-fallbacks": {
+  "live-settled-20261124": {
    "openCount": 0,
    "positionsPnlPct": null,
-   "settledCount": 3,
-   "settledWins": 2,
-   "settledLosses": 1,
-   "settledRealizedPnl": 5,
+   "settledCount": 8,
+   "settledWins": 4,
+   "settledLosses": 4,
+   "settledRealizedPnl": -12.13,
    "settledRealizedExcluded": 0,
-   "settledStopLoss": 0,
+   "settledStopLoss": 2,
    "heldSlugs": [],
    "stopLossSlugs": [],
-   "sizing": {
-    "equity": 15,
-    "cashFloor": 4.5,
-    "available": 10.5,
-    "bet": 5,
-    "slots": 2
-   }
+   "sizing": null
   }
  }
 }

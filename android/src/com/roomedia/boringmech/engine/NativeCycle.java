@@ -207,6 +207,14 @@ public final class NativeCycle {
     private List<Object> lastWinRows;
     private List<Object> lastLostRows;
     private List<Object> lastClosedRows;
+    // 정산 표시 마지막 성공값 (engine.js state.lastSettledApi 대응).
+    private boolean hasLastSettledApi = false;
+    private Integer lastSettledCount;
+    private Integer lastSettledWins;
+    private Integer lastSettledLosses;
+    private Integer lastSettledStopLoss;
+    private Integer lastSettledRealizedExcluded;
+    private Double lastSettledRealizedPnl;
     private Snap lastSnapshot;
 
     private boolean boughtReconciled = false;
@@ -364,29 +372,55 @@ public final class NativeCycle {
         try {
             winRows = net.fetchPositions("REDEEMABLE");
             lostRows = net.fetchPositions("REDEEMABLE_LOST");
-            closedRows = net.fetchPositions("CLOSED");
         } catch (Exception e) {
             winRows = null;
             lostRows = null;
+        }
+        try {
+            closedRows = net.fetchPositions("CLOSED");
+        } catch (Exception e) {
             closedRows = null;
         }
-        PositionBook.Book book = PositionBook.summarizeBook(positions, winRows, lostRows, closedRows,
-                StopLossLedger.records(ledgerStore),
-                ManualSell.combineRecords(loadDurableJsonList(ManualSell.ARCHIVE_KEY),
-                        loadDurableJsonList(ManualSell.LEDGER_KEY)), attemptedObjects());
+        PositionBook.Book book = PositionBook.summarizeBook(positions, closedRows,
+                StopLossLedger.records(ledgerStore));
         lastClosedRows = closedRows;
+        // 정산 표시 폴백 — engine.js snapshot()과 동일. CLOSED 조회 실패
+        // 사이클은 마지막 성공 API 표시값을 유지하고, 내부 계산값으로
+        // 대체하지 않는다.
+        Integer settledCount = book.settledCount;
+        Integer settledWins = book.settledWins;
+        Integer settledLosses = book.settledLosses;
+        Integer settledStopLoss = book.settledStopLoss;
+        Integer settledRealizedExcluded = book.settledRealizedExcluded;
+        Double settledRealizedPnl = book.settledRealizedPnl;
+        if (closedRows != null) {
+            hasLastSettledApi = true;
+            lastSettledCount = settledCount;
+            lastSettledWins = settledWins;
+            lastSettledLosses = settledLosses;
+            lastSettledStopLoss = settledStopLoss;
+            lastSettledRealizedExcluded = settledRealizedExcluded;
+            lastSettledRealizedPnl = settledRealizedPnl;
+        } else if (hasLastSettledApi) {
+            settledCount = lastSettledCount;
+            settledWins = lastSettledWins;
+            settledLosses = lastSettledLosses;
+            settledStopLoss = lastSettledStopLoss;
+            settledRealizedExcluded = lastSettledRealizedExcluded;
+            settledRealizedPnl = lastSettledRealizedPnl;
+        }
         PositionBook.Sizing sizing = PositionBook.sizing(cash, equity, book.openCount, tradeCfg);
         Snap snap = new Snap();
         snap.cash = cash;
         snap.positionsValue = positionsValue;
         snap.equity = equity;
         snap.openCount = book.openCount;
-        snap.settledCount = book.settledCount;
-        snap.settledWins = book.settledWins;
-        snap.settledLosses = book.settledLosses;
-        snap.settledStopLoss = book.settledStopLoss;
-        snap.settledRealizedExcluded = book.settledRealizedExcluded;
-        snap.settledRealizedPnl = book.settledRealizedPnl;
+        snap.settledCount = settledCount;
+        snap.settledWins = settledWins;
+        snap.settledLosses = settledLosses;
+        snap.settledStopLoss = settledStopLoss;
+        snap.settledRealizedExcluded = settledRealizedExcluded;
+        snap.settledRealizedPnl = settledRealizedPnl;
         snap.positionsPnlPct = book.positionsPnlPct;
         snap.heldSlugs = book.heldSlugs;
         snap.stopLossSlugs = book.stopLossSlugs;
@@ -435,19 +469,6 @@ public final class NativeCycle {
 
     private static Object numOrNullFinite(double v) {
         return Double.isFinite(v) ? v : null;
-    }
-
-    private Set<Object> attemptedObjects() {
-        Set<Object> out = new HashSet<>(StopLossLedger.attemptedTokens(ledgerStore));
-        // 결과 불명 수동 매도 시도 토큰도 같은 보호를 받는다 — CLOSED 행이
-        // 최종가로 뒤집혀 집계되지 않게 한다 (v0.3.33 감사). 아카이브로
-        // 회전된 토큰도 보호가 풀리지 않게 함께 읽는다 (v0.3.35 감사 축 3).
-        for (Object t : ManualSell.combineAttempted(
-                loadDurableJsonList(ManualSell.ATTEMPTED_ARCHIVE_KEY),
-                loadDurableJsonList(ManualSell.ATTEMPTED_KEY))) {
-            out.add(t);
-        }
-        return out;
     }
 
     private static Object numOrNull(Double v) {
