@@ -573,6 +573,18 @@
         return Array.isArray(arr) ? arr : [];
       } catch (e) { return []; }
     }
+    function readShadow(){
+      // 도시 점수 섀도우 기록 — 네이티브 durable이 정본, LS는 폴백
+      // (readLogs와 같은 순서). 없거나 깨졌으면 null이다.
+      try {
+        var viaNative = window.AndroidBridge && AndroidBridge.getDurable && AndroidBridge.getDurable('bm_shadow');
+        if (viaNative) {
+          var parsed = JSON.parse(viaNative);
+          if (parsed && typeof parsed === 'object') return parsed;
+        }
+      } catch (e) {}
+      try { return JSON.parse(localStorage.getItem('bm_shadow') || 'null'); } catch (e) { return null; }
+    }
     function readUpdateInfo(){
       try {
         var viaNative = window.AndroidBridge && AndroidBridge.getNativeUpdateInfo && AndroidBridge.getNativeUpdateInfo();
@@ -1754,6 +1766,11 @@
       try {
         var eff = BM.effectiveSettingsSummary && BM.effectiveSettingsSummary(readSettingsObject());
         if (eff) payload.settings = eff;
+      } catch (e) {}
+      // 섀도우 기록 — 실패하면 shadow만 빠지고 제보 자체는 그대로 나간다.
+      try {
+        var shadow = readShadow();
+        if (shadow) payload.shadow = shadow;
       } catch (e) {}
       payload.logs = readLogs();
       for (var attempt = 0; attempt < 2; attempt++){

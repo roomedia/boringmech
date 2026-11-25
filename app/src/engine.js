@@ -98,6 +98,7 @@ const LS = {
   manualSellAttempted: "bm_manual_sell_attempted",
   manualSellAttemptedArchive: "bm_manual_sell_attempted_archive",
   settings: "bm_settings",
+  shadow: "bm_shadow",
 };
 
 // 손절 (2026-11-14 사용자 결정 — 페이퍼 boringmech와 동일 규칙):
@@ -971,6 +972,333 @@ export function scanTempCandidates(events, heldSlugs, boughtSlugs, settings, now
  */
 export function tempFetchDayKey(nowMs) {
   return new Date(nowMs).toISOString().slice(0, 10);
+}
+
+// ── 도시 점수 섀도우 기록 ────────────────────────────────────
+// 도시×현지시각 연구(citytime-sort-20261126.md)의 판정은 "섀도우 기록만
+// 가치 있음"이었다. 거래 동작은 바꾸지 않고, 기온 후보 평가를 점수표와
+// 나란히 기록해 표본을 쌓는다. 점수표는 연구 산출물
+// (queue-20261124/citytime_sort_keys.json, 2026-11-26 생성, 재료 기간
+// 2026-10-06..11-18, 건당 $5·체결 페널티 0.5센트)의 축소 점수를 그대로
+// 옮긴 것이고, 연구가 갱신되면 이 표만 교체한다. 축소 결과 버킷 간 실제
+// 분산이 0이라 현재 표는 도시마다 전 버킷 같은 값이지만, 조회는
+// 셀 → 도시 평균 순으로 걸어 다음 표에서 버킷 편차가 생겨도 그대로
+// 쓰게 한다. 표에 없는 도시는 무점수(중립) — 순위 뒤로 밀고 기록에도
+// score: null로 남긴다 (네이티브 ShadowLog와 같은 규칙).
+export const SHADOW_SCORE_GENERATED = "2026-11-26";
+export const SHADOW_BUCKETS = ["00-06", "06-10", "10-14", "14-18", "18-24"];
+export const CITY_TIMEZONES = {
+  "amsterdam": "Europe/Amsterdam",
+  "ankara": "Europe/Istanbul",
+  "austin": "America/Chicago",
+  "beijing": "Asia/Shanghai",
+  "buenos-aires": "America/Argentina/Buenos_Aires",
+  "busan": "Asia/Seoul",
+  "cape-town": "Africa/Johannesburg",
+  "chengdu": "Asia/Shanghai",
+  "chongqing": "Asia/Shanghai",
+  "dallas": "America/Chicago",
+  "guangzhou": "Asia/Shanghai",
+  "helsinki": "Europe/Helsinki",
+  "hong-kong": "Asia/Hong_Kong",
+  "houston": "America/Chicago",
+  "istanbul": "Europe/Istanbul",
+  "jeddah": "Asia/Riyadh",
+  "kuala-lumpur": "Asia/Kuala_Lumpur",
+  "london": "Europe/London",
+  "los-angeles": "America/Los_Angeles",
+  "madrid": "Europe/Madrid",
+  "miami": "America/New_York",
+  "milan": "Europe/Rome",
+  "munich": "Europe/Berlin",
+  "nyc": "America/New_York",
+  "paris": "Europe/Paris",
+  "qingdao": "Asia/Shanghai",
+  "san-francisco": "America/Los_Angeles",
+  "sao-paulo": "America/Sao_Paulo",
+  "seattle": "America/Los_Angeles",
+  "seoul": "Asia/Seoul",
+  "shanghai": "Asia/Shanghai",
+  "shenzhen": "Asia/Shanghai",
+  "singapore": "Asia/Singapore",
+  "taipei": "Asia/Taipei",
+  "tel-aviv": "Asia/Jerusalem",
+  "tokyo": "Asia/Tokyo",
+  "toronto": "America/Toronto",
+  "warsaw": "Europe/Warsaw",
+  "wellington": "Pacific/Auckland",
+  "wuhan": "Asia/Shanghai"
+};
+export const CITY_SHADOW_SCORES = {
+  "amsterdam": { "00-06": 0.0942, "06-10": 0.0942, "10-14": 0.0942, "14-18": 0.0942 },
+  "ankara": { "00-06": -0.0423, "06-10": -0.0423, "10-14": -0.0423, "14-18": -0.0423 },
+  "austin": { "00-06": 0.0091, "06-10": 0.0091, "18-24": 0.0091 },
+  "beijing": { "06-10": 0.0532, "10-14": 0.0532, "14-18": 0.0532, "18-24": 0.0532 },
+  "buenos-aires": { "00-06": -0.1237, "06-10": -0.1237, "18-24": -0.1237 },
+  "busan": { "06-10": 0.0721, "10-14": 0.0721, "14-18": 0.0721, "18-24": 0.0721 },
+  "cape-town": { "00-06": -0.0993, "06-10": -0.0993, "10-14": -0.0993, "14-18": -0.0993 },
+  "chengdu": { "06-10": 0.0131, "10-14": 0.0131, "14-18": 0.0131, "18-24": 0.0131 },
+  "chongqing": { "06-10": 0.0361, "10-14": 0.0361, "14-18": 0.0361, "18-24": 0.0361 },
+  "dallas": { "00-06": 0.1278, "06-10": 0.1278, "18-24": 0.1278 },
+  "guangzhou": { "06-10": -0.0264, "10-14": -0.0264, "14-18": -0.0264, "18-24": -0.0264 },
+  "helsinki": { "00-06": 0.0743, "06-10": 0.0743, "10-14": 0.0743, "14-18": 0.0743 },
+  "hong-kong": { "06-10": -0.0103, "10-14": -0.0103, "14-18": -0.0103, "18-24": -0.0103 },
+  "houston": { "00-06": -0.0195, "06-10": -0.0195, "18-24": -0.0195 },
+  "istanbul": { "00-06": 0.0768, "06-10": 0.0768, "10-14": 0.0768, "14-18": 0.0768 },
+  "jeddah": { "00-06": -0.0635, "06-10": -0.0635, "10-14": -0.0635, "14-18": -0.0635 },
+  "kuala-lumpur": { "06-10": 0.0504, "10-14": 0.0504, "14-18": 0.0504, "18-24": 0.0504 },
+  "london": { "00-06": 0.0465, "06-10": 0.0465, "10-14": 0.0465 },
+  "los-angeles": { "00-06": 0.1166, "14-18": 0.1166, "18-24": 0.1166 },
+  "madrid": { "00-06": -0.0793, "06-10": -0.0793, "10-14": -0.0793, "14-18": -0.0793 },
+  "miami": { "00-06": 0.082, "06-10": 0.082, "18-24": 0.082 },
+  "milan": { "00-06": -0.0341, "06-10": -0.0341, "10-14": -0.0341, "14-18": -0.0341 },
+  "munich": { "00-06": 0.0165, "06-10": 0.0165, "10-14": 0.0165, "14-18": 0.0165 },
+  "nyc": { "00-06": 0.1007, "06-10": 0.1007, "18-24": 0.1007 },
+  "paris": { "00-06": -0.1539, "06-10": -0.1539, "10-14": -0.1539, "14-18": -0.1539 },
+  "qingdao": { "06-10": 0.0707, "10-14": 0.0707, "14-18": 0.0707, "18-24": 0.0707 },
+  "san-francisco": { "00-06": 0.0613, "14-18": 0.0613, "18-24": 0.0613 },
+  "sao-paulo": { "00-06": 0.0309, "06-10": 0.0309, "18-24": 0.0309 },
+  "seattle": { "00-06": 0.002, "14-18": 0.002, "18-24": 0.002 },
+  "seoul": { "06-10": -0.0485, "10-14": -0.0485, "14-18": -0.0485, "18-24": -0.0485 },
+  "shanghai": { "06-10": 0.0623, "10-14": 0.0623, "14-18": 0.0623, "18-24": 0.0623 },
+  "shenzhen": { "06-10": -0.0759, "10-14": -0.0759, "14-18": -0.0759, "18-24": -0.0759 },
+  "singapore": { "06-10": 0.0646, "10-14": 0.0646, "14-18": 0.0646, "18-24": 0.0646 },
+  "taipei": { "06-10": -0.0012, "10-14": -0.0012, "14-18": -0.0012, "18-24": -0.0012 },
+  "tel-aviv": { "00-06": 0.0073, "06-10": 0.0073, "10-14": 0.0073, "14-18": 0.0073 },
+  "tokyo": { "06-10": -0.0722, "10-14": -0.0722, "14-18": -0.0722, "18-24": -0.0722 },
+  "toronto": { "00-06": -0.1553, "06-10": -0.1553, "18-24": -0.1553 },
+  "warsaw": { "00-06": 0.0303, "06-10": 0.0303, "10-14": 0.0303, "14-18": 0.0303 },
+  "wellington": { "00-06": 0.0517, "10-14": 0.0517, "14-18": 0.0517, "18-24": 0.0517 },
+  "wuhan": { "06-10": 0.0846, "10-14": 0.0846, "14-18": 0.0846, "18-24": 0.0846 }
+};
+// 저장 상한 — 사이클 기록은 오래된 것부터 버리고 일별 롤업은 최근
+// 14일만 남긴다. 전체 직렬화 크기가 상한을 넘으면 같은 순서로 더 버린다.
+export const SHADOW_MAX_BYTES = 256 * 1024;
+export const SHADOW_MAX_CYCLES = 400;
+export const SHADOW_MAX_DAYS = 14;
+
+/** 기온 시장·이벤트 슬러그에서 도시를 뽑는다. 형식이 어긋나면 null. */
+export function tempCityOfSlug(slug) {
+  if (!isTempNoSlug(slug)) return null;
+  const rest = slug.slice(TEMP_NO_SLUG_PREFIX.length);
+  const idx = rest.indexOf("-on-");
+  if (idx <= 0) return null;
+  return rest.slice(0, idx);
+}
+
+const shadowTzFormatters = new Map();
+
+/**
+ * 도시 현지 시각 버킷 — 연구 bucket_of와 같은 경계. 시간대를 모르거나
+ * Intl이 실패하면 null이다 (그 후보는 버킷 없음으로 기록된다).
+ */
+export function tempLocalBucketOf(city, nowMs) {
+  const tz = CITY_TIMEZONES[city];
+  if (!tz || !Number.isFinite(nowMs)) return null;
+  let hour;
+  try {
+    let fmt = shadowTzFormatters.get(tz);
+    if (!fmt) {
+      fmt = new Intl.DateTimeFormat("en-GB", {
+        timeZone: tz, hour: "2-digit", hourCycle: "h23",
+      });
+      shadowTzFormatters.set(tz, fmt);
+    }
+    hour = Number(fmt.format(new Date(nowMs)));
+  } catch {
+    return null;
+  }
+  if (!Number.isFinite(hour)) return null;
+  if (hour === 24) hour = 0;
+  if (hour < 0 || hour > 23) return null;
+  if (hour < 6) return "00-06";
+  if (hour < 10) return "06-10";
+  if (hour < 14) return "10-14";
+  if (hour < 18) return "14-18";
+  return "18-24";
+}
+
+/**
+ * 섀도우 점수 조회 — (도시, 버킷) 셀 → 도시 평균(표에 있는 버킷 값들의
+ * 평균) → 없으면 null(무점수). 평균은 버킷 고정 순서로 합산해 네이티브와
+ * 같은 값을 낸다.
+ */
+export function shadowScoreFor(city, bucket, table = CITY_SHADOW_SCORES) {
+  const perCity = table && typeof table === "object" ? table[city] : null;
+  if (!perCity || typeof perCity !== "object") return null;
+  const cell = perCity[bucket];
+  if (Number.isFinite(cell)) return cell;
+  let sum = 0;
+  let n = 0;
+  let first = null;
+  let allSame = true;
+  for (const b of SHADOW_BUCKETS) {
+    const v = perCity[b];
+    if (Number.isFinite(v)) {
+      sum += v;
+      n += 1;
+      if (first == null) first = v;
+      else if (v !== first) allSame = false;
+    }
+  }
+  if (!n) return null;
+  // 전 버킷 같은 값이면 평균도 그 값 — 합산 오차로 어긋나지 않게 한다.
+  return allSame ? first : sum / n;
+}
+
+/** 기온 이벤트 날짜 키 — endDate의 UTC 날짜 (진입 창 판정과 같은 기준). */
+export function tempEventDayKey(endDate) {
+  const ms = Date.parse(endDate || "");
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/**
+ * 사이클 섀도우 기록 1건 — 그 사이클이 평가한 기온 후보 전체에 도시·
+ * 버킷·점수·순위를 붙인다. 순위는 점수 내림차순, 무점수는 뒤, 동률은
+ * 평가 순서를 유지한다. enteredSlugs는 그 사이클에 매수로 기록된 slug
+ * 집합이다.
+ */
+export function buildShadowCycleRecord({ ts, cycle, cash, slots, openCount, cands, enteredSlugs }) {
+  const entered = enteredSlugs instanceof Set ? enteredSlugs : new Set(enteredSlugs || []);
+  const rows = (cands || []).map((cand) => {
+    const city = tempCityOfSlug(cand.slug);
+    const bucket = city ? tempLocalBucketOf(city, ts) : null;
+    const score = city && bucket ? shadowScoreFor(city, bucket) : null;
+    return {
+      slug: cand.slug,
+      city,
+      bucket,
+      date: tempEventDayKey(cand.endDate),
+      price: cand.price,
+      score,
+      rank: 0,
+      entered: entered.has(cand.slug),
+    };
+  });
+  const order = rows.map((_, i) => i);
+  order.sort((a, b) => {
+    const sa = rows[a].score;
+    const sb = rows[b].score;
+    if (sa == null && sb == null) return a - b;
+    if (sa == null) return 1;
+    if (sb == null) return -1;
+    if (sb !== sa) return sb - sa;
+    return a - b;
+  });
+  order.forEach((rowIdx, pos) => { rows[rowIdx].rank = pos + 1; });
+  return { ts, cycle, cash, slots, openCount, cands: rows };
+}
+
+/** 저장 원문의 관용 파싱 — 깨진 값은 빈 저장소로 떨어진다. */
+export function parseShadowStore(raw) {
+  let o = raw;
+  if (typeof raw === "string") {
+    try { o = JSON.parse(raw); } catch { o = null; }
+  }
+  if (!o || typeof o !== "object" || Array.isArray(o)) {
+    return { v: 1, cycles: [], days: [] };
+  }
+  const objOnly = (v) => (Array.isArray(v)
+    ? v.filter((x) => x && typeof x === "object" && !Array.isArray(x))
+    : []);
+  return { v: 1, cycles: objOnly(o.cycles), days: objOnly(o.days) };
+}
+
+function shadowDayOf(store, date) {
+  let day = store.days.find((d) => d && d.date === date);
+  if (!day) {
+    day = { date, cands: [], entered: [], shadow: { "1": [], "2": [], "3": [] } };
+    store.days.push(day);
+  }
+  if (!Array.isArray(day.cands)) day.cands = [];
+  if (!Array.isArray(day.entered)) day.entered = [];
+  return day;
+}
+
+/**
+ * 일별 섀도우 픽 재계산 — 점수 내림차순(무점수 뒤), 동률은 첫 관측
+ * 시각·slug 순. 연구 시뮬레이션의 score 정책과 같은 정렬이다.
+ */
+function refreshShadowPicks(day) {
+  const bySlug = (a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
+  const sorted = [...day.cands].sort((a, b) => {
+    const sa = a.score;
+    const sb = b.score;
+    if (sa == null && sb == null) return a.firstTs - b.firstTs || bySlug(a, b);
+    if (sa == null) return 1;
+    if (sb == null) return -1;
+    if (sb !== sa) return sb - sa;
+    return a.firstTs - b.firstTs || bySlug(a, b);
+  });
+  day.shadow = {
+    "1": sorted.slice(0, 1).map((c) => c.slug),
+    "2": sorted.slice(0, 2).map((c) => c.slug),
+    "3": sorted.slice(0, 3).map((c) => c.slug),
+  };
+}
+
+/**
+ * 사이클 기록을 저장소에 붙이고 보관 상한을 적용한다. 일별 롤업은 후보를
+ * 첫 관측(가격·점수·버킷)으로만 남기고, 실제 진입은 진입 순서대로 한 번만
+ * 남긴다 — 나중에 정산 결과와 slug로 결합하는 재료다.
+ */
+export function appendShadowCycle(store, record, limits = {}) {
+  const maxBytes = limits.maxBytes ?? SHADOW_MAX_BYTES;
+  const maxCycles = limits.maxCycles ?? SHADOW_MAX_CYCLES;
+  const maxDays = limits.maxDays ?? SHADOW_MAX_DAYS;
+  store.cycles.push(record);
+  const touched = new Set();
+  for (const row of record.cands || []) {
+    if (!row || !row.date || !row.slug) continue;
+    const day = shadowDayOf(store, row.date);
+    touched.add(row.date);
+    if (!day.cands.some((c) => c.slug === row.slug)) {
+      day.cands.push({
+        slug: row.slug, city: row.city, bucket: row.bucket,
+        price: row.price, score: row.score, firstTs: record.ts,
+      });
+    }
+    if (row.entered && !day.entered.includes(row.slug)) day.entered.push(row.slug);
+  }
+  for (const date of touched) {
+    const day = store.days.find((d) => d && d.date === date);
+    if (day) refreshShadowPicks(day);
+  }
+  store.days.sort((a, b) => {
+    const da = a && a.date != null ? String(a.date) : "";
+    const db = b && b.date != null ? String(b.date) : "";
+    return da < db ? -1 : da > db ? 1 : 0;
+  });
+  while (store.days.length > maxDays) store.days.shift();
+  while (store.cycles.length > maxCycles) store.cycles.shift();
+  while (store.cycles.length > 0 && JSON.stringify(store).length > maxBytes) {
+    store.cycles.shift();
+  }
+  while (store.days.length > 1 && JSON.stringify(store).length > maxBytes) {
+    store.days.shift();
+  }
+  return store;
+}
+
+/**
+ * 섀도우 기록 드라이버 — 저장소 읽기·붙이기·쓰기를 한 번에 한다. 기록은
+ * 부수 경로라 어떤 실패도 사이클을 막지 않는다 (호출 지점에서도 격리).
+ */
+export function recordShadowCycle({ ts, cycle, snap, cands, enteredSlugs }) {
+  if (!cands || !cands.length) return;
+  const record = buildShadowCycleRecord({
+    ts,
+    cycle,
+    cash: snap ? snap.cash : null,
+    slots: snap ? snap.slots : null,
+    openCount: snap ? snap.openCount : null,
+    cands,
+    enteredSlugs,
+  });
+  const store = parseShadowStore(durableRead(LS.shadow));
+  appendShadowCycle(store, record);
+  durableWrite(LS.shadow, JSON.stringify(store));
 }
 
 // 오늘+내일 기온 이벤트 조회 — 도시별 슬러그 직접 조회라 사이클마다
@@ -2561,6 +2889,8 @@ async function runCycle(gen) {
   // 선정 패스(슬롯·검증 캡 공유)를 타고, 메인 후보와 slug가 겹치면
   // 메인 쪽이 이긴다 (excludeSlugs). 기온 스캔 통계는 요약에 섞지 않는다.
   let tempEventsList = null;
+  // 섀도우 기록용 — 이 사이클이 평가한 기온 후보 (기록은 선정 패스 뒤).
+  let tempCandsSeen = [];
   // 기온 이벤트 조회 전수 실패 여부 — 실패와 "오늘 이벤트 없음"을
   // 구분해, 전수 실패 사이클은 예약을 유지하는 쪽으로 판정한다
   // (안전 방향, v0.3.39 감사 E).
@@ -2577,6 +2907,7 @@ async function runCycle(gen) {
         const tempCands = scanTempCandidates(
           events, snap.heldSlugs, boughtAll, tempSettings, Date.now(), null, mainSlugs,
         );
+        tempCandsSeen = tempCands;
         if (tempCands.length) {
           log(`기온 후보 ${tempCands.length}건 (밴드 ${tempSettings.bandLo}–${tempSettings.bandHi})`);
           candidates.push(...tempCands);
@@ -2781,6 +3112,9 @@ async function runCycle(gen) {
       || tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc, snap.heldSlugs, boughtAll));
   laneLeft = tempHold ? tempReserveSlots : 0;
   const heldMain = [];
+  // 섀도우 기록의 진입 판정 기준 — 선정 패스 전후의 매수 기록 차이로
+  // 이 사이클에 실제로 진입한 기온 후보를 가른다.
+  const boughtBeforeBuy = boughtSlugs();
   let aborted = false;
   for (const cand of candidates) {
     if (!state.running || gen !== state.gen) { aborted = true; break; }
@@ -2816,6 +3150,21 @@ async function runCycle(gen) {
     } else {
       log(`기온 예약 — 진입 창이 남은 이벤트가 있어 메인 ${heldMain.length}건을 미루고 슬롯을 남깁니다`);
     }
+  }
+  // 섀도우 기록 — 거래 동작과 무관한 부수 경로라 실패해도 사이클은
+  // 그대로 마친다. 중단된 사이클은 네이티브와 같이 기록하지 않는다.
+  if (!aborted && tempCandsSeen.length) {
+    try {
+      const boughtAfterBuy = boughtSlugs();
+      const enteredNow = new Set(
+        tempCandsSeen
+          .filter((c) => !boughtBeforeBuy.has(c.slug) && boughtAfterBuy.has(c.slug))
+          .map((c) => c.slug),
+      );
+      recordShadowCycle({
+        ts: Date.now(), cycle: state.cycle, snap, cands: tempCandsSeen, enteredSlugs: enteredNow,
+      });
+    } catch {}
   }
   if (aborted) return;
   log(summarizeCycle({

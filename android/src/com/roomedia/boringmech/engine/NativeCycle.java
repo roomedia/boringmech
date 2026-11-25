@@ -1594,6 +1594,8 @@ public final class NativeCycle {
         // 겹치면 메인 쪽이 이긴다. 기온 스캔 통계는 요약에 섞지 않는다.
         // 조회한 이벤트 목록은 아래 홀드 판정(창 대기)도 함께 쓴다.
         List<Object> tempEventsList = null;
+        // 섀도우 기록용 — 이 사이클이 평가한 기온 후보 (기록은 선정 패스 뒤).
+        List<ScanFilter.Candidate> tempCandsSeen = new ArrayList<>();
         // 기온 이벤트 조회 전수 실패 여부 — 실패와 "오늘 이벤트 없음"을
         // 구분해, 전수 실패 사이클은 예약을 유지하는 쪽으로 판정한다
         // (안전 방향, v0.3.39 감사 E).
@@ -1612,6 +1614,7 @@ public final class NativeCycle {
                     }
                     List<ScanFilter.Candidate> tempCands = TempNo.scanTempCandidates(
                             events, snap.heldSlugs, boughtAll, tempSettings, env.nowMs(), mainSlugs);
+                    tempCandsSeen = tempCands;
                     if (!tempCands.isEmpty()) {
                         log("기온 후보 " + tempCands.size() + "건 (밴드 " + n(tempSettings.bandLo)
                                 + "–" + n(tempSettings.bandHi) + ")");
@@ -1654,6 +1657,9 @@ public final class NativeCycle {
         int laneLeft = tempHold ? reserveEff : 0;
         int positionsUsed = snap.openCount;
         double cashLeft = snap.cash;
+        // 섀도우 기록의 진입 판정 기준 — 선정 패스 전후의 매수 기록 차이로
+        // 이 사이클에 실제로 진입한 기온 후보를 가른다.
+        Set<String> boughtBeforeBuy = boughtSlugStrings();
         List<ScanFilter.Candidate> heldMain = new ArrayList<>();
         for (ScanFilter.Candidate cand : candidates) {
             if (!env.isRunning(gen)) {
@@ -1869,6 +1875,23 @@ public final class NativeCycle {
             } else {
                 log("기온 예약 — 진입 창이 남은 이벤트가 있어 메인 " + heldMain.size()
                         + "건을 미루고 슬롯을 남깁니다");
+            }
+        }
+        // 섀도우 기록 — 거래 동작과 무관한 부수 경로라 실패해도 사이클은
+        // 그대로 마친다. 루프 중간 반환(세대 교체 등)은 JS와 같이
+        // 기록하지 않는다.
+        if (!tempCandsSeen.isEmpty()) {
+            try {
+                Set<String> boughtAfterBuy = boughtSlugStrings();
+                Set<String> enteredNow = new LinkedHashSet<>();
+                for (ScanFilter.Candidate c : tempCandsSeen) {
+                    if (!boughtBeforeBuy.contains(c.slug) && boughtAfterBuy.contains(c.slug)) {
+                        enteredNow.add(c.slug);
+                    }
+                }
+                ShadowLog.recordCycle(env, env.nowMs(), cycle, snap.cash, snap.slots,
+                        snap.openCount, tempCandsSeen, enteredNow);
+            } catch (Exception ignored) {
             }
         }
         stageMsScan = env.nowMs() - scanStartMs;
