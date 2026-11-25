@@ -178,7 +178,7 @@ vm.runInContext(inline, sandbox, { filename: "index-inline.js" });
 
 const $ = (id) => registry.get(id);
 const bandSlider = $("ts_bandLo");
-const sizeSlider = $("ts_betPct");
+const sizeSlider = $("ts_cashFloorPct");
 const stopSlider = $("ts_stopDrop");
 check(!!bandSlider && !!sizeSlider && !!stopSlider, "lock: 카드별 슬라이더 요소가 존재한다");
 
@@ -189,7 +189,7 @@ check(bandSlider.disabled === true, "lock: 잠금 상태에서 매수 카드 슬
 check($("tempNoEnabled").disabled === true, "lock: 잠금 상태에서 기온 스위치가 disabled다");
 check(sizeSlider.disabled === true, "lock: 잠금 상태에서 사이징 슬라이더가 disabled다");
 check(stopSlider.disabled === true, "lock: 잠금 상태에서 손절 슬라이더가 disabled다");
-check(stepBtnFor("ts_betMinUsd").disabled === true, "lock: 잠금 상태에서 사이징 스테퍼가 disabled다");
+check(stepBtnFor("ts_betUsd").disabled === true, "lock: 잠금 상태에서 사이징 스테퍼가 disabled다");
 for (const b of ["btnEditTemp", "btnEditBand", "btnEditSize", "btnEditStop"]) {
   check($(b).disabled === false, `lock: ${b} 편집 아이콘은 잠금 상태에서도 눌린다`);
 }
@@ -205,7 +205,7 @@ check($("tempNoEnabled").disabled === true, "lock: 기온 카드는 여전히 di
 check(sizeSlider.disabled === true, "lock: 사이징 카드는 여전히 disabled다");
 check(stopSlider.disabled === true, "lock: 손절 카드는 여전히 disabled다");
 check(stepBtnFor("ts_endWindowDays").disabled === false, "lock: 열린 카드의 스테퍼는 활성화된다");
-check(stepBtnFor("ts_betMinUsd").disabled === true, "lock: 잠긴 카드의 스테퍼는 여전히 disabled다");
+check(stepBtnFor("ts_betUsd").disabled === true, "lock: 잠긴 카드의 스테퍼는 여전히 disabled다");
 check($("btnBandSave").disabled === true, "lock: 해제 직후 변경 없으면 저장 버튼은 비활성이다");
 
 // 3) 매수 카드 값을 바꾸면 저장 버튼이 켜지고, 저장하면 그 카드만

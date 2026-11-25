@@ -18,8 +18,7 @@ public final class PositionBook {
     private PositionBook() {}
 
     // engine.js 상수 (29~33행)
-    public static final double BET_PCT = 0.01;
-    public static final double BET_MIN_USD = 5.0;
+    public static final double BET_USD = 5.0;
     public static final double CASH_FLOOR_PCT = 0.3;
     public static final double RESERVE_USD = 2.87;
     public static final double MAX_POSITIONS = 70;
@@ -46,14 +45,13 @@ public final class PositionBook {
     // 조회분의 realized_pnl 합산, 승패도 그 부호. 내부 원장 기록은 표시
     // 경로에서 빼고 손절 건수 분류(토큰 교집합)에만 쓴다.
 
-    /** 건당 베팅액 — 평가금의 1%, 하한 $5. (equity || 0) 의미론 포함. */
-    public static double betUsdFor(double equity) {
-        return betUsdFor(equity, TradeSettings.defaults());
+    /** 건당 베팅액 — 설정 금액(betUsd) 그대로다. 자본 비율 방식은 v0.3.52에서 폐지했다. */
+    public static double betUsdFor() {
+        return betUsdFor(TradeSettings.defaults());
     }
 
-    public static double betUsdFor(double equity, TradeSettings cfg) {
-        double e = (equity == 0 || Double.isNaN(equity)) ? 0 : equity;
-        return Js.round2(Math.max(cfg.betMinUsd, e * cfg.betPct));
+    public static double betUsdFor(TradeSettings cfg) {
+        return Js.round2(cfg.betUsd);
     }
 
     /** 사이징 결과 (engine.js sizing 반환 객체). slots는 JS number라 double로 둔다. */
@@ -78,13 +76,13 @@ public final class PositionBook {
     public static Sizing sizing(double cash, double equity, double openCount, TradeSettings cfg) {
         // 비유한 입력이면 사이징을 닫는다 — 측정값을 못 믿으면 사지 않는다
         if (!Double.isFinite(cash) || !Double.isFinite(equity) || !Double.isFinite(openCount)) {
-            return new Sizing(cfg.reserveUsd, 0, betUsdFor(0, cfg), 0);
+            return new Sizing(cfg.reserveUsd, 0, betUsdFor(cfg), 0);
         }
         double cashFloor = Js.round2(Math.max(cfg.reserveUsd, equity * cfg.cashFloorPct));
         double available = Js.round2(Math.max(0, cash - cashFloor));
-        double bet = betUsdFor(equity, cfg);
+        double bet = betUsdFor(cfg);
         // bet이 0 이하면 나눗셈이 무한대로 터져 슬롯이 상한까지 찬다
-        // (betMinUsd=0 + 작은 betPct 조합) — 베팅액이 없으면 슬롯도 없다.
+        // (건당 금액 0 설정) — 베팅액이 없으면 슬롯도 없다.
         double cashSlots = bet > 0 ? Math.floor((available + 1e-9) / bet) : 0;
         double slots = Math.max(0, Math.min(cashSlots, cfg.maxPositions - openCount));
         return new Sizing(cashFloor, available, bet, slots);

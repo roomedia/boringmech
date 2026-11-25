@@ -34,6 +34,8 @@ public final class TempNo {
     /** 기온 슬롯 예약 수 — 기본 1개, 설정(tempNoReserveSlots)으로 0~MAX 지정. 0이면 예약 없음. */
     public static final int DEFAULT_RESERVE_SLOTS = 1;
     public static final int MAX_RESERVE_SLOTS = 70;
+    /** 기온 건당 금액 기본값 — 메인 건당 금액과 독립 설정(tempBetUsd)이다. */
+    public static final double DEFAULT_BET_USD = 5.0;
     /** 기온(weather) 카테고리 테이커 수수료율 — feeType 매핑의 기본값과 같다. */
     public static final double FEE_RATE = 0.05;
     public static final long CACHE_MS = 15 * 60_000L;
@@ -111,7 +113,7 @@ public final class TempNo {
      * 금액이라, 현금 하한에 여유액이 건당 금액보다 적으면 슬롯이 0이
      * 돼 홀드가 지킬 자리 자체가 사라진다. 차선은 현금 하한 비율을
      * 넘겨 쓰되 예비금(reserveUsd)은 건드리지 않고, 전체 포지션
-     * 상한과 예약 개수를 넘지 않는다. 금액은 유저 설정 건당 금액
+     * 상한과 예약 개수를 넘지 않는다. 금액은 기온 건당 금액
      * 그대로다.
      */
     public static boolean reserveLaneAllows(String strategy, boolean tempHold, int laneLeft,
@@ -336,17 +338,24 @@ public final class TempNo {
         public final double bandHi;
         public final int entryHourUtc;
         public final int reserveSlots;
+        public final double betUsd;
 
         Settings(boolean enabled, double bandLo, int reserveSlots) {
-            this(enabled, bandLo, BAND_HI, ENTRY_HOUR_UTC, reserveSlots);
+            this(enabled, bandLo, BAND_HI, ENTRY_HOUR_UTC, reserveSlots, DEFAULT_BET_USD);
         }
 
         Settings(boolean enabled, double bandLo, double bandHi, int entryHourUtc, int reserveSlots) {
+            this(enabled, bandLo, bandHi, entryHourUtc, reserveSlots, DEFAULT_BET_USD);
+        }
+
+        Settings(boolean enabled, double bandLo, double bandHi, int entryHourUtc,
+                 int reserveSlots, double betUsd) {
             this.enabled = enabled;
             this.bandLo = bandLo;
             this.bandHi = bandHi;
             this.entryHourUtc = entryHourUtc;
             this.reserveSlots = reserveSlots;
+            this.betUsd = betUsd;
         }
     }
 
@@ -356,6 +365,8 @@ public final class TempNo {
      * (못 믿는 설정으로 사지 않는다). 밴드 하한·상한은 순서가 어긋나면
      * 쌍째로 기본값으로 되돌린다. 예약 슬롯 수는 0~MAX_RESERVE_SLOTS의
      * 정수만 받고, 그 외(음수·소수·범위 초과)는 기본값 1로 되돌린다.
+     * 기온 건당 금액은 메인 건당 금액과 독립이며, 음수·비유한 값이면
+     * 기본값으로 되돌린다.
      */
     public static Settings parseSettings(String raw) {
         Object o = null;
@@ -368,7 +379,7 @@ public final class TempNo {
         }
         if (!(o instanceof java.util.Map)) {
             return new Settings(false, DEFAULT_BAND_LO, BAND_HI, ENTRY_HOUR_UTC,
-                    DEFAULT_RESERVE_SLOTS);
+                    DEFAULT_RESERVE_SLOTS, DEFAULT_BET_USD);
         }
         double hi = TradeSettings.strictFieldNum(o, "tempNoBandHi");
         double bandHi = Double.isFinite(hi) && hi > 0 && hi <= 1 ? hi : BAND_HI;
@@ -386,8 +397,10 @@ public final class TempNo {
         int reserveSlots = Double.isFinite(rs) && rs == Math.floor(rs)
                 && rs >= 0 && rs <= MAX_RESERVE_SLOTS
                 ? (int) rs : DEFAULT_RESERVE_SLOTS;
+        double tb = TradeSettings.strictFieldNum(o, "tempBetUsd");
+        double betUsd = Double.isFinite(tb) && tb >= 0 ? tb : DEFAULT_BET_USD;
         return new Settings(Boolean.TRUE.equals(Js.field(o, "tempNoEnabled")),
-                bandLo, bandHi, entryHourUtc, reserveSlots);
+                bandLo, bandHi, entryHourUtc, reserveSlots, betUsd);
     }
 
     /**

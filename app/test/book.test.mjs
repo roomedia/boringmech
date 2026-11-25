@@ -80,8 +80,7 @@ const {
   SLIPPAGE_CAP,
   SNAPSHOT_MATCH_TOL,
   ASK_ABOVE_SIGNAL,
-  BET_PCT,
-  BET_MIN_USD,
+  BET_USD,
   CASH_FLOOR_PCT,
   RESERVE_USD,
   MAX_POSITIONS,
@@ -1340,7 +1339,7 @@ eq(DEFAULT_TRADE_SETTINGS, {
   spreadMax: SPREAD_MAX, askDepthMinUsd: ASK_DEPTH_MIN_USD,
   slippageCap: SLIPPAGE_CAP, snapshotMatchTol: SNAPSHOT_MATCH_TOL,
   askAboveSignal: ASK_ABOVE_SIGNAL,
-  betPct: BET_PCT, betMinUsd: BET_MIN_USD, cashFloorPct: CASH_FLOOR_PCT,
+  betUsd: BET_USD, cashFloorPct: CASH_FLOOR_PCT,
   reserveUsd: RESERVE_USD, maxPositions: MAX_POSITIONS, verifyCap: VERIFY_CAP,
   stopDrop: STOP_DROP, tempStopDrop: TEMP_STOP_DROP,
   decidedHigh: DECIDED_HIGH, decidedLow: DECIDED_LOW,
@@ -1350,10 +1349,13 @@ eq(parseTradeSettings(null), DEFAULT_TRADE_SETTINGS, "trade settings: null gives
 eq(parseTradeSettings("not json"), DEFAULT_TRADE_SETTINGS, "trade settings: bad json gives defaults");
 eq(parseTradeSettings({}), DEFAULT_TRADE_SETTINGS, "trade settings: empty gives defaults");
 {
-  const c = parseTradeSettings({ bandLo: 0.5, betPct: 0.02, maxPositions: 10, verifyCap: 5 });
-  eq([c.bandLo, c.betPct, c.maxPositions, c.verifyCap], [0.5, 0.02, 10, 5],
+  const c = parseTradeSettings({ bandLo: 0.5, betUsd: 7, maxPositions: 10, verifyCap: 5 });
+  eq([c.bandLo, c.betUsd, c.maxPositions, c.verifyCap], [0.5, 7, 10, 5],
     "trade settings: custom values kept");
   eq(c.bandHi, BAND_HI, "trade settings: untouched fields stay default");
+  // 비율 키는 더 이상 읽지 않는다 — 저장된 옛 키가 있어도 금액 기본값이다
+  eq(parseTradeSettings({ betPct: 0.02, betMinUsd: 3 }).betUsd, BET_USD,
+    "trade settings: legacy ratio keys ignored");
 }
 eq(parseTradeSettings({ bandLo: 1.5 }).bandLo, BAND_LO, "trade settings: bandLo above 1 falls back");
 eq(parseTradeSettings({ bandLo: 0.95, bandHi: 0.9 }).bandLo, BAND_LO, "trade settings: band pair reset (lo)");
@@ -1370,10 +1372,14 @@ eq(parseTradeSettings({ stopDrop: 0 }).stopDrop, STOP_DROP, "trade settings: sto
 eq(parseTradeSettings({ tempStopDrop: 0.2 }).tempStopDrop, 0.2, "trade settings: tempStopDrop kept");
 // 커스텀 설정이 실제 판정을 바꾸는지 — 사이징과 스캔으로 확인한다.
 {
-  const cfg = parseTradeSettings({ betPct: 0.02, betMinUsd: 7, maxPositions: 2 });
-  eq(sizing(1000, 1000, 0, cfg).bet, 20, "trade settings: sizing uses custom betPct");
+  const cfg = parseTradeSettings({ betUsd: 7, maxPositions: 2 });
+  eq(sizing(1000, 1000, 0, cfg).bet, 7, "trade settings: sizing uses custom betUsd");
   eq(sizing(100000, 100000, 0, cfg).slots, 2, "trade settings: sizing uses custom maxPositions");
-  eq(sizing(1000, 1000, 0).bet, 10, "trade settings: default sizing unchanged");
+  eq(sizing(1000, 1000, 0).bet, 5, "trade settings: default sizing unchanged");
+  // 금액 방식 — 자본이 변해도 건당 금액은 설정값 그대로다
+  eq(sizing(1000, 100, 0).bet, sizing(1000, 100000, 0).bet,
+    "trade settings: bet does not scale with equity");
+  eq(sizing(1000, 100, 0, cfg).bet, 7, "trade settings: custom bet does not scale with equity");
   const mkt = (slug, price, vol) => ({
     slug, question: slug, active: true, closed: false, acceptingOrders: true,
     endDate: new Date(Date.now() + 10 * 86400_000).toISOString(),
@@ -1392,8 +1398,8 @@ eq(parseTradeSettings({ tempStopDrop: 0.2 }).tempStopDrop, 0.2, "trade settings:
   // 손상 타입은 Number() 강제변환(null→0, true→1)이 아니라 기본값으로 떨어진다
   eq(parseTradeSettings({ cashFloorPct: null }).cashFloorPct, CASH_FLOOR_PCT,
     "audit1: cashFloorPct null falls back");
-  eq(parseTradeSettings({ betPct: true }).betPct, BET_PCT,
-    "audit1: betPct true falls back");
+  eq(parseTradeSettings({ betUsd: true }).betUsd, BET_USD,
+    "audit1: betUsd true falls back");
   eq(parseTradeSettings({ volumeMin: true }).volumeMin, VOLUME_MIN,
     "audit1: volumeMin true falls back");
   eq(parseTradeSettings({ askDepthMinUsd: null }).askDepthMinUsd, ASK_DEPTH_MIN_USD,
@@ -1404,7 +1410,7 @@ eq(parseTradeSettings({ tempStopDrop: 0.2 }).tempStopDrop, 0.2, "trade settings:
     "audit1: bandLo array falls back");
   eq(parseTradeSettings({ bandLo: {} }).bandLo, BAND_LO,
     "audit1: bandLo object falls back");
-  eq(parseTradeSettings({ betPct: " 0.02 " }).betPct, 0.02,
+  eq(parseTradeSettings({ betUsd: " 7 " }).betUsd, 7,
     "audit1: numeric string with spaces kept");
   // decided 쌍이 0.5를 사이에 두지 않으면 순서가 맞아도 쌍째로 기본값
   eq(parseTradeSettings({ decidedLow: 0.90, decidedHigh: 0.95 }).decidedLow, DECIDED_LOW,
@@ -1415,8 +1421,8 @@ eq(parseTradeSettings({ tempStopDrop: 0.2 }).tempStopDrop, 0.2, "trade settings:
     "audit4: decided pair below 0.5 resets");
   eq(parseTradeSettings({ decidedLow: 0.2, decidedHigh: 0.8 }).decidedLow, 0.2,
     "audit4: decided pair straddling 0.5 kept");
-  // bet이 0으로 반올림되면 슬롯은 0 — 무한대 나눗셈으로 상한까지 차지 않는다
-  const zeroBetCfg = parseTradeSettings({ betMinUsd: 0, betPct: 0.001 });
+  // bet이 0이면 슬롯은 0 — 무한대 나눗셈으로 상한까지 차지 않는다
+  const zeroBetCfg = parseTradeSettings({ betUsd: 0 });
   const zs = sizing(100000, 1, 0, zeroBetCfg);
   eq(zs.bet, 0, "audit3: bet rounds to 0");
   eq(zs.slots, 0, "audit3: bet 0 gives slots 0");
@@ -1502,16 +1508,16 @@ eq(parseTradeSettings({ tempStopDrop: 0.2 }).tempStopDrop, 0.2, "trade settings:
 // 47. 연동 화면 하단 요약 — 저장된 설정의 해석 결과로 렌더한다.
 // 기본값이면 기존 고정 문구와 글자까지 같고, 바꾸면 바뀐 값이 보인다.
 {
-  const LEGACY_SUMMARY = "밴드 0.60–0.90 · 건당 평가금 1% · 현금 30% 유지 · 최대 70건 · 손절 진입가 −0.25, 그 외 만기 보유";
+  const LEGACY_SUMMARY = "밴드 0.60–0.90 · 건당 $5.00 · 현금 30% 유지 · 최대 70건 · 손절 진입가 −0.25, 그 외 만기 보유";
   eq(settingsSummaryText(parseTradeSettings(null)), LEGACY_SUMMARY,
     "summary: defaults render legacy text");
   eq(settingsSummaryText(), LEGACY_SUMMARY, "summary: no cfg renders defaults");
   eq(settingsSummaryText(parseTradeSettings({
-    bandLo: 0.7, bandHi: 0.95, betPct: 0.02, cashFloorPct: 0.5, maxPositions: 10, stopDrop: 0.15
-  })), "밴드 0.70–0.95 · 건당 평가금 2% · 현금 50% 유지 · 최대 10건 · 손절 진입가 −0.15, 그 외 만기 보유",
+    bandLo: 0.7, bandHi: 0.95, betUsd: 7, cashFloorPct: 0.5, maxPositions: 10, stopDrop: 0.15
+  })), "밴드 0.70–0.95 · 건당 $7.00 · 현금 50% 유지 · 최대 10건 · 손절 진입가 −0.15, 그 외 만기 보유",
     "summary: changed settings reflected");
-  eq(settingsSummaryText(parseTradeSettings({ betPct: 0.005, cashFloorPct: 0.125 })),
-    "밴드 0.60–0.90 · 건당 평가금 0.5% · 현금 12.5% 유지 · 최대 70건 · 손절 진입가 −0.25, 그 외 만기 보유",
+  eq(settingsSummaryText(parseTradeSettings({ betUsd: 5.5, cashFloorPct: 0.125 })),
+    "밴드 0.60–0.90 · 건당 $5.50 · 현금 12.5% 유지 · 최대 70건 · 손절 진입가 −0.25, 그 외 만기 보유",
     "summary: fractional percents trimmed");
   // 해석 단계의 폴백(밴드 쌍 역전 → 쌍째 기본값)도 요약에 그대로 드러난다
   eq(settingsSummaryText(parseTradeSettings({ bandLo: 0.95, bandHi: 0.9 })), LEGACY_SUMMARY,
@@ -1522,7 +1528,7 @@ eq(parseTradeSettings({ tempStopDrop: 0.2 }).tempStopDrop, 0.2, "trade settings:
   eq(typeof globalThis.window.BM?.parseTradeSettings, "function",
     "summary: BM exposes parseTradeSettings");
   eq(globalThis.window.BM.settingsSummaryText(globalThis.window.BM.parseTradeSettings({ stopDrop: 0.2 })),
-    "밴드 0.60–0.90 · 건당 평가금 1% · 현금 30% 유지 · 최대 70건 · 손절 진입가 −0.20, 그 외 만기 보유",
+    "밴드 0.60–0.90 · 건당 $5.00 · 현금 30% 유지 · 최대 70건 · 손절 진입가 −0.20, 그 외 만기 보유",
     "summary: BM path renders changed stopDrop");
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   eq(html.includes('id="settingsSummary"'), true, "summary: footer span exists");

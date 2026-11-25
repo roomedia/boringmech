@@ -25,8 +25,7 @@ public final class TradeSettings {
     public double slippageCap = 0.015;     // CandidateVerifier.SLIPPAGE_CAP
     public double snapshotMatchTol = 0.03; // CandidateVerifier.SNAPSHOT_MATCH_TOL
     public double askAboveSignal = 0.05;   // CandidateVerifier.ASK_ABOVE_SIGNAL
-    public double betPct = 0.01;           // PositionBook.BET_PCT
-    public double betMinUsd = 5;           // PositionBook.BET_MIN_USD
+    public double betUsd = 5;              // PositionBook.BET_USD
     public double cashFloorPct = 0.3;      // PositionBook.CASH_FLOOR_PCT
     public double reserveUsd = 2.87;       // PositionBook.RESERVE_USD
     public int maxPositions = 70;          // PositionBook.MAX_POSITIONS
@@ -101,8 +100,7 @@ public final class TradeSettings {
         out.slippageCap = numField(o, "slippageCap", d.slippageCap, v -> v >= 0 && v <= 0.5);
         out.snapshotMatchTol = numField(o, "snapshotMatchTol", d.snapshotMatchTol, v -> v >= 0 && v <= 1);
         out.askAboveSignal = numField(o, "askAboveSignal", d.askAboveSignal, v -> v >= 0 && v <= 1);
-        out.betPct = numField(o, "betPct", d.betPct, v -> v > 0 && v <= 1);
-        out.betMinUsd = numField(o, "betMinUsd", d.betMinUsd, v -> v >= 0);
+        out.betUsd = numField(o, "betUsd", d.betUsd, v -> v >= 0);
         out.cashFloorPct = numField(o, "cashFloorPct", d.cashFloorPct, v -> v >= 0 && v <= 1);
         out.reserveUsd = numField(o, "reserveUsd", d.reserveUsd, v -> v >= 0);
         out.maxPositions = (int) numField(o, "maxPositions", d.maxPositions,

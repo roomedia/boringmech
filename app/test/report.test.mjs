@@ -1,5 +1,5 @@
 // 제보 설정 요약 가드 — 제보 payload에 실효 설정이 실리지 않으면 기온
-// 토글·밴드·건당 하한 같은 현재값을 원격으로 대조할 방법이 없다
+// 토글·밴드·건당 금액 같은 현재값을 원격으로 대조할 방법이 없다
 // (2026-11-24 id 40·41 대조 불가 사고). effectiveSettingsSummary가
 // 엔진 해석(parseTradeSettings·parseTempSettings)과 같은 실효값을
 // 저장 키 이름으로 내는지, 깨진 입력에서도 던지지 않고 기본값으로
@@ -34,7 +34,8 @@ function ok(cond, label) {
     tempEntryHourUtc: 7,
     tempStopDrop: 0.2,
     tempNoReserveSlots: 2,
-    betMinUsd: 3,
+    tempBetUsd: 4,
+    betUsd: 3,
     bandLo: 0.65,
     bandHi: 0.88,
     stopDrop: 0.3,
@@ -45,7 +46,8 @@ function ok(cond, label) {
   eq(s.tempEntryHourUtc, 7, "report: temp entry hour");
   eq(s.tempStopDrop, 0.2, "report: temp stop drop");
   eq(s.tempNoReserveSlots, 2, "report: temp reserve slots");
-  eq(s.betMinUsd, 3, "report: bet min usd");
+  eq(s.betUsd, 3, "report: bet usd");
+  eq(s.tempBetUsd, 4, "report: temp bet usd");
   eq(s.bandLo, 0.65, "report: band lo");
   eq(s.bandHi, 0.88, "report: band hi");
   eq(s.stopDrop, 0.3, "report: stop drop");
@@ -55,7 +57,7 @@ function ok(cond, label) {
 {
   const s = effectiveSettingsSummary({});
   for (const k of ["tempNoEnabled", "tempNoBandLo", "tempNoBandHi",
-    "betMinUsd", "tempStopDrop", "tempNoReserveSlots", "tempEntryHourUtc"]) {
+    "betUsd", "tempBetUsd", "tempStopDrop", "tempNoReserveSlots", "tempEntryHourUtc"]) {
     ok(Object.prototype.hasOwnProperty.call(s, k), `report: has key ${k}`);
   }
 }
@@ -68,20 +70,21 @@ function ok(cond, label) {
   eq(s.tempNoBandHi, 0.998, "report: default temp band hi");
   eq(s.tempEntryHourUtc, 6, "report: default entry hour");
   eq(s.tempNoReserveSlots, 1, "report: default reserve slots");
-  eq(s.betMinUsd, DEFAULT_TRADE_SETTINGS.betMinUsd, "report: default bet min");
+  eq(s.betUsd, DEFAULT_TRADE_SETTINGS.betUsd, "report: default bet usd");
+  eq(s.tempBetUsd, 5, "report: default temp bet usd");
   eq(s.tempStopDrop, DEFAULT_TRADE_SETTINGS.tempStopDrop, "report: default temp stop");
   eq(s.bandLo, DEFAULT_TRADE_SETTINGS.bandLo, "report: default band lo");
 }
 
 // ── 깨진 입력 — 던지지 않고 기본값으로 떨어진다 ───────────────
 {
-  for (const raw of ["garbage", 42, [1, 2], { betMinUsd: -5, tempNoBandLo: 7, tempNoEnabled: "yes" }]) {
+  for (const raw of ["garbage", 42, [1, 2], { betUsd: -5, tempNoBandLo: 7, tempNoEnabled: "yes" }]) {
     let s = null;
     let threw = false;
     try { s = effectiveSettingsSummary(raw); } catch (e) { threw = true; }
     ok(!threw && s && typeof s === "object", `report: no throw for ${JSON.stringify(raw)}`);
     if (s) {
-      eq(s.betMinUsd, DEFAULT_TRADE_SETTINGS.betMinUsd, "report: bad betMinUsd falls back");
+      eq(s.betUsd, DEFAULT_TRADE_SETTINGS.betUsd, "report: bad betUsd falls back");
       eq(s.tempNoEnabled, false, "report: non-true toggle is off");
     }
   }

@@ -1332,6 +1332,8 @@ public final class NativeCycle {
         REJECT_LABELS.put("ask_above_signal", "신호가초과");
         REJECT_LABELS.put("market_inactive", "마켓비활성");
         REJECT_LABELS.put("end_out_of_range", "만기범위이탈");
+        REJECT_LABELS.put("bet_zero", "금액없음");
+        REJECT_LABELS.put("cash_floor", "현금하한");
     }
 
     private static String labelOf(Map<String, String> labels, String key) {
@@ -1525,8 +1527,8 @@ public final class NativeCycle {
                     tempSettings.reserveSlots, tradeCfg.maxPositions);
             boolean lanePossible = tempSettings.enabled && reserveEffPre > 0
                     && snap.openCount < tradeCfg.maxPositions
-                    && snap.bet > 0
-                    && snap.cash >= snap.bet + tradeCfg.reserveUsd;
+                    && tempSettings.betUsd > 0
+                    && snap.cash >= tempSettings.betUsd + tradeCfg.reserveUsd;
             if (!lanePossible) {
                 log("슬롯 없음 — 이번 사이클 매수 없음");
                 return;
@@ -1670,18 +1672,35 @@ public final class NativeCycle {
                 // sizing 슬롯이 소진된 뒤에는 예약 차선으로 기온 후보만
                 // 더 시도한다 (JS 선정 드라이버와 같은 규칙).
                 if (TempNo.reserveLaneAllows(cand.strategy, tempHold, laneLeft, positionsUsed,
-                        tradeCfg.maxPositions, cashLeft, snap.bet, tradeCfg.reserveUsd)) {
+                        tradeCfg.maxPositions, cashLeft, tempSettings.betUsd, tradeCfg.reserveUsd)) {
                     viaLane = true;
                 } else {
                     continue;
                 }
+            }
+            // 후보별 건당 금액 — 기온 후보는 기온 전용 금액, 메인은
+            // 메인 금액 (JS attemptCandidate와 같은 규칙).
+            double bet = TempNo.STRATEGY.equals(cand.strategy) ? tempSettings.betUsd : snap.bet;
+            // 금액이 없으면 시도 자체를 하지 않는다 — 기온 금액 0
+            // 설정이 일반 슬롯에서 0원 제출로 새는 것을 막는다.
+            if (!(bet > 0)) {
+                tally(rejects, "bet_zero");
+                continue;
+            }
+            // 현금 하한 가드 — 기온 금액이 메인 금액보다 크면 슬롯
+            // (건수) 기준 지출이 현금 하한을 침범할 수 있어, 일반
+            // 슬롯 매수는 하한을 지킬 수 있을 때만 시도한다. 차선은
+            // 예비금 기준의 기존 규칙을 쓴다.
+            if (!viaLane && cashLeft - bet < snap.cashFloor - 0.005) {
+                tally(rejects, "cash_floor");
+                continue;
             }
             env.beatProgress(cycle);
             verified++;
             CandidateVerifier.Result detail;
             long verifyT0 = env.nowMs();
             try {
-                detail = CandidateVerifier.verifyCandidate(cand, snap.bet, gammaSource, bookSource, env.nowMs(),
+                detail = CandidateVerifier.verifyCandidate(cand, bet, gammaSource, bookSource, env.nowMs(),
                         tradeCfg, tempSettings.entryHourUtc);
             } catch (Exception e) {
                 stageMsVerify += env.nowMs() - verifyT0;
@@ -1718,7 +1737,7 @@ public final class NativeCycle {
                     SignedOrder signed;
                     try {
                         ClobWriteClient.MarketOrderRequest req =
-                                new ClobWriteClient.MarketOrderRequest(detail.tokenId, true, snap.bet, detail.limitPrice);
+                                new ClobWriteClient.MarketOrderRequest(detail.tokenId, true, bet, detail.limitPrice);
                         req.tickSize = detail.tickSize;
                         req.negRisk = detail.negRisk;
                         signed = client.createMarketOrder(req);
@@ -1740,7 +1759,7 @@ public final class NativeCycle {
                         markBought(cand.slug, cand.strategy);
                         if (viaLane) { laneLeft--; } else { slotsLeft--; }
                         positionsUsed++;
-                        cashLeft -= snap.bet;
+                        cashLeft -= bet;
                         String m = msg(e);
                         log("주문 결과 불명 " + cand.slug + ": " + slice(m, 120) + " — 중복 방지 기록"
                                 + (TempNo.STRATEGY.equals(cand.strategy) ? " · 전략 temp_no" : ""));
@@ -1760,7 +1779,7 @@ public final class NativeCycle {
                         markBought(cand.slug, cand.strategy);
                         if (viaLane) { laneLeft--; } else { slotsLeft--; }
                         positionsUsed++;
-                        cashLeft -= snap.bet;
+                        cashLeft -= bet;
                         log("주문 결과 불명 " + cand.slug + ": " + slice(verdict.error == null ? "" : verdict.error, 120)
                                 + " — 중복 방지 기록"
                                 + (TempNo.STRATEGY.equals(cand.strategy) ? " · 전략 temp_no" : ""));
@@ -1790,7 +1809,7 @@ public final class NativeCycle {
                             markBought(cand.slug, cand.strategy);
                             if (viaLane) { laneLeft--; } else { slotsLeft--; }
                             positionsUsed++;
-                            cashLeft -= snap.bet;
+                            cashLeft -= bet;
                             log("미체결(지연 접수) " + cand.slug + " — 뒤늦은 체결에 대비해 기록하고 슬롯을 소모합니다"
                                     + (TempNo.STRATEGY.equals(cand.strategy) ? " · 전략 temp_no" : ""));
                         } else {
@@ -1806,14 +1825,14 @@ public final class NativeCycle {
                     filledCount++;
                     if (viaLane) { laneLeft--; } else { slotsLeft--; }
                     positionsUsed++;
-                    cashLeft -= snap.bet;
+                    cashLeft -= bet;
                     Object making = Js.field(resp, "makingAmount");
                     Object taking = Js.field(resp, "takingAmount");
                     boolean hasFillPrice = Js.truthy(making) && Js.truthy(taking);
                     double fillPrice = hasFillPrice ? Js.round2(Js.num(making) / Js.num(taking)) : 0;
                     String fill = hasFillPrice ? " 체결가 " + n(fillPrice) : "";
                     Object respStatus = Js.field(resp, "status");
-                    log("매수 " + cand.slug + " · $" + n(snap.bet) + " @ " + n(detail.limitPrice) + fill
+                    log("매수 " + cand.slug + " · $" + n(bet) + " @ " + n(detail.limitPrice) + fill
                             + " · 상태 " + (Js.truthy(respStatus) ? Js.str(respStatus) : "matched")
                             + (TempNo.STRATEGY.equals(cand.strategy) ? " · 전략 temp_no" : "")
                             + (viaLane ? " · 예약 차선" : "")
@@ -1825,7 +1844,7 @@ public final class NativeCycle {
                     moneyNotify("매수 체결", cand.slug + " · " + cand.side
                             + (hasTaking ? " · " + n(Js.num(taking)) + "주" : "")
                             + (hasFillPrice ? " · 체결가 " + n(fillPrice) : "")
-                            + " · $" + n(snap.bet));
+                            + " · $" + n(bet));
                 } finally {
                     stageMsOrder += env.nowMs() - orderT0;
                     guard.endSubmit();

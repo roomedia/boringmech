@@ -29,8 +29,7 @@ const POLYGON_RPCS = [
 
 // 매매 판단 상수 — 전부 bm_settings로 바꿀 수 있고(parseTradeSettings),
 // 기본값은 아래 상수와 같다. 설정을 건드리기 전에는 동작이 변하지 않는다.
-export const BET_PCT = 0.01;
-export const BET_MIN_USD = 5.0;
+export const BET_USD = 5.0;
 export const CASH_FLOOR_PCT = 0.3;
 export const RESERVE_USD = 2.87;
 export const MAX_POSITIONS = 70;
@@ -146,20 +145,22 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS)
   }
 }
 
-export function betUsdFor(equity, cfg = DEFAULT_TRADE_SETTINGS) {
-  return round2(Math.max(cfg.betMinUsd, (equity || 0) * cfg.betPct));
+// 건당 베팅액 — 설정 금액(betUsd) 그대로다. 자본 비율 방식은 v0.3.52에서
+// 폐지했다: 평가금이 변해도 건당 금액은 설정값 하나로만 정해진다.
+export function betUsdFor(cfg = DEFAULT_TRADE_SETTINGS) {
+  return round2(cfg.betUsd);
 }
 
 export function sizing(cash, equity, openCount, cfg = DEFAULT_TRADE_SETTINGS) {
   // 비유한 입력(NaN·Infinity)이면 사이징을 닫는다 — 측정값을 못 믿으면 사지 않는다
   if (!Number.isFinite(cash) || !Number.isFinite(equity) || !Number.isFinite(openCount)) {
-    return { cashFloor: cfg.reserveUsd, available: 0, bet: betUsdFor(0, cfg), slots: 0 };
+    return { cashFloor: cfg.reserveUsd, available: 0, bet: betUsdFor(cfg), slots: 0 };
   }
   const cashFloor = round2(Math.max(cfg.reserveUsd, equity * cfg.cashFloorPct));
   const available = round2(Math.max(0, cash - cashFloor));
-  const bet = betUsdFor(equity, cfg);
+  const bet = betUsdFor(cfg);
   // bet이 0 이하면 나눗셈이 무한대로 터져 슬롯이 상한까지 차는 사고가
-  // 난다 (betMinUsd=0 + 작은 betPct 조합) — 베팅액이 없으면 슬롯도 없다.
+  // 난다 (건당 금액 0 설정) — 베팅액이 없으면 슬롯도 없다.
   const cashSlots = bet > 0 ? Math.floor((available + 1e-9) / bet) : 0;
   const slots = Math.max(0, Math.min(cashSlots, cfg.maxPositions - openCount));
   return { cashFloor, available, bet, slots };
@@ -491,6 +492,8 @@ export const TEMP_STOP_DROP = 0.15;
 // 0이면 예약 없음. 검증 캡 예약도 같은 수를 따른다.
 export const TEMP_NO_DEFAULT_RESERVE_SLOTS = 1;
 export const TEMP_NO_MAX_RESERVE_SLOTS = 70;
+// 기온 건당 금액 기본값 — 메인 건당 금액과 독립 설정(tempBetUsd)이다.
+export const TEMP_NO_DEFAULT_BET_USD = 5.0;
 const TEMP_NO_ENTRY_HOUR_UTC = 6;
 const TEMP_NO_CACHE_MS = 15 * 60_000;
 const TEMP_NO_SLUG_PREFIX = "highest-temperature-in-";
@@ -618,8 +621,7 @@ export const DEFAULT_TRADE_SETTINGS = Object.freeze({
   slippageCap: SLIPPAGE_CAP,
   snapshotMatchTol: SNAPSHOT_MATCH_TOL,
   askAboveSignal: ASK_ABOVE_SIGNAL,
-  betPct: BET_PCT,
-  betMinUsd: BET_MIN_USD,
+  betUsd: BET_USD,
   cashFloorPct: CASH_FLOOR_PCT,
   reserveUsd: RESERVE_USD,
   maxPositions: MAX_POSITIONS,
@@ -683,8 +685,7 @@ export function parseTradeSettings(raw) {
     slippageCap: numField(o, "slippageCap", d.slippageCap, (v) => v >= 0 && v <= 0.5),
     snapshotMatchTol: numField(o, "snapshotMatchTol", d.snapshotMatchTol, (v) => v >= 0 && v <= 1),
     askAboveSignal: numField(o, "askAboveSignal", d.askAboveSignal, (v) => v >= 0 && v <= 1),
-    betPct: numField(o, "betPct", d.betPct, inHalfOpen01),
-    betMinUsd: numField(o, "betMinUsd", d.betMinUsd, nonNeg),
+    betUsd: numField(o, "betUsd", d.betUsd, nonNeg),
     cashFloorPct: numField(o, "cashFloorPct", d.cashFloorPct, (v) => v >= 0 && v <= 1),
     reserveUsd: numField(o, "reserveUsd", d.reserveUsd, nonNeg),
     maxPositions: numField(o, "maxPositions", d.maxPositions,
@@ -722,23 +723,24 @@ export function parseTradeSettings(raw) {
 
 /**
  * 연동 화면 하단 요약 — 저장된 설정의 해석 결과(parseTradeSettings)로
- * 만든다. 기본값이면 기존 고정 문구와 글자까지 같아야 한다. 기온 값은
+ * 만든다. 기본값이면 아래 고정 문구와 글자까지 같아야 한다. 기온 값은
  * 요약에 넣지 않는다.
  */
 export function settingsSummaryText(cfg) {
   const c = cfg || DEFAULT_TRADE_SETTINGS;
   const price = (v) => v.toFixed(2);
   const pct = (v) => String(parseFloat((v * 100).toFixed(2)));
-  return `밴드 ${price(c.bandLo)}–${price(c.bandHi)} · 건당 평가금 ${pct(c.betPct)}% · 현금 ${pct(c.cashFloorPct)}% 유지 · 최대 ${c.maxPositions}건 · 손절 진입가 −${price(c.stopDrop)}, 그 외 만기 보유`;
+  return `밴드 ${price(c.bandLo)}–${price(c.bandHi)} · 건당 $${price(c.betUsd)} · 현금 ${pct(c.cashFloorPct)}% 유지 · 최대 ${c.maxPositions}건 · 손절 진입가 −${price(c.stopDrop)}, 그 외 만기 보유`;
 }
 
 /**
  * 뷰어 설정(bm_settings) 해석 — { tempNoEnabled, tempNoBandLo, tempNoBandHi,
- * tempEntryHourUtc, tempNoReserveSlots }.
+ * tempEntryHourUtc, tempNoReserveSlots, tempBetUsd }.
  * 토글은 정확히 true일 때만 켜진 것으로 보고, 밴드 하한은 (0, 상한]
  * 범위를 벗어나면 기본값으로 되돌린다 (못 믿는 설정으로 사지 않는다).
  * 예약 슬롯 수는 0~TEMP_NO_MAX_RESERVE_SLOTS의 정수만 받고, 그 외
- * (음수·소수·문자열·범위 초과)는 기본값 1로 되돌린다.
+ * (음수·소수·문자열·범위 초과)는 기본값 1로 되돌린다. 기온 건당 금액은
+ * 메인 건당 금액과 독립이며, 음수·비유한 값이면 기본값으로 되돌린다.
  */
 export function parseTempSettings(raw) {
   const o = settingsObject(raw);
@@ -749,6 +751,7 @@ export function parseTempSettings(raw) {
       bandHi: TEMP_NO_BAND_HI,
       entryHourUtc: TEMP_NO_ENTRY_HOUR_UTC,
       reserveSlots: TEMP_NO_DEFAULT_RESERVE_SLOTS,
+      betUsd: TEMP_NO_DEFAULT_BET_USD,
     };
   }
   const hi = strictNum(o.tempNoBandHi);
@@ -770,7 +773,9 @@ export function parseTempSettings(raw) {
     && rs >= 0 && rs <= TEMP_NO_MAX_RESERVE_SLOTS
     ? rs
     : TEMP_NO_DEFAULT_RESERVE_SLOTS;
-  return { enabled: o.tempNoEnabled === true, bandLo, bandHi, entryHourUtc, reserveSlots };
+  const tb = strictNum(o.tempBetUsd);
+  const betUsd = Number.isFinite(tb) && tb >= 0 ? tb : TEMP_NO_DEFAULT_BET_USD;
+  return { enabled: o.tempNoEnabled === true, bandLo, bandHi, entryHourUtc, reserveSlots, betUsd };
 }
 
 /**
@@ -791,6 +796,7 @@ export function effectiveSettingsSummary(raw) {
     tempNoBandHi: temp.bandHi,
     tempEntryHourUtc: temp.entryHourUtc,
     tempNoReserveSlots: temp.reserveSlots,
+    tempBetUsd: temp.betUsd,
   };
 }
 
@@ -848,7 +854,7 @@ export function tempReserveBlocksMain(strategy, slotsLeft, verified, reserveSlot
  * ÷ 건당 금액이라, 현금 하한에 여유액이 건당 금액보다 적으면 슬롯이
  * 0이 돼 홀드가 지킬 자리 자체가 사라진다. 차선은 현금 하한 비율을
  * 넘겨 쓰되 예비금(reserveUsd)은 건드리지 않고, 전체 포지션 상한과
- * 예약 개수를 넘지 않는다. 금액은 유저 설정 건당 금액 그대로다
+ * 예약 개수를 넘지 않는다. 금액은 기온 건당 금액 그대로다
  * (네이티브 TempNo.reserveLaneAllows와 같은 규칙).
  */
 export function tempReserveLaneAllows({ strategy, tempHold, laneLeft, positionsUsed, maxPositions, cashLeft, bet, reserveUsd }) {
@@ -1483,7 +1489,7 @@ export function snapshotFromCache(raw) {
     ),
     cashFloor: numOr(o.cashFloor, RESERVE_USD),
     available: numOr(o.available, 0),
-    bet: numOr(o.bet, betUsdFor(o.equity)),
+    bet: numOr(o.bet, betUsdFor()),
     slots: numOr(o.slots, 0),
     // 종목 목록은 캐시를 거쳐도 살아남아야 한다 — 이 필드를 빠뜨리면
     // 뷰어가 보유 종목을 영영 못 본다 (v0.3.31~32 실기기 결함).
@@ -1704,6 +1710,8 @@ const REJECT_LABELS = {
   ask_above_signal: "신호가초과",
   market_inactive: "마켓비활성",
   end_out_of_range: "만기범위이탈",
+  bet_zero: "금액없음",
+  cash_floor: "현금하한",
 };
 
 // 사이클 결과를 한 줄로 집계한다. 탈락을 건별로 찍으면 로그가 폭발하므로
@@ -2504,8 +2512,8 @@ async function runCycle(gen) {
     const reserveEffPre = effectiveTempReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions);
     const lanePossible = tempSettings.enabled && reserveEffPre > 0
       && snap.openCount < tradeCfg.maxPositions
-      && snap.bet > 0
-      && snap.cash >= snap.bet + tradeCfg.reserveUsd;
+      && tempSettings.betUsd > 0
+      && snap.cash >= tempSettings.betUsd + tradeCfg.reserveUsd;
     if (!lanePossible) {
       log("슬롯 없음 — 이번 사이클 매수 없음");
       return;
@@ -2576,20 +2584,36 @@ async function runCycle(gen) {
   // 후보 1건 처리 — true를 돌려주면 사이클을 즉시 중단한다 (아래 본문의
   // 중단 지점). 호출 순서와 예산 판정은 선정 드라이버가 맡는다.
   const attemptCandidate = async (cand, viaLane = false) => {
+    // 후보별 건당 금액 — 기온 후보는 기온 전용 금액, 메인은 메인 금액.
+    const bet = cand.strategy === "temp_no" ? tempSettings.betUsd : snap.bet;
+    // 금액이 없으면 시도 자체를 하지 않는다 — 기온 금액 0 설정이 일반
+    // 슬롯에서 0원 제출로 새는 것을 막는다 (메인 금액 0은 슬롯 0이라
+    // 여기 닿지 않는다).
+    if (!(bet > 0)) {
+      tallyReject("bet_zero");
+      return false;
+    }
+    // 현금 하한 가드 — 기온 금액이 메인 금액보다 크면 슬롯(건수) 기준
+    // 지출이 현금 하한을 침범할 수 있어, 일반 슬롯 매수는 하한을 지킬
+    // 수 있을 때만 시도한다. 차선은 예비금 기준의 기존 규칙을 쓴다.
+    if (!viaLane && cashLeft - bet < snap.cashFloor - 0.005) {
+      tallyReject("cash_floor");
+      return false;
+    }
     // 자리를 소모하는 결과(체결·결과 불명·지연 접수)마다 한 번씩 센다.
     // 차선 매수는 sizing 슬롯 대신 예약 차선을 소모한다.
     const consumeSlot = () => {
       if (viaLane) laneLeft -= 1;
       else slotsLeft -= 1;
       positionsUsed += 1;
-      cashLeft -= snap.bet;
+      cashLeft -= bet;
     };
     beatProgress();
     verified += 1;
     let detail;
     const verifyT0 = Date.now();
     try {
-      detail = await verifyCandidate(cand, snap.bet, tradeCfg, tempSettings.entryHourUtc);
+      detail = await verifyCandidate(cand, bet, tradeCfg, tempSettings.entryHourUtc);
     } catch (e) {
       stageMsVerify += Date.now() - verifyT0;
       tallyReject("verify_error");
@@ -2626,7 +2650,7 @@ async function runCycle(gen) {
           {
             tokenID: detail.tokenId,
             side: Side.BUY,
-            amount: snap.bet,
+            amount: bet,
             price: detail.limitPrice,
             orderType: OrderType.FOK,
           },
@@ -2703,10 +2727,10 @@ async function runCycle(gen) {
       const fill = resp.makingAmount && resp.takingAmount
         ? ` 체결가 ${round2(Number(resp.makingAmount) / Number(resp.takingAmount))}`
         : "";
-      log(`매수 ${cand.slug} · $${snap.bet} @ ${detail.limitPrice}${fill} · 상태 ${resp.status ?? "matched"}${cand.strategy === "temp_no" ? " · 전략 temp_no" : ""}${viaLane ? " · 예약 차선" : ""}${cand.strategy === "temp_no" && cand.feeRate != null ? ` · 수수료율 ${cand.feeRate}` : ""}`);
+      log(`매수 ${cand.slug} · $${bet} @ ${detail.limitPrice}${fill} · 상태 ${resp.status ?? "matched"}${cand.strategy === "temp_no" ? " · 전략 temp_no" : ""}${viaLane ? " · 예약 차선" : ""}${cand.strategy === "temp_no" && cand.feeRate != null ? ` · 수수료율 ${cand.feeRate}` : ""}`);
       notifyMoney(
         "매수 체결",
-        `건당 $${snap.bet} · 체결가 ${resp.makingAmount && resp.takingAmount ? round2(Number(resp.makingAmount) / Number(resp.takingAmount)) : detail.limitPrice}`,
+        `건당 $${bet} · 체결가 ${resp.makingAmount && resp.takingAmount ? round2(Number(resp.makingAmount) / Number(resp.takingAmount)) : detail.limitPrice}`,
       );
     } finally {
       stageMsOrder += Date.now() - orderT0;
@@ -2753,7 +2777,7 @@ async function runCycle(gen) {
     // sizing 슬롯이 소진된 뒤에는 예약 차선으로 기온 후보만 더 시도한다.
     if (tempReserveLaneAllows({
       strategy: cand.strategy, tempHold, laneLeft, positionsUsed,
-      maxPositions: tradeCfg.maxPositions, cashLeft, bet: snap.bet,
+      maxPositions: tradeCfg.maxPositions, cashLeft, bet: tempSettings.betUsd,
       reserveUsd: tradeCfg.reserveUsd,
     })) {
       if (await attemptCandidate(cand, true)) { aborted = true; break; }

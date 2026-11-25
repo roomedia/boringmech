@@ -93,38 +93,38 @@ eq(tempWindowOpen(Date.UTC(2026, 10, 18, 12, 0, 0), END_MS), false, "window: end
 eq(tempWindowOpen(NaN, END_MS), false, "window: NaN now");
 
 // ── 설정 해석 ────────────────────────────────────────────────
-const DEF_TEMP = { enabled: false, bandLo: 0.8, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1 };
+const DEF_TEMP = { enabled: false, bandLo: 0.8, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1, betUsd: 5 };
 eq(parseTempSettings(null), DEF_TEMP, "settings: null default off");
 eq(parseTempSettings("not json"), DEF_TEMP, "settings: bad json");
 eq(
   parseTempSettings('{"tempNoEnabled":true,"tempNoBandLo":0.93}'),
-  { enabled: true, bandLo: 0.93, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1 },
+  { enabled: true, bandLo: 0.93, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1, betUsd: 5 },
   "settings: on + custom band",
 );
 eq(
   parseTempSettings('{"tempNoEnabled":true,"tempNoBandLo":0.999}'),
-  { enabled: true, bandLo: 0.8, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1 },
+  { enabled: true, bandLo: 0.8, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1, betUsd: 5 },
   "settings: band above hi falls back",
 );
 eq(
   parseTempSettings('{"tempNoEnabled":"true","tempNoBandLo":0.9}'),
-  { enabled: false, bandLo: 0.9, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1 },
+  { enabled: false, bandLo: 0.9, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1, betUsd: 5 },
   "settings: string true is off",
 );
 // 하한=상한(빈 밴드)은 쌍째로 기본값으로 되돌린다
 eq(
   parseTempSettings({ tempNoEnabled: true, tempNoBandLo: 0.998 }),
-  { enabled: true, bandLo: 0.8, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1 },
+  { enabled: true, bandLo: 0.8, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1, betUsd: 5 },
   "settings: band lo == hi resets pair",
 );
 eq(
   parseTempSettings('{"tempNoEnabled":true,"tempNoBandLo":0.85,"tempNoBandHi":0.99}'),
-  { enabled: true, bandLo: 0.85, bandHi: 0.99, entryHourUtc: 6, reserveSlots: 1 },
+  { enabled: true, bandLo: 0.85, bandHi: 0.99, entryHourUtc: 6, reserveSlots: 1, betUsd: 5 },
   "settings: custom band hi kept",
 );
 eq(
   parseTempSettings('{"tempNoEnabled":true,"tempNoBandLo":0.95,"tempNoBandHi":0.9}'),
-  { enabled: true, bandLo: 0.8, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1 },
+  { enabled: true, bandLo: 0.8, bandHi: 0.998, entryHourUtc: 6, reserveSlots: 1, betUsd: 5 },
   "settings: band lo >= hi resets pair",
 );
 eq(
@@ -191,6 +191,32 @@ eq(
   parseTempSettings('{"tempNoReserveSlots":"3"}').reserveSlots,
   3,
   "settings: reserve numeric string coerced (Number semantics)",
+);
+// 기온 건당 금액 — 메인 건당 금액과 독립, 음수·손상 타입은 기본값 $5
+eq(
+  parseTempSettings('{"tempBetUsd":3}').betUsd,
+  3,
+  "settings: temp bet 3 kept",
+);
+eq(
+  parseTempSettings('{"tempBetUsd":0}').betUsd,
+  0,
+  "settings: temp bet 0 kept (no temp buys)",
+);
+eq(
+  parseTempSettings('{"tempBetUsd":-1}').betUsd,
+  5,
+  "settings: temp bet negative falls back",
+);
+eq(
+  parseTempSettings('{"tempBetUsd":true}').betUsd,
+  5,
+  "settings: temp bet boolean falls back",
+);
+eq(
+  parseTempSettings('{"betUsd":9}').betUsd,
+  5,
+  "settings: main betUsd does not leak into temp bet",
 );
 
 // ── 수수료 해석 ──────────────────────────────────────────────

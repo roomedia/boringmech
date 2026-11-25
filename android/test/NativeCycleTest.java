@@ -10,6 +10,7 @@ import com.roomedia.boringmech.engine.PositionsFetcher;
 import com.roomedia.boringmech.engine.RedeemPlan;
 import com.roomedia.boringmech.engine.StopLoss;
 import com.roomedia.boringmech.engine.StopLossFallback;
+import com.roomedia.boringmech.engine.TempNo;
 import com.roomedia.boringmech.engine.TradeSettings;
 import com.roomedia.boringmech.write.ClobWriteClient;
 import com.roomedia.boringmech.write.JsonCodec;
@@ -388,6 +389,8 @@ public class NativeCycleTest {
         net.books.put("111", jmap("{\"tick_size\":\"0.01\",\"neg_risk\":false,\"min_order_size\":\"5\","
                 + "\"asks\":[{\"price\":\"0.75\",\"size\":\"100\"}],"
                 + "\"bids\":[{\"price\":\"0.74\",\"size\":\"100\"}]}"));
+        // 건당 금액 $6 — 가짜 체결 응답(making 6 · taking 7.79)과 맞춘다
+        env.durable.put("bm_settings", "{\"betUsd\":6}");
         OrderTransport t = new OrderTransport();
         NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
         NativeCycle.Result r = c.runIteration(1);
@@ -697,7 +700,8 @@ public class NativeCycleTest {
         check("reserve2: 메인은 못 삼", !bought.contains("test-buy-market"));
     }
 
-    /** 차선: sizing 슬롯 0이어도 예약이 있으면 기온이 유저 설정 금액($3)으로 진입한다. */
+    /** 차선: sizing 슬롯 0이어도 예약이 있으면 기온이 기온 전용 금액($3)으로 진입한다.
+     *  메인 금액은 기본 $5 그대로라 슬롯 0인 것과 함께 금액 독립성을 본다. */
     private static void tempLaneBuysAtUserAmount() {
         FakeEnv env = new FakeEnv();
         FakeNet net = new FakeNet();
@@ -706,13 +710,14 @@ public class NativeCycleTest {
         net.markets = new ArrayList<>();
         tempStage(net);
         env.durable.put("bm_settings",
-                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"betMinUsd\":3}");
+                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"tempBetUsd\":3}");
         OrderTransport t = new OrderTransport();
         NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
         NativeCycle.Result r = c.runIteration(1);
         String tempSlug = "highest-temperature-in-seoul-on-november-15-2026-7c";
         check("lane $3: 결과 OK", r == NativeCycle.Result.OK);
-        check("lane $3: 건당 $3 · 슬롯 0", env.logged("건당 $3 · 슬롯 0"));
+        check("lane $3: 메인 건당 $5 · 슬롯 0", env.logged("건당 $5 · 슬롯 0"));
+        check("lane $3: 기온 매수는 $3", env.logged("매수 " + tempSlug + " · $3 @"));
         check("lane $3: 차선 진입 로그", env.logged("기온 예약 차선으로 진입을 시도합니다"));
         check("lane $3: 주문 1회", t.posts == 1);
         check("lane $3: 기온 매수 + 차선 표기",
@@ -729,7 +734,7 @@ public class NativeCycleTest {
         net.markets = new ArrayList<>();
         tempStage(net);
         env.durable.put("bm_settings",
-                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"betMinUsd\":3,\"tempNoReserveSlots\":0}");
+                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"tempBetUsd\":3,\"tempNoReserveSlots\":0}");
         OrderTransport t = new OrderTransport();
         NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
         NativeCycle.Result r = c.runIteration(1);
@@ -743,12 +748,12 @@ public class NativeCycleTest {
     private static void tempLaneNeedsCashAboveReserve() {
         FakeEnv env = new FakeEnv();
         FakeNet net = new FakeNet();
-        net.cash = 5.5;           // 건당 $3 + 예비금 $2.87 = $5.87에 못 미친다
+        net.cash = 5.5;           // 기온 건당 $3 + 예비금 $2.87 = $5.87에 못 미친다
         net.positionsValue = 20;
         net.markets = new ArrayList<>();
         tempStage(net);
         env.durable.put("bm_settings",
-                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"betMinUsd\":3}");
+                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"tempBetUsd\":3}");
         OrderTransport t = new OrderTransport();
         NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
         NativeCycle.Result r = c.runIteration(1);
@@ -766,7 +771,7 @@ public class NativeCycleTest {
         net.markets = new ArrayList<>();
         tempStageTwo(net);
         env.durable.put("bm_settings",
-                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"betMinUsd\":3}");
+                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"tempBetUsd\":3}");
         OrderTransport t = new OrderTransport();
         NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
         NativeCycle.Result r = c.runIteration(1);
@@ -778,15 +783,59 @@ public class NativeCycleTest {
                         && !bought.contains("highest-temperature-in-seoul-on-november-15-2026-8c"));
     }
 
-    /** 최소 수량은 메인에서 기존대로다 — bet $3으로 낮춰도 메인 후보는 탈락한다. */
+    /** 금액 가드: 기온 금액이 메인 금액보다 크면 일반 슬롯 지출이 현금
+     *  하한을 침범하지 않는다 — 첫 건($50)만 체결되고 둘째 건은 하한
+     *  가드에서 걸린다. 슬롯(건수)은 메인 금액 기준이라 14개나 남는다. */
+    private static void tempBetAboveMainRespectsCashFloor() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 100;           // 평가 $100 · 현금 하한 $30 · 여유액 $70 · 메인 건당 $5 → 슬롯 14
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        tempStageTwo(net);
+        env.durable.put("bm_settings",
+                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"tempBetUsd\":50,\"tempNoReserveSlots\":0}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        String bought = env.durable.getOrDefault("bm_bought", "");
+        check("floor guard: 결과 OK", r == NativeCycle.Result.OK);
+        check("floor guard: 주문 1회만", t.posts == 1);
+        check("floor guard: 기온 1건만 매수",
+                bought.contains("highest-temperature-in-seoul-on-november-15-2026-7c")
+                        ^ bought.contains("highest-temperature-in-seoul-on-november-15-2026-8c"));
+        check("floor guard: 현금하한 탈락 집계", env.logged("현금하한 1"));
+    }
+
+    /** 금액 가드: 기온 금액 0이면 일반 슬롯에서도 0원 제출을 시도하지 않는다. */
+    private static void tempBetZeroSkipsTempBuys() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 25;            // 메인 건당 $5 → 슬롯 3
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        tempStage(net);
+        env.durable.put("bm_settings",
+                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"tempBetUsd\":0,\"tempNoReserveSlots\":0}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("bet zero: 결과 OK", r == NativeCycle.Result.OK);
+        check("bet zero: 주문 없음", t.posts == 0);
+        check("bet zero: 금액없음 탈락 집계", env.logged("금액없음 1"));
+        check("bet zero: 매수 기록 없음",
+                !env.durable.getOrDefault("bm_bought", "").contains("highest-temperature"));
+    }
+
+    /** 최소 수량은 메인에서 기존대로다 — 건당 $3으로 낮춰도 메인 후보는 탈락한다. */
     private static void mainStillRejectsBelowMinSizeAtLowBet() {
         FakeEnv env = new FakeEnv();
         FakeNet net = new FakeNet();
-        net.cash = 12;            // 평가 $12 → 건당 = max($3, 1%) = $3
+        net.cash = 12;            // 건당 금액 $3 설정
         net.positionsValue = 0;
         net.markets = new ArrayList<>();
         mainStage(net, "test-buy-market", "111", "222");
-        env.durable.put("bm_settings", "{\"betMinUsd\":3}");
+        env.durable.put("bm_settings", "{\"betUsd\":3}");
         OrderTransport t = new OrderTransport();
         NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
         NativeCycle.Result r = c.runIteration(1);
@@ -1072,14 +1121,23 @@ public class NativeCycleTest {
                 && d.spreadMax == 0.02 && d.askDepthMinUsd == 10
                 && d.slippageCap == 0.015 && d.snapshotMatchTol == 0.03
                 && d.askAboveSignal == 0.05
-                && d.betPct == 0.01 && d.betMinUsd == 5 && d.cashFloorPct == 0.3
+                && d.betUsd == 5 && d.cashFloorPct == 0.3
                 && d.reserveUsd == 2.87 && d.maxPositions == 70 && d.verifyCap == 60
                 && d.stopDrop == 0.25 && d.tempStopDrop == 0.15
                 && d.decidedHigh == 0.97 && d.decidedLow == 0.03);
         check("cfg bad json defaults", TradeSettings.parse("not json").bandLo == 0.6);
-        TradeSettings c = TradeSettings.parse("{\"bandLo\":0.5,\"betPct\":0.02,\"maxPositions\":10}");
-        check("cfg custom kept", c.bandLo == 0.5 && c.betPct == 0.02 && c.maxPositions == 10
+        TradeSettings c = TradeSettings.parse("{\"bandLo\":0.5,\"betUsd\":7,\"maxPositions\":10}");
+        check("cfg custom kept", c.bandLo == 0.5 && c.betUsd == 7 && c.maxPositions == 10
                 && c.bandHi == 0.9);
+        // 비율 키는 더 이상 읽지 않는다 — 저장된 옛 키가 있어도 금액 기본값이다
+        check("cfg legacy ratio keys ignored",
+                TradeSettings.parse("{\"betPct\":0.02,\"betMinUsd\":3}").betUsd == 5);
+        // 기온 건당 금액 — 메인 금액과 독립, 기본 $5
+        check("cfg temp bet", TempNo.parseSettings(null).betUsd == 5
+                && TempNo.parseSettings("{\"tempBetUsd\":3}").betUsd == 3
+                && TempNo.parseSettings("{\"tempBetUsd\":0}").betUsd == 0
+                && TempNo.parseSettings("{\"tempBetUsd\":-1}").betUsd == 5
+                && TempNo.parseSettings("{\"betUsd\":9}").betUsd == 5);
         check("cfg band pair reset", TradeSettings.parse("{\"bandLo\":0.95,\"bandHi\":0.9}").bandLo == 0.6
                 && TradeSettings.parse("{\"bandLo\":0.95,\"bandHi\":0.9}").bandHi == 0.9);
         check("cfg decided pair reset",
@@ -1103,8 +1161,7 @@ public class NativeCycleTest {
                         && d.slippageCap == com.roomedia.boringmech.engine.CandidateVerifier.SLIPPAGE_CAP
                         && d.snapshotMatchTol == com.roomedia.boringmech.engine.CandidateVerifier.SNAPSHOT_MATCH_TOL
                         && d.askAboveSignal == com.roomedia.boringmech.engine.CandidateVerifier.ASK_ABOVE_SIGNAL
-                        && d.betPct == PositionBook.BET_PCT
-                        && d.betMinUsd == PositionBook.BET_MIN_USD
+                        && d.betUsd == PositionBook.BET_USD
                         && d.cashFloorPct == PositionBook.CASH_FLOOR_PCT
                         && d.reserveUsd == PositionBook.RESERVE_USD
                         && d.maxPositions == (int) PositionBook.MAX_POSITIONS
@@ -1114,7 +1171,13 @@ public class NativeCycleTest {
                         && d.decidedLow == StopLoss.DECIDED_LOW);
         // 커스텀 사이징이 실제로 반영되는지
         check("cfg sizing bet", PositionBook.sizing(1000, 1000, 0,
-                TradeSettings.parse("{\"betPct\":0.02}")).bet == 20);
+                TradeSettings.parse("{\"betUsd\":7}")).bet == 7);
+        // 금액 방식 — 자본이 변해도 건당 금액은 설정값 그대로다
+        check("cfg sizing bet ignores equity", PositionBook.sizing(1000, 100, 0,
+                TradeSettings.parse("{\"betUsd\":7}")).bet == 7
+                && PositionBook.sizing(1000, 100000, 0,
+                TradeSettings.parse("{\"betUsd\":7}")).bet == 7
+                && PositionBook.sizing(1000, 100, 0).bet == PositionBook.sizing(1000, 100000, 0).bet);
         check("cfg sizing slots", PositionBook.sizing(100000, 100000, 0,
                 TradeSettings.parse("{\"maxPositions\":2}")).slots == 2);
     }
@@ -2349,8 +2412,8 @@ public class NativeCycleTest {
     private static void auditSettingsGuards() {
         check("audit1: cashFloorPct null falls back",
                 TradeSettings.parse("{\"cashFloorPct\":null}").cashFloorPct == 0.3);
-        check("audit1: betPct true falls back",
-                TradeSettings.parse("{\"betPct\":true}").betPct == 0.01);
+        check("audit1: betUsd true falls back",
+                TradeSettings.parse("{\"betUsd\":true}").betUsd == 5);
         check("audit1: volumeMin true falls back",
                 TradeSettings.parse("{\"volumeMin\":true}").volumeMin == 10000);
         check("audit1: askDepthMinUsd null falls back",
@@ -2362,7 +2425,7 @@ public class NativeCycleTest {
         check("audit1: bandLo object falls back",
                 TradeSettings.parse("{\"bandLo\":{\"x\":1}}").bandLo == 0.6);
         check("audit1: numeric string with spaces kept",
-                TradeSettings.parse("{\"betPct\":\" 0.02 \"}").betPct == 0.02);
+                TradeSettings.parse("{\"betUsd\":\" 7 \"}").betUsd == 7);
         TradeSettings cross = TradeSettings.parse("{\"decidedLow\":0.90,\"decidedHigh\":0.95}");
         check("audit4: decided pair above 0.5 resets", cross.decidedLow == 0.03 && cross.decidedHigh == 0.97);
         TradeSettings below = TradeSettings.parse("{\"decidedLow\":0.4,\"decidedHigh\":0.45}");
@@ -2371,8 +2434,8 @@ public class NativeCycleTest {
         check("audit4: decided pair straddling 0.5 kept",
                 straddle.decidedLow == 0.2 && straddle.decidedHigh == 0.8);
         PositionBook.Sizing zs = PositionBook.sizing(100000, 1, 0,
-                TradeSettings.parse("{\"betMinUsd\":0,\"betPct\":0.001}"));
-        check("audit3: bet rounds to 0 and slots closed", zs.bet == 0 && zs.slots == 0);
+                TradeSettings.parse("{\"betUsd\":0}"));
+        check("audit3: bet 0 and slots closed", zs.bet == 0 && zs.slots == 0);
         Map<String, Object> tagged = new LinkedHashMap<>();
         tagged.put("slug", "dup-mkt");
         tagged.put("strategy", "temp_no");
@@ -2544,6 +2607,8 @@ public class NativeCycleTest {
         tempLaneOffWhenReserveZero();
         tempLaneNeedsCashAboveReserve();
         tempLaneLimitedToReserveCount();
+        tempBetAboveMainRespectsCashFloor();
+        tempBetZeroSkipsTempBuys();
         mainStillRejectsBelowMinSizeAtLowBet();
         tempReserveUpcomingWindowHoldsMain();
         tempReservePastWindowNoHold();

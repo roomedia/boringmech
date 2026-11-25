@@ -59,10 +59,10 @@ eq(typeof BM?.settingsSummaryText, "function", "bundle: settingsSummaryText exis
 eq(typeof BM?.parseTradeSettings, "function", "bundle: parseTradeSettings exists");
 if (BM && typeof BM.settingsSummaryText === "function" && typeof BM.parseTradeSettings === "function") {
   eq(BM.settingsSummaryText(BM.parseTradeSettings(null)),
-    "밴드 0.60–0.90 · 건당 평가금 1% · 현금 30% 유지 · 최대 70건 · 손절 진입가 −0.25, 그 외 만기 보유",
+    "밴드 0.60–0.90 · 건당 $5.00 · 현금 30% 유지 · 최대 70건 · 손절 진입가 −0.25, 그 외 만기 보유",
     "bundle: summary defaults match legacy text");
   eq(BM.settingsSummaryText(BM.parseTradeSettings({ maxPositions: 5 })),
-    "밴드 0.60–0.90 · 건당 평가금 1% · 현금 30% 유지 · 최대 5건 · 손절 진입가 −0.25, 그 외 만기 보유",
+    "밴드 0.60–0.90 · 건당 $5.00 · 현금 30% 유지 · 최대 5건 · 손절 진입가 −0.25, 그 외 만기 보유",
     "bundle: summary reflects changed settings");
 }
 

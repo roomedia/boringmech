@@ -247,6 +247,16 @@
         </div>
         <input type="hidden" id="tempNoReserveSlots" value="1">
       </div>
+      <div class="set">
+        <div class="set-head"><span class="lab">건당 금액</span>
+          <span class="stepper">
+            <button type="button" class="step-btn" data-for="tempBetUsd" data-dir="-1">−</button>
+            <span><span class="unit">$</span><span class="val" id="val_tempBetUsd">5</span></span>
+            <button type="button" class="step-btn" data-for="tempBetUsd" data-dir="1">+</button>
+          </span>
+        </div>
+        <input type="hidden" id="tempBetUsd" value="5">
+      </div>
       <div class="stack" style="margin-top:16px">
         <button class="btn ghost" id="btnTempSave" disabled>설정 저장</button>
         <div class="btnrow">
@@ -337,18 +347,14 @@
         <button type="button" class="icon-btn" id="btnEditSize" aria-label="설정 편집"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
       </div>
       <div class="set">
-        <div class="set-head"><span class="lab">건당 비율</span><span class="val" id="val_betPct">0.01</span></div>
-        <input type="range" class="slider" id="ts_betPct" value="0.01" min="0.005" max="0.10" step="0.005">
-      </div>
-      <div class="set">
-        <div class="set-head"><span class="lab">건당 하한</span>
+        <div class="set-head"><span class="lab">건당 금액</span>
           <span class="stepper">
-            <button type="button" class="step-btn" data-for="ts_betMinUsd" data-dir="-1">−</button>
-            <span><span class="unit">$</span><span class="val" id="val_betMinUsd">5</span></span>
-            <button type="button" class="step-btn" data-for="ts_betMinUsd" data-dir="1">+</button>
+            <button type="button" class="step-btn" data-for="ts_betUsd" data-dir="-1">−</button>
+            <span><span class="unit">$</span><span class="val" id="val_betUsd">5</span></span>
+            <button type="button" class="step-btn" data-for="ts_betUsd" data-dir="1">+</button>
           </span>
         </div>
-        <input type="hidden" id="ts_betMinUsd" value="5">
+        <input type="hidden" id="ts_betUsd" value="5">
       </div>
       <div class="set">
         <div class="set-head"><span class="lab">현금 하한 비율</span><span class="val" id="val_cashFloorPct">0.30</span></div>
@@ -1018,13 +1024,15 @@
       var hour = Number(o.tempEntryHourUtc);
       var drop = Number(o.tempStopDrop);
       var rs = Number(o.tempNoReserveSlots);
+      var tb = Number(o.tempBetUsd);
       return {
         enabled: o.tempNoEnabled === true,
         bandLo: bandLo,
         bandHi: bandHi,
         entryHourUtc: (isFinite(hour) && Math.floor(hour) === hour && hour >= 0 && hour <= 23) ? hour : 6,
         tempStopDrop: (isFinite(drop) && drop > 0 && drop < 1) ? drop : 0.15,
-        reserveSlots: (isFinite(rs) && Math.floor(rs) === rs && rs >= 0 && rs <= 70) ? rs : 1
+        reserveSlots: (isFinite(rs) && Math.floor(rs) === rs && rs >= 0 && rs <= 70) ? rs : 1,
+        betUsd: (isFinite(tb) && tb >= 0) ? tb : 5
       };
     }
 
@@ -1054,8 +1062,7 @@
         { id: 'ts_askAboveSignal', key: 'askAboveSignal', def: 0.05, min: 0, max: 1, label: '신호가 허용 폭', ctrl: 'slider' }
       ], pairs: [['ts_bandLo', 'ts_bandHi', '매수 밴드'], ['ts_priorityBandLo', 'ts_priorityBandHi', '우선 밴드']] },
       size: { err: 'sizeErr', fields: [
-        { id: 'ts_betPct', key: 'betPct', def: 0.01, min: 0, max: 1, minEx: true, label: '건당 비율', ctrl: 'slider' },
-        { id: 'ts_betMinUsd', key: 'betMinUsd', def: 5, min: 0, label: '건당 하한', ctrl: 'step', step: 1, smax: 100 },
+        { id: 'ts_betUsd', key: 'betUsd', def: 5, min: 0, label: '건당 금액', ctrl: 'step', step: 1, smax: 100 },
         { id: 'ts_cashFloorPct', key: 'cashFloorPct', def: 0.3, min: 0, max: 1, label: '현금 하한 비율', ctrl: 'slider' },
         { id: 'ts_reserveUsd', key: 'reserveUsd', def: 2.87, min: 0, label: '현금 하한 하한값', ctrl: 'num' },
         { id: 'ts_maxPositions', key: 'maxPositions', def: 70, min: 1, max: 10000, int: true, label: '동시 보유 상한', ctrl: 'step', step: 1, smax: 200 },
@@ -1146,7 +1153,8 @@
       { id: 'tempNoBandHi', key: 'tempNoBandHi', prop: 'bandHi', def: 0.998, ctrl: 'slider', disp: 'val_tempBandHi' },
       { id: 'tempStopDrop', key: 'tempStopDrop', prop: 'tempStopDrop', def: 0.15, ctrl: 'slider', disp: 'val_tempStopDrop' },
       { id: 'tempEntryHourUtc', key: 'tempEntryHourUtc', prop: 'entryHourUtc', def: 6, ctrl: 'step', disp: 'val_tempEntryHour' },
-      { id: 'tempNoReserveSlots', key: 'tempNoReserveSlots', prop: 'reserveSlots', def: 1, ctrl: 'step', disp: 'val_tempReserve' }
+      { id: 'tempNoReserveSlots', key: 'tempNoReserveSlots', prop: 'reserveSlots', def: 1, ctrl: 'step', disp: 'val_tempReserve' },
+      { id: 'tempBetUsd', key: 'tempBetUsd', prop: 'betUsd', def: 5, ctrl: 'step', disp: 'val_tempBetUsd' }
     ];
     var formBaseline = {};
 
@@ -1397,6 +1405,9 @@
     wireTap('val_tempReserve', function(){
       return { inputId: 'tempNoReserveSlots', dispId: 'val_tempReserve', label: '예약 슬롯', min: 0, max: 70, step: 1, int: true };
     });
+    wireTap('val_tempBetUsd', function(){
+      return { inputId: 'tempBetUsd', dispId: 'val_tempBetUsd', label: '건당 금액', min: 0, max: 100, step: 1 };
+    });
     for (var tg in TRADE_GROUPS) {
       TRADE_GROUPS[tg].fields.forEach(function(f){
         if (f.ctrl === 'slider') {
@@ -1432,7 +1443,8 @@
     });
     var TEMP_STEPS = {
       tempEntryHourUtc: { step: 1, min: 0, max: 23, disp: 'val_tempEntryHour' },
-      tempNoReserveSlots: { step: 1, min: 0, max: 70, disp: 'val_tempReserve' }
+      tempNoReserveSlots: { step: 1, min: 0, max: 70, disp: 'val_tempReserve' },
+      tempBetUsd: { step: 1, min: 0, max: 100, disp: 'val_tempBetUsd' }
     };
     document.querySelectorAll('.step-btn').forEach(function(btn){
       btn.addEventListener('click', function(){
@@ -1724,7 +1736,7 @@
         var ns = window.AndroidBridge && AndroidBridge.getNativeState && AndroidBridge.getNativeState();
         if (ns) payload.native = JSON.parse(ns);
       } catch (e) {}
-      // 실효 설정 요약 — 기온 토글·밴드·건당 하한 같은 현재값은 로그와
+      // 실효 설정 요약 — 기온 토글·밴드·건당 금액 같은 현재값은 로그와
       // 스냅샷 어디에도 없어 원격 대조가 불가능했다 (2026-11-24).
       // 원본은 설정 화면과 같은 경로(readSettingsObject = bm_settings
       // durable), 해석은 엔진과 같은 함수로 푼 실효값이다. 실패하면
