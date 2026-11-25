@@ -1308,15 +1308,21 @@ export function recordShadowCycle({ ts, cycle, snap, cands, enteredSlugs }) {
 // 쓰므로, 내일 이벤트는 예약 홀드 판정에만 쓰인다. 캐시는 기준 UTC
 // 날짜가 같은 동안만 유효하다 — 자정을 넘기면 날짜 집합이 달라져
 // 전날 캐시가 새 집합(오늘·내일)을 덮지 않게 무효화한다.
-let tempEventsCache = { atMs: 0, dayKey: "", events: null };
+// 반환은 { events, failures } — failures는 예외뿐 아니라 빈·비배열
+// 응답(존재를 확인하지 못한 슬러그)까지 센다. 홀드 판정은 조회가
+// 완전할 때만 신뢰할 수 있다: 조회 순서가 오늘→내일이라 중간부터
+// 실패가 몰리면 홀드 의존분(내일)이 정확히 지워진 채 "성공"이 되는
+// 구멍이 있었다 (2026-11-26 진단). 부분 실패는 드라이버가
+// tempFetchIncomplete로 받아 홀드를 안전 방향(유지)으로 판정한다.
+let tempEventsCache = { atMs: 0, dayKey: "", result: null };
 async function fetchTempEvents(nowMs) {
   const dayKey = tempFetchDayKey(nowMs);
   if (
-    tempEventsCache.events &&
+    tempEventsCache.result &&
     tempEventsCache.dayKey === dayKey &&
     nowMs - tempEventsCache.atMs < TEMP_NO_CACHE_MS
   ) {
-    return tempEventsCache.events;
+    return tempEventsCache.result;
   }
   const slugs = tempEventSlugsForFetch(nowMs);
   const events = [];
@@ -1327,6 +1333,7 @@ async function fetchTempEvents(nowMs) {
         `${GAMMA_EVENTS_URL}?${new URLSearchParams({ slug })}`,
       );
       if (Array.isArray(page) && page[0]) events.push(page[0]);
+      else failures += 1;
     } catch {
       failures += 1;
     }
@@ -1334,11 +1341,13 @@ async function fetchTempEvents(nowMs) {
   if (failures >= slugs.length) {
     // 전수 실패는 "오늘 이벤트 없음"(빈 목록)과 구분해 null로 알린다 —
     // 호출자가 예약을 안전 방향(유지)으로 판정하게 하기 위해서다
-    // (v0.3.39 감사 E). 부분 실패(일부 도시 성공)는 성공으로 취급한다.
+    // (v0.3.39 감사 E). 부분 실패는 { events, failures }로 알리고,
+    // 드라이버가 같은 안전 방향으로 판정한다 (2026-11-26 진단).
     return null;
   }
-  tempEventsCache = { atMs: nowMs, dayKey, events };
-  return events;
+  const result = { events, failures };
+  tempEventsCache = { atMs: nowMs, dayKey, result };
+  return result;
 }
 
 function roundTick(price, tick) {
@@ -1373,6 +1382,7 @@ const state = {
   gen: 0,
   sessionFills: 0,
   posGapWarned: false,
+  lastTempHold: null,
   boughtReconciled: false,
   reconcileFailLogged: false,
   updateInfo: null,
@@ -2891,21 +2901,29 @@ async function runCycle(gen) {
   let tempEventsList = null;
   // 섀도우 기록용 — 이 사이클이 평가한 기온 후보 (기록은 선정 패스 뒤).
   let tempCandsSeen = [];
-  // 기온 이벤트 조회 전수 실패 여부 — 실패와 "오늘 이벤트 없음"을
-  // 구분해, 전수 실패 사이클은 예약을 유지하는 쪽으로 판정한다
-  // (안전 방향, v0.3.39 감사 E).
+  // 기온 이벤트 조회 실패 여부 — 전수 실패와 "오늘 이벤트 없음"을
+  // 구분해, 실패한 사이클은 예약을 유지하는 쪽으로 판정한다
+  // (안전 방향, v0.3.39 감사 E). 부분 실패도 같은 방향이다: 조회
+  // 순서가 오늘→내일이라 중간부터 실패가 몰리면 홀드 의존분(내일)이
+  // 지워진 채 홀드가 풀려 메인이 마지막 슬롯을 먹는 구멍이 있었다
+  // (2026-11-26 진단).
   let tempFetchFailed = false;
+  let tempFetchIncomplete = false;
   if (tempSettings.enabled) {
     try {
-      const events = await fetchTempEvents(Date.now());
-      if (events == null) {
+      const fetched = await fetchTempEvents(Date.now());
+      if (fetched == null) {
         tempFetchFailed = true;
         log("기온 이벤트 조회 전수 실패 — 이번 사이클은 기온 예약을 유지합니다");
       } else {
-        tempEventsList = events;
+        tempEventsList = fetched.events;
+        if (fetched.failures > 0) {
+          tempFetchIncomplete = true;
+          log(`기온 이벤트 조회 일부 실패 (${fetched.failures}건) — 이번 사이클은 기온 예약을 유지합니다`);
+        }
         const mainSlugs = new Set(candidates.map((c) => c.slug));
         const tempCands = scanTempCandidates(
-          events, snap.heldSlugs, boughtAll, tempSettings, Date.now(), null, mainSlugs,
+          fetched.events, snap.heldSlugs, boughtAll, tempSettings, Date.now(), null, mainSlugs,
         );
         tempCandsSeen = tempCands;
         if (tempCands.length) {
@@ -3093,7 +3111,8 @@ async function runCycle(gen) {
   };
   // 선정 드라이버 — 기온 슬롯 홀드. 토글 ON + 예약 슬롯 N>0이고,
   // 오늘·내일 기온 이벤트 중 진입 창이 남은 것이 있거나(후보가 있으면
-  // 그 이벤트가 여기에 걸린다) 조회가 전수 실패했을 때 홀드가 켜진다.
+  // 그 이벤트가 여기에 걸린다) 조회가 실패(전수·일부)했을 때 홀드가
+  // 켜진다.
   // 홀드가 켜지면 메인의 유효 용량을 전체에서 N슬롯 줄여 실제로 비워
   // 둔다: 메인 후보는 남은 슬롯이 N개 이하이거나 검증이 캡−N에 닿으면
   // 그 사이클에서 건너뛰고, 다시 태우지 않는다 — 다시 태우면 비워 둔
@@ -3109,7 +3128,16 @@ async function runCycle(gen) {
   const tempHold = tempSettings.enabled
     && tempReserveSlots > 0
     && (tempFetchFailed
+      || tempFetchIncomplete
       || tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc, snap.heldSlugs, boughtAll));
+  // 홀드 해제 전이 로그 — 홀드가 풀리는 순간을 남기지 않으면 예약이
+  // 사라진 것을 사후에 알 수 없다 (2026-11-26 진단). 켜짐 전이는 기존
+  // 홀드 로그(차단된 메인이 있을 때)가 덮으므로 꺼짐만 남긴다.
+  if (state.lastTempHold === true && !tempHold
+    && tempSettings.enabled && tempReserveSlots > 0) {
+    log("기온 예약 해제 — 진입 창이 남은 이벤트가 없어 메인 차단을 풉니다");
+  }
+  state.lastTempHold = tempHold;
   laneLeft = tempHold ? tempReserveSlots : 0;
   const heldMain = [];
   // 섀도우 기록의 진입 판정 기준 — 선정 패스 전후의 매수 기록 차이로
@@ -3147,6 +3175,8 @@ async function runCycle(gen) {
   if (tempHold && heldMain.length) {
     if (tempFetchFailed) {
       log(`기온 예약 — 조회 전수 실패로 메인 ${heldMain.length}건을 미루고 슬롯을 남깁니다`);
+    } else if (tempFetchIncomplete) {
+      log(`기온 예약 — 조회 일부 실패로 메인 ${heldMain.length}건을 미루고 슬롯을 남깁니다`);
     } else {
       log(`기온 예약 — 진입 창이 남은 이벤트가 있어 메인 ${heldMain.length}건을 미루고 슬롯을 남깁니다`);
     }

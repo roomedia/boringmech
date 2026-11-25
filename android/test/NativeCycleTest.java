@@ -198,14 +198,18 @@ public class NativeCycleTest {
         }
 
         List<Object> tempEvents = new ArrayList<>();
+        int tempEventsFailures = 0;
         int tempEventsCalls = 0;
         List<String> lastTempSlugs;
 
         @Override
-        public List<Object> fetchTempEvents(List<String> eventSlugs) {
+        public NativeCycle.TempEventsResult fetchTempEvents(List<String> eventSlugs) {
             tempEventsCalls++;
             lastTempSlugs = eventSlugs;
-            return tempEvents;
+            if (tempEvents == null) {
+                return null;
+            }
+            return new NativeCycle.TempEventsResult(tempEvents, tempEventsFailures);
         }
 
         @Override
@@ -1097,6 +1101,67 @@ public class NativeCycleTest {
                 bought.contains("main-market-a") != bought.contains("main-market-b"));
         check("hold noretry: 기온은 못 삼", !bought.contains("highest-temperature-in-seoul"));
         check("hold noretry: 홀드 로그", env.logged("기온 예약 — 진입 창이 남은 이벤트가 있어"));
+    }
+
+    /**
+     * 2026-11-26 진단 재현: 전날 저녁, 조회가 부분 실패해 내일 이벤트가
+     * 목록에서 빠졌으면(전수 실패는 아님) 종전에는 홀드가 조용히 풀려
+     * 메인이 마지막 슬롯을 먹었다. 부분 실패도 안전 방향 — 홀드를
+     * 유지하고 사유 로그가 남아야 한다.
+     */
+    private static void tempFetchPartialFailKeepsReserve() {
+        FakeEnv env = new FakeEnv();
+        env.nowMsOverride = Instant.parse("2026-11-15T20:00:00Z").toEpochMilli();
+        FakeNet net = new FakeNet();
+        net.cash = 12; // 슬롯 1
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        // 내일 이벤트는 조회 실패로 목록에 없다 — 오늘분만 성공한 부분 실패.
+        net.tempEvents = new ArrayList<>();
+        net.tempEventsFailures = 40;
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("partial: 결과 OK", r == NativeCycle.Result.OK);
+        check("partial: 일부 실패 로그", env.logged("기온 이벤트 조회 일부 실패 (40건)"));
+        check("partial: 예약 유지로 주문 없음", t.posts == 0);
+        check("partial: 메인은 못 삼",
+                !env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+        check("partial: 홀드 로그", env.logged("기온 예약 — 조회 일부 실패로 메인"));
+    }
+
+    /**
+     * 홀드 해제 전이 로그: 홀드가 걸린 사이클 다음에 완전한 조회로
+     * 창이 남은 이벤트가 없음이 확인돼 홀드가 풀리면, 해제 로그가
+     * 남고 그 사이클부터 메인이 산다.
+     */
+    private static void tempHoldReleaseLogged() {
+        FakeEnv env = new FakeEnv();
+        env.nowMsOverride = Instant.parse("2026-11-15T20:00:00Z").toEpochMilli();
+        FakeNet net = new FakeNet();
+        net.cash = 12; // 슬롯 1
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        tempStageEndOnlyDated(net,
+                "highest-temperature-in-seoul-on-november-16-2026", "2026-11-16T12:00:00Z");
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r1 = c.runIteration(1);
+        check("release: 1차 결과 OK", r1 == NativeCycle.Result.OK);
+        check("release: 1차 홀드로 주문 없음", t.posts == 0);
+        check("release: 1차 해제 로그 없음", !env.logged("기온 예약 해제"));
+        // 캐시(15분)를 넘긴 뒤 — 완전한 조회에서 이벤트가 사라졌다.
+        env.nowMsOverride = Instant.parse("2026-11-15T20:20:00Z").toEpochMilli();
+        net.tempEvents = new ArrayList<>();
+        NativeCycle.Result r2 = c.runIteration(1);
+        check("release: 2차 결과 OK", r2 == NativeCycle.Result.OK);
+        check("release: 해제 로그", env.logged("기온 예약 해제 — 진입 창이 남은 이벤트가 없어"));
+        check("release: 2차 메인이 슬롯 획득", t.posts == 1
+                && env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
     }
 
     /** 손절 판정 경계 — 폭 파라미터와 결정 구간 설정값 (JS book 테스트와 같은 케이스). */
@@ -2619,6 +2684,8 @@ public class NativeCycleTest {
         tempHoldTomorrowEventEveningBefore();
         tempHoldAppliesToCashSlots();
         tempHoldMainNotRetriedAfterTempFails();
+        tempFetchPartialFailKeepsReserve();
+        tempHoldReleaseLogged();
         tradeSettingsParse();
         stopLossVerdictDrops();
         stopLossPath();

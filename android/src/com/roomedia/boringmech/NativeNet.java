@@ -177,7 +177,7 @@ final class NativeNet implements NativeCycle.Net {
     private static final String GAMMA_EVENTS_API = "https://gamma-api.polymarket.com/events";
 
     @Override
-    public List<Object> fetchTempEvents(List<String> eventSlugs) {
+    public NativeCycle.TempEventsResult fetchTempEvents(List<String> eventSlugs) {
         List<Object> events = new ArrayList<>();
         int failures = 0;
         for (String slug : eventSlugs) {
@@ -185,6 +185,11 @@ final class NativeNet implements NativeCycle.Net {
                 Object page = fetchJsonModel(GAMMA_EVENTS_API + "?slug=" + enc(slug));
                 if (page instanceof List && !((List<?>) page).isEmpty()) {
                     events.add(((List<?>) page).get(0));
+                } else {
+                    // 빈·비배열 응답은 존재를 확인하지 못한 것이다 —
+                    // 실패로 세야 홀드 판정이 불완전한 조회를 성공으로
+                    // 읽지 않는다 (JS fetchTempEvents와 같다).
+                    failures++;
                 }
             } catch (Exception ignored) {
                 // 도시별 실패는 그 도시만 건너뛴다 (JS fetchTempEvents와 같다).
@@ -194,11 +199,13 @@ final class NativeNet implements NativeCycle.Net {
         }
         // 전 도시 실패는 빈 목록과 구분한다 — JS는 전부 실패한 조회를
         // 캐시하지 않으므로, 네이티브도 null로 알려 호출자가 캐시하지
-        // 않게 한다 (감사 2026-11-20 패리티 수리).
+        // 않게 한다 (감사 2026-11-20 패리티 수리). 부분 실패는 실패
+        // 건수와 함께 돌려줘 호출자가 홀드를 안전 방향으로 판정하게
+        // 한다 (2026-11-26 진단).
         if (!eventSlugs.isEmpty() && failures == eventSlugs.size()) {
             return null;
         }
-        return events;
+        return new NativeCycle.TempEventsResult(events, failures);
     }
 
     @Override

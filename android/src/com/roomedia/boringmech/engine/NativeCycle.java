@@ -104,11 +104,15 @@ public final class NativeCycle {
         List<Object> fetchMarkets() throws Exception;
 
         /**
-         * Gamma 기온 이벤트를 슬러그로 조회한다 — 이벤트 모델 목록. 도시별
-         * 실패는 구현이 건너뛰고, 전 도시 실패면 null을 돌려준다 (호출자는
-         * 캐시하지 않는다 — JS fetchTempEvents의 전수 실패 미캐시와 같다).
+         * Gamma 기온 이벤트를 슬러그로 조회한다 — 이벤트 모델 목록과
+         * 실패 건수. 도시별 실패는 구현이 건너뛰고, 전 도시 실패면
+         * null을 돌려준다 (호출자는 캐시하지 않는다 — JS
+         * fetchTempEvents의 전수 실패 미캐시와 같다). 실패 건수는
+         * 예외뿐 아니라 빈·비배열 응답(존재를 확인하지 못한 슬러그)
+         * 까지 센다 — 홀드 판정이 조회 완전성에 기대기 때문이다
+         * (2026-11-26 진단).
          */
-        List<Object> fetchTempEvents(List<String> eventSlugs) throws Exception;
+        TempEventsResult fetchTempEvents(List<String> eventSlugs) throws Exception;
 
         /** Gamma slug 페이지 모델 (배열). 실패 시 예외 — 호출자가 JS .catch 의미론으로 감싼다. */
         Object gammaPageBySlug(String slug) throws Exception;
@@ -130,6 +134,17 @@ public final class NativeCycle {
 
         /** GitHub 최신 릴리스 JSON 모델. */
         Object fetchLatestReleaseJson() throws Exception;
+    }
+
+    /** 기온 이벤트 조회 결과 — 이벤트 목록과 확인하지 못한 슬러그 수. */
+    public static final class TempEventsResult {
+        public final List<Object> events;
+        public final int failures;
+
+        public TempEventsResult(List<Object> events, int failures) {
+            this.events = events;
+            this.failures = failures;
+        }
     }
 
     public static final class MarketContext {
@@ -202,9 +217,11 @@ public final class NativeCycle {
     private final Map<String, String> feeTypeBySlug = new HashMap<>();
 
     /** 기온 이벤트 조회 캐시 — 사이클마다 도시 전수를 호출하지 않게 15분 유지한다. 기준 UTC 날짜가 바뀌면 무효화한다. */
-    private List<Object> tempEventsCache;
+    private TempEventsResult tempEventsCache;
     private long tempEventsCacheAtMs;
     private String tempEventsCacheDayKey;
+    // 직전 사이클의 홀드 상태 — 해제 전이 로그용 (JS state.lastTempHold와 같다).
+    private Boolean lastTempHold;
 
     private List<Object> lastOpenRows = new ArrayList<>();
     private List<Object> lastWinRows;
@@ -1557,23 +1574,23 @@ public final class NativeCycle {
      * 같은 동안만 유효하다 — 자정을 넘기면 날짜 집합이 달라져 전날
      * 캐시가 새 집합을 덮지 않게 무효화한다.
      */
-    private List<Object> tempEvents(long nowMs) throws Exception {
+    private TempEventsResult tempEvents(long nowMs) throws Exception {
         String dayKey = TempNo.fetchDayKey(nowMs);
         if (tempEventsCache != null && dayKey.equals(tempEventsCacheDayKey)
                 && nowMs - tempEventsCacheAtMs < TempNo.CACHE_MS) {
             return tempEventsCache;
         }
-        List<Object> events = net.fetchTempEvents(TempNo.eventSlugsForFetch(nowMs));
-        if (events == null) {
+        TempEventsResult result = net.fetchTempEvents(TempNo.eventSlugsForFetch(nowMs));
+        if (result == null) {
             // 전수 실패는 빈 목록으로 바꾸지 않고 null로 전파한다 —
             // "오늘 이벤트 없음"과 구분해 호출자가 예약을 유지하는 쪽으로
             // 판정하게 하기 위해서다 (v0.3.39 감사 E).
             return null;
         }
-        tempEventsCache = events;
+        tempEventsCache = result;
         tempEventsCacheAtMs = nowMs;
         tempEventsCacheDayKey = dayKey;
-        return events;
+        return result;
     }
 
     private void runScanAndBuy(int gen, Snap snap, TradeSettings tradeCfg,
@@ -1596,24 +1613,33 @@ public final class NativeCycle {
         List<Object> tempEventsList = null;
         // 섀도우 기록용 — 이 사이클이 평가한 기온 후보 (기록은 선정 패스 뒤).
         List<ScanFilter.Candidate> tempCandsSeen = new ArrayList<>();
-        // 기온 이벤트 조회 전수 실패 여부 — 실패와 "오늘 이벤트 없음"을
-        // 구분해, 전수 실패 사이클은 예약을 유지하는 쪽으로 판정한다
-        // (안전 방향, v0.3.39 감사 E).
+        // 기온 이벤트 조회 실패 여부 — 전수 실패와 "오늘 이벤트 없음"을
+        // 구분해, 실패한 사이클은 예약을 유지하는 쪽으로 판정한다
+        // (안전 방향, v0.3.39 감사 E). 부분 실패도 같은 방향이다: 조회
+        // 순서가 오늘→내일이라 중간부터 실패가 몰리면 홀드 의존분
+        // (내일)이 지워진 채 홀드가 풀리는 구멍이 있었다 (2026-11-26
+        // 진단, JS runCycle과 같은 규칙).
         boolean tempFetchFailed = false;
+        boolean tempFetchIncomplete = false;
         if (tempSettings.enabled) {
             try {
-                List<Object> events = tempEvents(env.nowMs());
-                if (events == null) {
+                TempEventsResult fetched = tempEvents(env.nowMs());
+                if (fetched == null) {
                     tempFetchFailed = true;
                     log("기온 이벤트 조회 전수 실패 — 이번 사이클은 기온 예약을 유지합니다");
                 } else {
-                    tempEventsList = events;
+                    tempEventsList = fetched.events;
+                    if (fetched.failures > 0) {
+                        tempFetchIncomplete = true;
+                        log("기온 이벤트 조회 일부 실패 (" + fetched.failures
+                                + "건) — 이번 사이클은 기온 예약을 유지합니다");
+                    }
                     Set<String> mainSlugs = new HashSet<>();
                     for (ScanFilter.Candidate c : candidates) {
                         mainSlugs.add(c.slug);
                     }
                     List<ScanFilter.Candidate> tempCands = TempNo.scanTempCandidates(
-                            events, snap.heldSlugs, boughtAll, tempSettings, env.nowMs(), mainSlugs);
+                            fetched.events, snap.heldSlugs, boughtAll, tempSettings, env.nowMs(), mainSlugs);
                     tempCandsSeen = tempCands;
                     if (!tempCands.isEmpty()) {
                         log("기온 후보 " + tempCands.size() + "건 (밴드 " + n(tempSettings.bandLo)
@@ -1634,7 +1660,7 @@ public final class NativeCycle {
         // 선정 드라이버 — 기온 슬롯 홀드 (JS runCycle과 같은 규칙).
         // 토글 ON + 예약 슬롯 N>0이고, 오늘·내일 기온 이벤트 중 진입
         // 창이 남은 것이 있거나(후보가 있으면 그 이벤트가 여기에
-        // 걸린다) 조회가 전수 실패했을 때 홀드가 켜진다. 홀드가 켜지면
+        // 걸린다) 조회가 실패(전수·일부)했을 때 홀드가 켜진다. 홀드가 켜지면
         // 메인의 유효 용량을 전체에서 N슬롯 줄여 실제로 비워 둔다:
         // 메인 후보는 남은 슬롯이 N개 이하이거나 검증이 캡−N에 닿으면
         // 그 사이클에서 건너뛰고, 다시 태우지 않는다 — 다시 태우면
@@ -1651,8 +1677,17 @@ public final class NativeCycle {
         boolean tempHold = tempSettings.enabled
                 && reserveEff > 0
                 && (tempFetchFailed
+                    || tempFetchIncomplete
                     || TempNo.hasUpcomingWindow(tempEventsList, env.nowMs(),
                             tempSettings.entryHourUtc, snap.heldSlugs, boughtAll));
+        // 홀드 해제 전이 로그 — 홀드가 풀리는 순간을 남기지 않으면
+        // 예약이 사라진 것을 사후에 알 수 없다 (2026-11-26 진단, JS
+        // 드라이버와 같은 규칙).
+        if (Boolean.TRUE.equals(lastTempHold) && !tempHold
+                && tempSettings.enabled && reserveEff > 0) {
+            log("기온 예약 해제 — 진입 창이 남은 이벤트가 없어 메인 차단을 풉니다");
+        }
+        lastTempHold = tempHold;
         // 예약 차선 회계 — sizing 슬롯 밖에서 쓴 자리·현금을 따로 센다.
         int laneLeft = tempHold ? reserveEff : 0;
         int positionsUsed = snap.openCount;
@@ -1871,6 +1906,9 @@ public final class NativeCycle {
         if (tempHold && !heldMain.isEmpty()) {
             if (tempFetchFailed) {
                 log("기온 예약 — 조회 전수 실패로 메인 " + heldMain.size()
+                        + "건을 미루고 슬롯을 남깁니다");
+            } else if (tempFetchIncomplete) {
+                log("기온 예약 — 조회 일부 실패로 메인 " + heldMain.size()
                         + "건을 미루고 슬롯을 남깁니다");
             } else {
                 log("기온 예약 — 진입 창이 남은 이벤트가 있어 메인 " + heldMain.size()

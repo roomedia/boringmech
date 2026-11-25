@@ -496,6 +496,34 @@ eq(
     true,
     "hold guard: hold also activates on upcoming window (markets-aware)",
   );
+  // 2026-11-26 진단 — 부분 실패가 홀드를 조용히 풀던 구멍: 조회가
+  // 실패 건수를 돌려주고, 드라이버가 부분 실패를 홀드 유지 조건으로
+  // 받으며, 홀드 해제가 로그로 남는지 확인한다.
+  eq(
+    src.includes("const result = { events, failures };"),
+    true,
+    "hold guard: fetch returns failure count with events",
+  );
+  eq(
+    src.includes("else failures += 1;"),
+    true,
+    "hold guard: empty/non-array response counts as unconfirmed slug",
+  );
+  eq(
+    cycleSrc.includes("|| tempFetchIncomplete"),
+    true,
+    "hold guard: partial fetch failure keeps the hold (safe direction)",
+  );
+  eq(
+    cycleSrc.includes("기온 이벤트 조회 일부 실패"),
+    true,
+    "hold guard: partial failure is logged with the hold decision",
+  );
+  eq(
+    cycleSrc.includes("기온 예약 해제 — 진입 창이 남은 이벤트가 없어 메인 차단을 풉니다"),
+    true,
+    "hold guard: hold release transition is logged",
+  );
 }
 
 // ── 예약 차선 판정 (네이티브 TempNo.reserveLaneAllows와 같은 경계) ──
@@ -754,7 +782,7 @@ eq(effectiveTempReserveSlots(0, 70), 0, "audit6: zero reserve kept");
     "midnight guard: cache hit requires same day key",
   );
   eq(
-    fetchSrc.includes("tempEventsCache = { atMs: nowMs, dayKey, events };"),
+    fetchSrc.includes("tempEventsCache = { atMs: nowMs, dayKey, result };"),
     true,
     "midnight guard: cache store records the day key",
   );
