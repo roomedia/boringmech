@@ -25,7 +25,7 @@
 - [x] 번들 재생성
 - [x] 전 슈트·골든
 - [x] APK 빌드·DEX 게이트·축소 스모크
-- [ ] 커밋·푸시·GitHub 릴리스 게시
+- [x] 커밋·푸시·GitHub 릴리스 게시 — 출시 커밋 366d820 (수리 9dd64dc 포함해 main 푸시 완료), 릴리스 https://github.com/roomedia/boringmech/releases/tag/v0.3.53 (자산 boringmech-v0.3.53.apk 첨부 확인)
 
 ## 검증 수치
 - JS 전 슈트 959건 통과 (book 468 · temp 198 · bundle 10 · html-guard 67 · settings-lock 56 · sellquote 30 · report 47 · positions 14 · stoploss-fallback 21 · relayer-auth 18 · relayer-keycheck 30)
