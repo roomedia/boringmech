@@ -225,6 +225,10 @@ public final class NativeCycle {
     private SettledBaseline.Baseline settledBaseline;
     private boolean settledBaselineLoaded = false;
     private String redeemKeyWarnedDay;
+    // relayer 401 래치 — 인증이 거부된 자격증명 지문. 같은 지문으로는 다시
+    // 제출하지 않고, 자격증명이 바뀌면(재등록) 지문이 달라져 자동 해제된다.
+    private String relayerAuthFailPrint;
+    private String relayerAuthWarnedDay;
     private String updateNotifiedTag;
 
     public NativeCycle(Env env, Net net, ClobWriteClient client, RedeemSubmitter redeemSubmitter,
@@ -1154,6 +1158,20 @@ public final class NativeCycle {
             }
             return 0;
         }
+        final String credsPrint = creds.key + "\n" + creds.address;
+        if (credsPrint.equals(relayerAuthFailPrint)) {
+            String today = utcDay();
+            if (!today.equals(relayerAuthWarnedDay)) {
+                relayerAuthWarnedDay = today;
+                double held = 0;
+                for (RedeemPlan.Target t : plan.targets) {
+                    held += t.expectedUsd;
+                }
+                log("리딤 보류 " + plan.targets.size() + "건 (약 $" + n(Js.round2(held))
+                        + ") — Relayer API 키 인증 실패(401)로 제출을 중단합니다 (키 재등록 후 자동 재개)");
+            }
+            return 0;
+        }
         double recoveredTotal = 0;
         for (RedeemPlan.Target target : plan.targets) {
             if (!env.isRunning(gen)) {
@@ -1211,6 +1229,19 @@ public final class NativeCycle {
                 log("리딤 회수 " + slice(cid, 10) + "… · 예상 $" + n(target.expectedUsd) + " · 회수 "
                         + (recovered == null ? "미확인" : "$" + n(recovered)) + " · " + verifyStatus);
             } catch (Exception e) {
+                if (RedeemSubmitter.isAuthError(msg(e))) {
+                    // 인증 거부된 키로 매 사이클 재제출하면 실패 로그와 알림만
+                    // 쌓이고 relayer 일일 한도만 소모한다 — 이 키로는 중단하고
+                    // 재등록(지문 변경) 때만 다시 시도한다.
+                    relayerAuthFailPrint = credsPrint;
+                    log("리딤 실패 " + slice(cid, 10) + "…: " + slice(msg(e), 140)
+                            + " — 인증 실패로 판정해 이 키로는 제출을 중단합니다. polymarket.com 설정 → API Keys"
+                            + " → Relayer API Keys에서 키를 다시 만들어 생성 시 표시된 Signer Address와 함께 재등록하세요");
+                    errorNotify(com.roomedia.boringmech.write.NotifyPolicy.KEY_REDEEM_FAILED,
+                            "리딤 키 인증 실패", slice(cid, 10) + "… · Relayer API 키가 거부됐습니다 (401)"
+                                    + " — 키 재등록이 필요합니다");
+                    break;
+                }
                 log("리딤 실패 " + slice(cid, 10) + "…: " + slice(msg(e), 140) + " — 다음 사이클에 재시도");
                 errorNotify(com.roomedia.boringmech.write.NotifyPolicy.KEY_REDEEM_FAILED,
                         "리딤 실패", slice(cid, 10) + "… · " + slice(msg(e), 120)

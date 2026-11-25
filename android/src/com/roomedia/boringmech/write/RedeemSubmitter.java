@@ -98,6 +98,20 @@ public final class RedeemSubmitter {
         this.relayerUrl = relayerUrl;
     }
 
+    /**
+     * relayer 인증 실패(401) 판정 — 이 제출 경로가 만드는 오류 문구만 본다.
+     * params 조회는 무인증 공개 엔드포인트라 401이 날 수 있는 인증 호출은
+     * 제출(POST /submit)과 거래 조회뿐이고, 어느 쪽이든 키 쌍이 서버에서
+     * 거부됐다는 뜻이라 같은 래치로 다룬다.
+     */
+    public static boolean isAuthError(String message) {
+        if (message == null) {
+            return false;
+        }
+        return message.contains("relayer 제출 HTTP 401")
+                || message.contains("relayer 조회 HTTP 401");
+    }
+
     /** 키 등록 여부 — runRedeems가 제출 보류를 가르는 것과 같은 판정. */
     public static Gate gate(RelayerCreds creds) {
         return creds == null ? Gate.HOLD : Gate.READY;

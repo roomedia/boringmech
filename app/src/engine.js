@@ -1035,6 +1035,9 @@ const state = {
   lastClosedRows: null,
   lastSettledApi: null,
   redeemKeyWarnedDay: "",
+  // relayer 401 래치 — 인증이 거부된 자격증명 지문 (네이티브 NativeCycle과 동일)
+  relayerAuthFailPrint: "",
+  relayerAuthWarnedDay: "",
   settledBaseline: null,
   settledBaselineLoaded: false,
   submitCount: 0,
@@ -3303,6 +3306,22 @@ function recordRedeemHistory(rec) {
   durableWrite(LS.redeemHistory, JSON.stringify(list.slice(-100)));
 }
 
+/**
+ * relayer 인증 실패(401) 판정 — 제출 경로가 만드는 오류 문구만 본다.
+ * params 조회는 무인증 공개 엔드포인트라 401이 날 수 있는 인증 호출은
+ * 제출(POST /submit)과 거래 조회뿐이고, 어느 쪽이든 키 쌍이 서버에서
+ * 거부됐다는 뜻이라 같은 래치로 다룬다 (네이티브 RedeemSubmitter와 동일).
+ */
+export function isRelayerAuthError(message) {
+  const m = String(message ?? "");
+  return m.includes("relayer 제출 HTTP 401") || m.includes("relayer 조회 HTTP 401");
+}
+
+/** 자격증명 지문 — 래치 비교용. 로그·저장 어디에도 남기지 않는다. */
+export function relayerCredsPrint(creds) {
+  return creds ? `${creds.key}\n${creds.address}` : "";
+}
+
 function relayerHeaders(creds) {
   return {
     "RELAYER_API_KEY": creds.key,
@@ -3550,6 +3569,16 @@ async function runRedeems(gen) {
     }
     return 0;
   }
+  const credsPrint = relayerCredsPrint(creds);
+  if (credsPrint && credsPrint === state.relayerAuthFailPrint) {
+    const today = new Date().toISOString().slice(0, 10);
+    if (state.relayerAuthWarnedDay !== today) {
+      state.relayerAuthWarnedDay = today;
+      const held = round2(plan.targets.reduce((s, t) => s + (t.expected_usd || 0), 0));
+      log(`리딤 보류 ${plan.targets.length}건 (약 $${held}) — Relayer API 키 인증 실패(401)로 제출을 중단합니다 (키 재등록 후 자동 재개)`);
+    }
+    return 0;
+  }
   let recoveredTotal = 0;
   for (const target of plan.targets) {
     if (!state.running || gen !== state.gen) break;
@@ -3601,6 +3630,14 @@ async function runRedeems(gen) {
         `회수 ${recovered == null ? "미확인" : `$${recovered}`} · ${verifyStatus}`,
       );
     } catch (e) {
+      if (isRelayerAuthError(e?.message ?? e)) {
+        // 인증 거부된 키로 매 사이클 재제출하면 실패 로그만 쌓이고 relayer
+        // 일일 한도만 소모한다 — 이 키로는 중단하고 재등록(지문 변경) 때만
+        // 다시 시도한다. 그 밖의 건별 실패는 종전대로 다음 사이클 재시도.
+        state.relayerAuthFailPrint = credsPrint;
+        log(`리딤 실패 ${target.condition_id.slice(0, 10)}…: ${String(e.message ?? e).slice(0, 140)} — 인증 실패로 판정해 이 키로는 제출을 중단합니다. polymarket.com 설정 → API Keys → Relayer API Keys에서 키를 다시 만들어 생성 시 표시된 Signer Address와 함께 재등록하세요`);
+        break;
+      }
       // 건별 실패는 pending을 유지하고 다음 사이클에 재시도한다 (영구 래치 없음)
       log(`리딤 실패 ${target.condition_id.slice(0, 10)}…: ${String(e.message ?? e).slice(0, 140)} — 다음 사이클에 재시도`);
     } finally {
@@ -3934,14 +3971,20 @@ window.BM = {
     const k = String(key || "").trim();
     const a = String(address || "").trim();
     if (!k || !/^0x[0-9a-fA-F]{40}$/.test(a)) return false;
+    // 주소는 키 생성 시 표시된 Signer Address, 즉 연동된 서명 지갑(EOA)여야
+    // 한다. 입금 지갑(funder) 주소 등을 넣으면 relayer가 제출을 401로 거부
+    // 하는데 형식 검사만으로는 걸러지지 않아, 연동 주소를 알 때는 대조한다.
+    if (state.eoa && a.toLowerCase() !== String(state.eoa).toLowerCase()) return false;
     const ok = storeSecret(LS.relayer, JSON.stringify({ key: k, address: a }));
     if (ok) {
       state.redeemKeyWarnedDay = "";
+      state.relayerAuthFailPrint = "";
       try { window.AndroidBridge?.setRelayerMirror?.(localStorage.getItem(LS.relayer)); } catch {}
     }
     return ok;
   },
   clearRelayerKey() {
+    state.relayerAuthFailPrint = "";
     try {
       localStorage.removeItem(LS.relayer);
     } catch {}

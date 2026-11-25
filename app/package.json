@@ -11,7 +11,7 @@
   "private": true,
   "scripts": {
     "bundle": "node bundle.mjs",
-    "test": "node test/book.test.mjs && node test/temp.test.mjs && node test/bundle.test.mjs && node test/html-guard.test.mjs && node test/settings-lock.test.mjs && node test/sellquote.test.mjs && node test/report.test.mjs && node test/positions.test.mjs && node test/stoploss-fallback.test.mjs"
+    "test": "node test/book.test.mjs && node test/temp.test.mjs && node test/bundle.test.mjs && node test/html-guard.test.mjs && node test/settings-lock.test.mjs && node test/sellquote.test.mjs && node test/report.test.mjs && node test/positions.test.mjs && node test/stoploss-fallback.test.mjs && node test/relayer-auth.test.mjs"
   },
   "version": "0.3.49"
 }

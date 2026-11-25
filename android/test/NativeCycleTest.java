@@ -240,9 +240,11 @@ public class NativeCycleTest {
             return condBalance;
         }
 
+        BigInteger redeemBalance;
+
         @Override
         public BigInteger erc1155Balance(String token, String owner, String tokenId) {
-            return BigInteger.ZERO;
+            return redeemBalance != null ? redeemBalance : BigInteger.ZERO;
         }
 
         @Override
@@ -1432,6 +1434,55 @@ public class NativeCycleTest {
         check("reconcile: 스캔까지 완주", env.logged("사이클 요약"));
     }
 
+    /** relayer 제출 401 — 같은 자격증명으로는 재제출하지 않고(래치), 자격증명이 바뀌면 다시 시도한다. */
+    private static void redeemRelayerAuthLatch() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.marketContext = new NativeCycle.MarketContext(false, "v1", null, List.of("111", "222"));
+        net.redeemBalance = BigInteger.valueOf(1000);
+        String cid = "0x" + "ab".repeat(32);
+        env.durable.put("bm_redeem_pending",
+                "[{\"condition_id\":\"" + cid
+                        + "\",\"status\":\"REDEEMABLE\",\"current_value\":12.5}]");
+        final int[] submitPosts = {0};
+        RawHttp.Transport t = new RawHttp.Transport() {
+            @Override
+            public RawHttp.Raw post(String url, Map<String, String> h, String body) {
+                if (url.endsWith("/submit")) {
+                    submitPosts[0]++;
+                    return new RawHttp.Raw(401, "{\"error\":\"invalid authorization\"}", null);
+                }
+                return new RawHttp.Raw(200, "{}", null);
+            }
+
+            @Override
+            public RawHttp.Raw get(String url, Map<String, String> h) {
+                if (url.contains("transactions/params")) {
+                    return new RawHttp.Raw(200, "{\"nonce\":\"0\"}", null);
+                }
+                return new RawHttp.Raw(200, "{}", null);
+            }
+        };
+        final RedeemSubmitter.RelayerCreds[] current =
+                {new RedeemSubmitter.RelayerCreds("key1", EOA)};
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> current[0]);
+        c.runIteration(1);
+        check("auth401: 첫 사이클은 제출 시도", submitPosts[0] == 1);
+        check("auth401: 인증 실패 래치 로그", env.logged("인증 실패로 판정해 이 키로는 제출을 중단합니다"));
+        c.runIteration(1);
+        check("auth401: 같은 키로는 재제출 없음", submitPosts[0] == 1);
+        check("auth401: 보류 로그", env.logged(
+                "리딤 보류 1건 (약 $12.5) — Relayer API 키 인증 실패(401)로 제출을 중단합니다 (키 재등록 후 자동 재개)"));
+        current[0] = new RedeemSubmitter.RelayerCreds("key2", EOA);
+        c.runIteration(1);
+        check("auth401: 키가 바뀌면 다시 제출 시도", submitPosts[0] == 2);
+        check("auth401: isAuthError 판정", RedeemSubmitter.isAuthError("relayer 제출 HTTP 401: {}")
+                && RedeemSubmitter.isAuthError("relayer 조회 HTTP 401: {}")
+                && !RedeemSubmitter.isAuthError("relayer 제출 HTTP 403: {}")
+                && !RedeemSubmitter.isAuthError("relayer 제출 HTTP 500: {}")
+                && !RedeemSubmitter.isAuthError(null));
+    }
+
     private static void redeemNoKey() {
         FakeEnv env = new FakeEnv();
         FakeNet net = new FakeNet();
@@ -2515,6 +2566,7 @@ public class NativeCycleTest {
         fallbackDisposedTokenSkippedOnce();
         marketsFailureIsolation();
         reconcileFailureIsolation();
+        redeemRelayerAuthLatch();
         redeemNoKey();
         stopDuringCycle();
         updateCheck();
