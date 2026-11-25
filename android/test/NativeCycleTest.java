@@ -898,7 +898,9 @@ public class NativeCycleTest {
     private static void tempReservePastWindowNoHold() {
         FakeEnv env = new FakeEnv(); // NOW = 12:00Z, 이벤트 창은 06:00~11:00로 지났다
         FakeNet net = new FakeNet();
-        net.cash = 12; // 슬롯 1
+        // 슬롯 1이면서 매수 후 현금이 현금 가드 하한(기본 $7.87) 위에
+        // 남는 금액 — 이 테스트는 홀드 해제만 본다 (가드는 별도 테스트).
+        net.cash = 14;
         net.positionsValue = 0;
         net.markets = new ArrayList<>();
         mainStage(net, "test-buy-market", "111", "222");
@@ -939,7 +941,8 @@ public class NativeCycleTest {
         FakeEnv env = new FakeEnv();
         env.nowMsOverride = Instant.parse("2026-11-15T03:00:00Z").toEpochMilli();
         FakeNet net = new FakeNet();
-        net.cash = 12; // 슬롯 1
+        // 슬롯 1, 매수 후 현금이 현금 가드 하한 위에 남는 금액 (위와 같은 이유)
+        net.cash = 14;
         net.positionsValue = 0;
         net.markets = new ArrayList<>();
         mainStage(net, "test-buy-market", "111", "222");
@@ -982,7 +985,8 @@ public class NativeCycleTest {
     private static void tempFetchEmptyNoReserve() {
         FakeEnv env = new FakeEnv();
         FakeNet net = new FakeNet();
-        net.cash = 12; // 슬롯 1
+        // 슬롯 1, 매수 후 현금이 현금 가드 하한 위에 남는 금액 (위와 같은 이유)
+        net.cash = 14;
         net.positionsValue = 0;
         net.markets = new ArrayList<>();
         mainStage(net, "test-buy-market", "111", "222");
@@ -1141,7 +1145,8 @@ public class NativeCycleTest {
         FakeEnv env = new FakeEnv();
         env.nowMsOverride = Instant.parse("2026-11-15T20:00:00Z").toEpochMilli();
         FakeNet net = new FakeNet();
-        net.cash = 12; // 슬롯 1
+        // 슬롯 1, 2차 매수 후 현금이 현금 가드 하한 위에 남는 금액 (위와 같은 이유)
+        net.cash = 14;
         net.positionsValue = 0;
         net.markets = new ArrayList<>();
         mainStage(net, "test-buy-market", "111", "222");
@@ -1162,6 +1167,54 @@ public class NativeCycleTest {
         check("release: 해제 로그", env.logged("기온 예약 해제 — 진입 창이 남은 이벤트가 없어"));
         check("release: 2차 메인이 슬롯 획득", t.posts == 1
                 && env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+    }
+
+    /**
+     * 현금 가드 (2026-11-26) — 홀드가 풀린 상태(창이 지난 이벤트만
+     * 있음)에서도 예약 현금은 메인이 먼저 쓰지 못한다. 01:27 사고
+     * 재현값: 기온 건당 $6, 예약 1 → 하한 $8.87, 현금 $8.67에서 메인
+     * 건당 $5를 사면 매수 후 $3.67로 하한 아래라 차단된다.
+     */
+    private static void tempCashGuardBlocksMainWhenHoldOff() {
+        FakeEnv env = new FakeEnv(); // NOW = 12:00Z, 이벤트 창은 지났다 (홀드 해제 상태)
+        FakeNet net = new FakeNet();
+        net.cash = 8.67; // 슬롯 1
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        tempStageEndOnly(net, "2026-11-15T11:00:00Z");
+        env.durable.put("bm_settings",
+                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"tempBetUsd\":6}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("cashguard cycle: 결과 OK", r == NativeCycle.Result.OK);
+        check("cashguard cycle: 가드로 주문 없음", t.posts == 0);
+        check("cashguard cycle: 메인은 못 삼",
+                !env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+        check("cashguard cycle: 가드 로그 (하한·현금 포함)",
+                env.logged("기온 예약 현금 가드 — 메인 매수를 막습니다 (보호 하한 $8.87 · 현금 $8.67"));
+        check("cashguard cycle: 사유 집계", env.logged("기온예약현금가드 1"));
+    }
+
+    /** 현금 가드 경계 — 매수 후 현금이 하한과 정확히 같으면 메인이 산다. */
+    private static void tempCashGuardBoundaryAllowsMain() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.cash = 13.87; // 13.87 − 5 = 8.87 = 하한
+        net.positionsValue = 0;
+        net.markets = new ArrayList<>();
+        mainStage(net, "test-buy-market", "111", "222");
+        tempStageEndOnly(net, "2026-11-15T11:00:00Z");
+        env.durable.put("bm_settings",
+                "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8,\"tempBetUsd\":6}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("cashguard boundary: 결과 OK", r == NativeCycle.Result.OK);
+        check("cashguard boundary: 메인이 슬롯 획득", t.posts == 1
+                && env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+        check("cashguard boundary: 가드 로그 없음", !env.logged("기온 예약 현금 가드"));
     }
 
     /** 손절 판정 경계 — 폭 파라미터와 결정 구간 설정값 (JS book 테스트와 같은 케이스). */
@@ -2686,6 +2739,8 @@ public class NativeCycleTest {
         tempHoldMainNotRetriedAfterTempFails();
         tempFetchPartialFailKeepsReserve();
         tempHoldReleaseLogged();
+        tempCashGuardBlocksMainWhenHoldOff();
+        tempCashGuardBoundaryAllowsMain();
         tradeSettingsParse();
         stopLossVerdictDrops();
         stopLossPath();

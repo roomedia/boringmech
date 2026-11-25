@@ -167,6 +167,55 @@ public final class TempNo {
         return cashLeft < bet + reserveUsd;
     }
 
+    /**
+     * 기온 예약 현금 가드 하한 — 기온 ON + 예약 슬롯 > 0일 때 메인
+     * 매수가 건드릴 수 없는 현금 하한으로, 예약 슬롯 수 × 기온 건당
+     * 금액 + 예비금이다 (JS tempCashGuardFloor와 같은 규칙). 슬롯
+     * 홀드는 조회·창 판정에 기대는 보호라, 홀드가 풀린 사이클에서는
+     * 예약 현금이 메인 매수에 먼저 쓰일 수 있었다 (2026-11-26 01:27
+     * 사고). 이 하한은 판정과 무관하게 현금 자체를 지키는 최후
+     * 방어선이다 (2026-11-26 사용자 결정). 조건이 없으면 null이다 —
+     * 가드 없음과 하한 0을 구분하기 위해서다. reserveSlots는 드라이버가
+     * 실효값(포지션 상한으로 제한)을 넘긴다.
+     */
+    public static Double cashGuardFloor(boolean enabled, int reserveSlots,
+                                        double tempBetUsd, double reserveUsd) {
+        if (!enabled) {
+            return null;
+        }
+        if (reserveSlots <= 0) {
+            return null;
+        }
+        if (!Double.isFinite(tempBetUsd) || !Double.isFinite(reserveUsd)) {
+            return null;
+        }
+        return Js.round2(reserveSlots * tempBetUsd + reserveUsd);
+    }
+
+    /**
+     * 기온 예약 현금 가드 판정 — 메인 후보의 매수 후 현금이 보호 하한
+     * 아래로 내려가면 true다 (JS tempCashGuardBlocks와 같은 규칙).
+     * 매수 후 현금이 하한과 정확히 같으면 허용한다. 현금이 이미 하한
+     * 아래면 (bet이 양수인 한) 모든 메인 매수가 걸린다. 기온 후보는
+     * 예약 현금을 쓰는 주체라 가드 대상이 아니다 — 차선이든 일반
+     * 슬롯이든 막지 않는다.
+     */
+    public static boolean cashGuardBlocks(String strategy, boolean enabled, int reserveSlots,
+                                          double tempBetUsd, double reserveUsd,
+                                          double cashLeft, double bet) {
+        if (STRATEGY.equals(strategy)) {
+            return false;
+        }
+        Double floor = cashGuardFloor(enabled, reserveSlots, tempBetUsd, reserveUsd);
+        if (floor == null) {
+            return false;
+        }
+        if (!Double.isFinite(cashLeft) || !Double.isFinite(bet)) {
+            return false;
+        }
+        return Js.round2(cashLeft - bet) < floor;
+    }
+
     /** 상한 근처 판정 여유 — bestAsk가 밴드 상한을 이만큼까지만 넘으면 가격 쌍을 남긴다. */
     public static final double NEAR_CAP_EPS = 0.01;
 

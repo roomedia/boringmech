@@ -382,6 +382,48 @@ public class TempNoTest {
                     !TempNo.laneCashBlocked(TempNo.STRATEGY, true, 1, 0, 70, 0, 0, 2.5));
         }
 
+        // ── 예약 현금 가드 (JS tempCashGuardBlocks와 같은 경계) ──
+        {
+            // 기준: 기온 건당 $6, 예비금 $2.87, 예약 1개 → 보호 하한 $8.87.
+            // 2026-11-26 01:27 사고 재현값: 현금 $8.67에서 메인 건당 $5를
+            // 사면 매수 후 $3.67이 남아 하한 아래로 떨어지므로 차단돼야 한다.
+            check("cashguard: floor = reserve × tempBet + reserve",
+                    TempNo.cashGuardFloor(true, 1, 6, 2.87) == 8.87);
+            check("cashguard: reserve 2 → floor scales",
+                    TempNo.cashGuardFloor(true, 2, 6, 2.87) == 14.87);
+            check("cashguard: temp OFF → no floor",
+                    TempNo.cashGuardFloor(false, 1, 6, 2.87) == null);
+            check("cashguard: reserve 0 → no floor",
+                    TempNo.cashGuardFloor(true, 0, 6, 2.87) == null);
+            check("cashguard: NaN tempBet → no floor",
+                    TempNo.cashGuardFloor(true, 1, Double.NaN, 2.87) == null);
+
+            check("cashguard: incident values → blocked",
+                    TempNo.cashGuardBlocks(null, true, 1, 6, 2.87, 8.67, 5));
+            check("cashguard: post-buy cash exactly at floor → allowed",
+                    !TempNo.cashGuardBlocks(null, true, 1, 6, 2.87, 13.87, 5));
+            check("cashguard: post-buy cash 1센트 below floor → blocked",
+                    TempNo.cashGuardBlocks(null, true, 1, 6, 2.87, 13.86, 5));
+            check("cashguard: cash enough → allowed",
+                    !TempNo.cashGuardBlocks(null, true, 1, 6, 2.87, 20, 5));
+            check("cashguard: cash already below floor → blocked",
+                    TempNo.cashGuardBlocks(null, true, 1, 6, 2.87, 5, 5));
+            check("cashguard: cash exactly at floor, any buy dips below → blocked",
+                    TempNo.cashGuardBlocks(null, true, 1, 6, 2.87, 8.87, 5));
+            check("cashguard: reserve 2, post-buy exactly at floor → allowed",
+                    !TempNo.cashGuardBlocks(null, true, 2, 6, 2.87, 19.87, 5));
+            check("cashguard: reserve 2, post-buy below floor → blocked",
+                    TempNo.cashGuardBlocks(null, true, 2, 6, 2.87, 19.86, 5));
+            check("cashguard: temp OFF → never blocks",
+                    !TempNo.cashGuardBlocks(null, false, 1, 6, 2.87, 0, 5));
+            check("cashguard: reserve 0 → never blocks",
+                    !TempNo.cashGuardBlocks(null, true, 0, 6, 2.87, 0, 5));
+            check("cashguard: temp candidate spends the reserve → not blocked",
+                    !TempNo.cashGuardBlocks(TempNo.STRATEGY, true, 1, 6, 2.87, 0, 5));
+            check("cashguard: NaN cash → not blocked (sizing이 먼저 닫는다)",
+                    !TempNo.cashGuardBlocks(null, true, 1, 6, 2.87, Double.NaN, 5));
+        }
+
         // ── 창 대기 판정 (JS tempHasUpcomingWindow와 같은 경계) ──────
         // 이벤트 endDate 2026-11-18T12:00Z, 진입 창은 당일 06:00~12:00 UTC.
         {

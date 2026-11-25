@@ -888,6 +888,39 @@ export function tempLaneCashBlocked({ strategy, tempHold, laneLeft, positionsUse
   return cashLeft < bet + reserveUsd;
 }
 
+/**
+ * 기온 예약 현금 가드 하한 — 기온 ON + 예약 슬롯 > 0일 때 메인 매수가
+ * 건드릴 수 없는 현금 하한으로, 예약 슬롯 수 × 기온 건당 금액 + 예비금
+ * 이다. 슬롯 홀드는 조회·창 판정에 기대는 보호라, 홀드가 풀린 사이클
+ * 에서는 예약 현금이 메인 매수에 먼저 쓰일 수 있었다 (2026-11-26
+ * 01:27 사고). 이 하한은 판정과 무관하게 현금 자체를 지키는 최후
+ * 방어선이다 (2026-11-26 사용자 결정). 조건이 없으면 null을 돌려준다
+ * — 가드 없음과 하한 0을 구분하기 위해서다. reserveSlots는 드라이버가
+ * 실효값(포지션 상한으로 제한)을 넘긴다.
+ */
+export function tempCashGuardFloor({ enabled, reserveSlots, tempBetUsd, reserveUsd }) {
+  if (!enabled) return null;
+  if (!(reserveSlots > 0)) return null;
+  if (!Number.isFinite(tempBetUsd) || !Number.isFinite(reserveUsd)) return null;
+  return round2(reserveSlots * tempBetUsd + reserveUsd);
+}
+
+/**
+ * 기온 예약 현금 가드 판정 — 메인 후보의 매수 후 현금이 보호 하한
+ * 아래로 내려가면 true다. 매수 후 현금이 하한과 정확히 같으면 허용
+ * 한다. 현금이 이미 하한 아래면 (bet이 양수인 한) 모든 메인 매수가
+ * 걸린다. 기온 후보는 예약 현금을 쓰는 주체라 가드 대상이 아니다 —
+ * 차선이든 일반 슬롯이든 막지 않는다 (네이티브 TempNo.cashGuardBlocks
+ * 와 같은 규칙).
+ */
+export function tempCashGuardBlocks({ strategy, enabled, reserveSlots, tempBetUsd, reserveUsd, cashLeft, bet }) {
+  if (strategy === "temp_no") return false;
+  const floor = tempCashGuardFloor({ enabled, reserveSlots, tempBetUsd, reserveUsd });
+  if (floor === null) return false;
+  if (!Number.isFinite(cashLeft) || !Number.isFinite(bet)) return false;
+  return round2(cashLeft - bet) < floor;
+}
+
 /** 상한 근처 판정 여유 — bestAsk가 밴드 상한을 이만큼까지만 넘으면 가격 쌍을 남긴다. */
 export const NEAR_CAP_BAND_EPS = 0.01;
 
@@ -2069,6 +2102,7 @@ const REJECT_LABELS = {
   bet_zero: "금액없음",
   cash_floor: "현금하한",
   temp_cash_short: "기온현금부족",
+  temp_cash_guard: "기온예약현금가드",
 };
 
 // 사이클 결과를 한 줄로 집계한다. 탈락을 건별로 찍으면 로그가 폭발하므로
@@ -2949,6 +2983,8 @@ async function runCycle(gen) {
   const tallyReject = (reason) => {
     rejects[reason] = (rejects[reason] || 0) + 1;
   };
+  // 현금 가드 차단 로그는 사이클당 1회만 남긴다 (후보마다 찍으면 폭증).
+  let cashGuardLogged = false;
   // 후보 1건 처리 — true를 돌려주면 사이클을 즉시 중단한다 (아래 본문의
   // 중단 지점). 호출 순서와 예산 판정은 선정 드라이버가 맡는다.
   const attemptCandidate = async (cand, viaLane = false) => {
@@ -2967,6 +3003,26 @@ async function runCycle(gen) {
     if (!viaLane && cashLeft - bet < snap.cashFloor - 0.005) {
       tallyReject("cash_floor");
       return false;
+    }
+    // 기온 예약 현금 가드 — 홀드가 풀린 사이클에서도 예약 현금을
+    // 메인이 먼저 쓰지 않게 하는 최후 방어선. 차선은 물론이고 기온
+    // 후보 자체도 대상이 아니다 (예약 현금을 쓰는 주체라서다). 판정은
+    // 순수 함수가 맡고, 여기서는 집계와 사이클당 1회 로그만 한다.
+    if (!viaLane) {
+      const guardArgs = {
+        strategy: cand.strategy, enabled: tempSettings.enabled,
+        reserveSlots: effectiveTempReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions),
+        tempBetUsd: tempSettings.betUsd, reserveUsd: tradeCfg.reserveUsd,
+        cashLeft, bet,
+      };
+      if (tempCashGuardBlocks(guardArgs)) {
+        tallyReject("temp_cash_guard");
+        if (!cashGuardLogged) {
+          cashGuardLogged = true;
+          log(`기온 예약 현금 가드 — 메인 매수를 막습니다 (보호 하한 $${tempCashGuardFloor(guardArgs)} · 현금 $${round2(cashLeft)} · 건당 $${bet})`);
+        }
+        return false;
+      }
     }
     // 자리를 소모하는 결과(체결·결과 불명·지연 접수)마다 한 번씩 센다.
     // 차선 매수는 sizing 슬롯 대신 예약 차선을 소모한다.

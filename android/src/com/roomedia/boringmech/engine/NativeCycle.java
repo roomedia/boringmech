@@ -1352,6 +1352,7 @@ public final class NativeCycle {
         REJECT_LABELS.put("bet_zero", "금액없음");
         REJECT_LABELS.put("cash_floor", "현금하한");
         REJECT_LABELS.put("temp_cash_short", "기온현금부족");
+        REJECT_LABELS.put("temp_cash_guard", "기온예약현금가드");
     }
 
     private static String labelOf(Map<String, String> labels, String key) {
@@ -1692,6 +1693,8 @@ public final class NativeCycle {
         int laneLeft = tempHold ? reserveEff : 0;
         int positionsUsed = snap.openCount;
         double cashLeft = snap.cash;
+        // 현금 가드 차단 로그는 사이클당 1회만 남긴다 (후보마다 찍으면 폭증).
+        boolean cashGuardLogged = false;
         // 섀도우 기록의 진입 판정 기준 — 선정 패스 전후의 매수 기록 차이로
         // 이 사이클에 실제로 진입한 기온 후보를 가른다.
         Set<String> boughtBeforeBuy = boughtSlugStrings();
@@ -1743,6 +1746,23 @@ public final class NativeCycle {
             // 예비금 기준의 기존 규칙을 쓴다.
             if (!viaLane && cashLeft - bet < snap.cashFloor - 0.005) {
                 tally(rejects, "cash_floor");
+                continue;
+            }
+            // 기온 예약 현금 가드 — 홀드가 풀린 사이클에서도 예약
+            // 현금을 메인이 먼저 쓰지 않게 하는 최후 방어선. 차선은
+            // 물론이고 기온 후보 자체도 대상이 아니다 (예약 현금을
+            // 쓰는 주체라서다). 판정은 TempNo가 맡고, 여기서는 집계와
+            // 사이클당 1회 로그만 한다 (JS attemptCandidate와 같은 규칙).
+            if (!viaLane && TempNo.cashGuardBlocks(cand.strategy, tempSettings.enabled, reserveEff,
+                    tempSettings.betUsd, tradeCfg.reserveUsd, cashLeft, bet)) {
+                tally(rejects, "temp_cash_guard");
+                if (!cashGuardLogged) {
+                    cashGuardLogged = true;
+                    log("기온 예약 현금 가드 — 메인 매수를 막습니다 (보호 하한 $"
+                            + n(TempNo.cashGuardFloor(tempSettings.enabled, reserveEff,
+                                    tempSettings.betUsd, tradeCfg.reserveUsd))
+                            + " · 현금 $" + n(Js.round2(cashLeft)) + " · 건당 $" + n(bet) + ")");
+                }
                 continue;
             }
             env.beatProgress(cycle);

@@ -21,6 +21,8 @@ const {
   tempReserveBlocksMain,
   tempReserveLaneAllows,
   tempLaneCashBlocked,
+  tempCashGuardFloor,
+  tempCashGuardBlocks,
   tempNearCapRejectNote,
   tempHasUpcomingWindow,
   tempEventSlugsForFetch,
@@ -590,6 +592,61 @@ eq(
     verifySrc.includes('if (!isTemp && estShares < minSize) return reject("below_min_order_size");'),
     true,
     "lane guard: min order size skips temp only",
+  );
+}
+
+// ── 예약 현금 가드 (네이티브 TempNo.cashGuardBlocks와 같은 경계) ──
+// 기준: 기온 건당 $6, 예비금 $2.87, 예약 1개 → 보호 하한 $8.87.
+// 2026-11-26 01:27 사고 재현값: 현금 $8.67에서 메인 건당 $5를 사면
+// 매수 후 $3.67이 남아 하한 아래로 떨어지므로 차단돼야 한다.
+{
+  const base = {
+    strategy: undefined, enabled: true, reserveSlots: 1,
+    tempBetUsd: 6, reserveUsd: 2.87, cashLeft: 20, bet: 5,
+  };
+  eq(tempCashGuardFloor(base), 8.87, "cashguard: floor = reserve × tempBet + reserve");
+  eq(tempCashGuardFloor({ ...base, reserveSlots: 2 }), 14.87, "cashguard: reserve 2 → floor scales");
+  eq(tempCashGuardFloor({ ...base, enabled: false }), null, "cashguard: temp OFF → no floor");
+  eq(tempCashGuardFloor({ ...base, reserveSlots: 0 }), null, "cashguard: reserve 0 → no floor");
+  eq(tempCashGuardFloor({ ...base, tempBetUsd: NaN }), null, "cashguard: NaN tempBet → no floor");
+
+  eq(tempCashGuardBlocks({ ...base, cashLeft: 8.67 }), true, "cashguard: incident values → blocked");
+  eq(tempCashGuardBlocks({ ...base, cashLeft: 13.87 }), false, "cashguard: post-buy cash exactly at floor → allowed");
+  eq(tempCashGuardBlocks({ ...base, cashLeft: 13.86 }), true, "cashguard: post-buy cash 1센트 below floor → blocked");
+  eq(tempCashGuardBlocks(base), false, "cashguard: cash enough → allowed");
+  eq(tempCashGuardBlocks({ ...base, cashLeft: 5 }), true, "cashguard: cash already below floor → blocked");
+  eq(tempCashGuardBlocks({ ...base, cashLeft: 8.87 }), true, "cashguard: cash exactly at floor, any buy dips below → blocked");
+  eq(tempCashGuardBlocks({ ...base, reserveSlots: 2, cashLeft: 19.87 }), false, "cashguard: reserve 2, post-buy exactly at floor → allowed");
+  eq(tempCashGuardBlocks({ ...base, reserveSlots: 2, cashLeft: 19.86 }), true, "cashguard: reserve 2, post-buy below floor → blocked");
+  eq(tempCashGuardBlocks({ ...base, enabled: false, cashLeft: 0 }), false, "cashguard: temp OFF → never blocks");
+  eq(tempCashGuardBlocks({ ...base, reserveSlots: 0, cashLeft: 0 }), false, "cashguard: reserve 0 → never blocks");
+  eq(tempCashGuardBlocks({ ...base, strategy: "temp_no", cashLeft: 0 }), false, "cashguard: temp candidate spends the reserve → not blocked");
+  eq(tempCashGuardBlocks({ ...base, cashLeft: NaN }), false, "cashguard: NaN cash → not blocked (sizing이 먼저 닫는다)");
+
+  // 구조 가드 — 드라이버가 일반 슬롯 시도에서 가드를 적용하고 사유를
+  // 집계·라벨링하며, 하한과 현금을 넣은 로그를 남기는지 확인한다.
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+  const cycleSrc = src.slice(src.indexOf("async function runCycle"));
+  eq(
+    cycleSrc.includes("tempCashGuardBlocks(guardArgs)"),
+    true,
+    "cashguard guard: driver applies guard on main attempts",
+  );
+  eq(
+    cycleSrc.includes('tallyReject("temp_cash_guard")'),
+    true,
+    "cashguard guard: driver tallies guard block so the reason reaches the cycle summary",
+  );
+  eq(
+    cycleSrc.includes("기온 예약 현금 가드 — 메인 매수를 막습니다 (보호 하한 $"),
+    true,
+    "cashguard guard: block is logged with floor and cash",
+  );
+  eq(
+    src.includes('temp_cash_guard: "기온예약현금가드"'),
+    true,
+    "cashguard guard: reject label exists",
   );
 }
 
