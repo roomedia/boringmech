@@ -1,6 +1,14 @@
 # v0.3.54 출시 — 도시 점수 섀도우 기록
 
-상태: running
+상태: running (로컬 완료, 푸시·릴리스만 VM 출구 장애로 보류)
+
+## 보류 사유 (2026-11-26 00:5x KST)
+- 출시 커밋 a5da920까지 로컬 main에 완료. git push가 "Proxy CONNECT
+  aborted"로 2회 실패 (간격 재시도 포함). VM 출구 경로 장애가 다른
+  작업에서도 전 호스트 타임아웃으로 확인되는 중이라 재시도를 멈췄다.
+- 남은 단계는 둘뿐이다: git push origin main, gh release create
+  v0.3.54 (자산 android/boringmech-v0.3.54.apk). 출구가 복구되면
+  그대로 이어서 게시하면 된다.
 
 ## 배경
 - 도시×시간 연구(citytime-sort-20261126.md) 판정: "섀도우 기록만 가치 있음".
@@ -42,8 +50,27 @@
 - [x] 설계·구현 (JS engine.js + index.html 제보 + 네이티브 ShadowLog/NativeCycle)
 - [x] 테스트 (JS 신규 슈트 + JVM 신규 슈트 + 패리티)
 - [x] 전면 감사 4축 (RELEASE-AUDIT) — 발견 1건 수리 완료
-- [ ] 버전 범프 0.3.54 (versionCode 57)
-- [ ] 번들 재생성
-- [ ] 전 슈트·골든
-- [ ] APK 빌드·DEX 게이트·축소 스모크
-- [ ] 커밋·푸시·GitHub 릴리스 게시
+- [x] 버전 범프 0.3.54 (versionCode 57)
+- [x] 번들 재생성 (APP_VERSION=0.3.54)
+- [x] 전 슈트·골든
+- [x] APK 빌드·DEX 게이트·축소 스모크
+- [ ] 커밋·푸시·GitHub 릴리스 게시 — 커밋 a5da920 완료, 푸시·릴리스는
+  출구 장애로 보류 (위 보류 사유 참조)
+
+## 검증 수치
+- JS 전 슈트 1,043건 통과 (book 468 · temp 198 · bundle 10 · html-guard
+  67 · settings-lock 56 · sellquote 30 · report 47 · positions 14 ·
+  stoploss-fallback 21 · relayer-auth 18 · relayer-keycheck 30 ·
+  shadow 84 신규)
+- JVM 977건 통과 (NativeCycle 356 · TempNo 158 · ClobWrite 33 ·
+  SubmitGuard 21 · Watchdog/StageDeadline 54 · ExternalWatchdog 15 ·
+  RestartGuard 7 · ShadowLog 333 신규, JS 내장 표와의 패리티 포함)
+- 골든 전부 통과 (48/48 · 185 · 178 · 215)
+- APK 빌드 완료, DEX 게이트 PASSED, 축소 스모크 PASSED. 출하 APK 직접
+  대조: versionCode 57, versionName 0.3.54, dex에 JavascriptInterface·
+  ShadowLog·bm_shadow 존재.
+
+## 미검증
+- 서명 경로는 실기기 서명 제출 확인 전까지 미검증으로 표기한다 (이번
+  변경은 서명 경로 무접촉 — 기록 경로만 추가).
+- 섀도우 기록의 실기기 축적 확인은 설치 후 첫 기온 사이클 제보로 한다.
