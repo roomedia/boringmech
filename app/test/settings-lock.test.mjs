@@ -267,5 +267,22 @@ check($("numOverlay").classList.contains("hidden"),
   "lock: 다른 카드가 열려 있어도 잠긴 기온 카드의 시트는 열리지 않는다");
 $("btnEditBand").click();
 
+// 7) 기온 카드 저장 — 건당 금액(tempBetUsd)까지 저장본에 남아야 한다.
+//    저장 핸들러의 필드 목록에서 하나가 빠지면 저장 직후 폼이 기본값으로
+//    되돌아가 "올려도 계속 $5"가 되던 결함의 가드.
+sandbox.renderTempSettings();
+$("btnEditTemp").click();
+check(sandbox.cardLocked.temp === false, "lock: 기온 카드가 열린다 (건당 금액 저장 검증)");
+$("tempBetUsd").value = "10";
+sandbox.updateSettingsUI();
+check($("btnTempSave").disabled === false, "lock: 기온 건당 금액 변경 후 저장 버튼이 활성화된다");
+$("btnTempSave").click();
+check(JSON.parse(lsMap.get("bm_settings")).tempBetUsd === 10,
+  "lock: 기온 건당 금액이 저장본(bm_settings)에 기록됐다");
+check(Number($("tempBetUsd").value) === 10,
+  "lock: 저장 후에도 폼의 기온 건당 금액이 올린 값으로 유지된다");
+check($("tempNoErr").textContent === "", "lock: 기온 저장 시 오류 표시가 없다");
+check(sandbox.cardLocked.temp === true, "lock: 기온 저장 후 그 카드만 다시 잠긴다");
+
 console.log(`settings-lock tests: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

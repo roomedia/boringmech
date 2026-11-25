@@ -85,10 +85,11 @@ const parts = [
   ...["GAMMA_MARKETS_URL", "DATA_API_V2", "BAND_LO", "BAND_HI", "SPREAD_MAX",
       "ASK_DEPTH_MIN_USD", "SLIPPAGE_CAP", "SNAPSHOT_MATCH_TOL", "ACTIVITY_PAGE_CAP",
       "PRIORITY_BAND_LO", "PRIORITY_BAND_HI", "VOLUME_MIN", "END_WINDOW_DAYS",
-      "ASK_ABOVE_SIGNAL", "VERIFY_CAP", "BET_PCT", "BET_MIN_USD", "CASH_FLOOR_PCT",
+      "ASK_ABOVE_SIGNAL", "VERIFY_CAP", "BET_USD", "ORDER_TEST_DEFAULT_ROUNDS", "CASH_FLOOR_PCT",
       "RESERVE_USD", "MAX_POSITIONS", "STOP_DROP", "DECIDED_HIGH", "DECIDED_LOW",
       "TEMP_STOP_DROP", "TEMP_NO_BAND_HI", "TEMP_NO_DEFAULT_BAND_LO",
-      "TEMP_NO_ENTRY_HOUR_UTC", "TEMP_NO_DEFAULT_RESERVE_SLOTS", "TEMP_NO_MAX_RESERVE_SLOTS"]
+      "TEMP_NO_ENTRY_HOUR_UTC", "TEMP_NO_DEFAULT_RESERVE_SLOTS", "TEMP_NO_MAX_RESERVE_SLOTS",
+      "NEAR_CAP_BAND_EPS", "REDEEM_PENDING_CAP"]
     .map((n) => extractLine(`const ${n} =`)),
   extractArray("const FAILSAFE_KEYWORDS ="),
   extractLine("const round2 ="),
@@ -97,6 +98,10 @@ const parts = [
   extractBlock("export function isSportsMarket"),
   extractBlock("function roundTick"),
   extractBlock("export function tempWindowOpen"),
+  extractBlock("export function buyLimitPrice"),
+  // 매개변수 구조분해({ ... })가 있어 중괄호 매칭 추출이 시그니처에서
+  // 끊긴다 — 줄 시작 닫힘 중괄호를 종단자로 쓰는 문장 추출로 가져온다.
+  extractStatement("export function tempNearCapRejectNote", "\n}"),
   extractBlock("async function verifyCandidate"),
   extractBlock("async function fetchGammaPrices"),
   extractBlock("async function fetchBuySlugs"),
@@ -104,6 +109,8 @@ const parts = [
   extractBlock("export function durableWrite"),
   extractBlock("export function durableRead"),
   extractBlock("function loadDurableJsonList"),
+  extractBlock("function redeemStatusRank"),
+  extractBlock("export function collectRedeemPending"),
   extractBlock("function loadRedeemPending"),
   extractBlock("function saveRedeemPending"),
   extractBlock("function ingestRedeemPending"),
@@ -305,7 +312,7 @@ const runners = {
   },
 
   sizing: (inp) => BM.sizing(inp.cash, inp.equity, inp.openCount),
-  betUsd: (inp) => ({ bet: BM.betUsdFor(inp.equity) }),
+  betUsd: (inp) => ({ bet: BM.betUsdFor(BM.parseTradeSettings(JSON.stringify({ betUsd: inp.betUsd }))) }),
   settledParse: (inp) => ({ base: BM.parseSettledBaseline(inp.raw) }),
   settledNotice: (inp) => ({ notice: BM.settledNoticeFor(inp.base, inp.snap) }),
 

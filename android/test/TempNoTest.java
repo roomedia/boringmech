@@ -361,6 +361,27 @@ public class TempNoTest {
                     !TempNo.reserveLaneAllows(TempNo.STRATEGY, true, 1, 0, 70, 100, 0, 2.5));
         }
 
+        // ── 차선 현금 차단 판정 (JS tempLaneCashBlocked와 같은 경계) ──
+        {
+            // 나머지 조건이 전부 통과하고 현금만 모자랄 때만 true다.
+            check("laneCash: cash below bet+reserve → blocked",
+                    TempNo.laneCashBlocked(TempNo.STRATEGY, true, 1, 0, 70, 5.49, 3, 2.5));
+            check("laneCash: cash exactly bet+reserve → not blocked",
+                    !TempNo.laneCashBlocked(TempNo.STRATEGY, true, 1, 0, 70, 5.5, 3, 2.5));
+            check("laneCash: cash enough → not blocked",
+                    !TempNo.laneCashBlocked(TempNo.STRATEGY, true, 1, 0, 70, 10, 3, 2.5));
+            check("laneCash: main strategy → not blocked",
+                    !TempNo.laneCashBlocked(null, true, 1, 0, 70, 0, 3, 2.5));
+            check("laneCash: hold off → not blocked",
+                    !TempNo.laneCashBlocked(TempNo.STRATEGY, false, 1, 0, 70, 0, 3, 2.5));
+            check("laneCash: lane exhausted → not blocked",
+                    !TempNo.laneCashBlocked(TempNo.STRATEGY, true, 0, 0, 70, 0, 3, 2.5));
+            check("laneCash: positions full → not blocked",
+                    !TempNo.laneCashBlocked(TempNo.STRATEGY, true, 1, 70, 70, 0, 3, 2.5));
+            check("laneCash: bet 0 → not blocked",
+                    !TempNo.laneCashBlocked(TempNo.STRATEGY, true, 1, 0, 70, 0, 0, 2.5));
+        }
+
         // ── 창 대기 판정 (JS tempHasUpcomingWindow와 같은 경계) ──────
         // 이벤트 endDate 2026-11-18T12:00Z, 진입 창은 당일 06:00~12:00 UTC.
         {

@@ -1834,14 +1834,35 @@
         $('tempNoErr').textContent = '예약 슬롯 수는 0에서 70 사이의 정수여야 합니다.';
         return;
       }
-      writeSettingsObject({
+      var tb = Number($('tempBetUsd').value);
+      if (!isFinite(tb) || tb < 0 || tb > 100) {
+        $('tempNoErr').textContent = '건당 금액은 0에서 100 사이의 숫자여야 합니다.';
+        return;
+      }
+      var patch = {
         tempNoEnabled: !!$('tempNoEnabled').checked,
         tempNoBandLo: lo,
         tempNoBandHi: hi,
         tempEntryHourUtc: hour,
         tempStopDrop: drop,
-        tempNoReserveSlots: rs
-      });
+        tempNoReserveSlots: rs,
+        tempBetUsd: tb
+      };
+      writeSettingsObject(patch);
+      // 저장 확인 — 쓴 값이 실제로 저장본에 남았는지 다시 읽어 대조한다.
+      // 조용히 빠진 필드가 있으면(저장 목록 누락 같은 결함) 적용된 척
+      // 넘어가지 않고 그 자리에서 알린다.
+      var savedObj = readSettingsObject();
+      for (var pk in patch) {
+        var sv = savedObj[pk];
+        var okSaved = (typeof patch[pk] === 'boolean')
+          ? sv === patch[pk]
+          : (isFinite(Number(sv)) && Math.abs(Number(sv) - patch[pk]) < 1e-9);
+        if (!okSaved) {
+          $('tempNoErr').textContent = '저장이 확인되지 않았습니다 — 다시 시도하세요.';
+          return;
+        }
+      }
       syncGroupForm('temp', true);
       setCardLocked('temp', true);
     });

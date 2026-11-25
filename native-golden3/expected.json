@@ -807,31 +807,31 @@
   "sizing-standard": {
    "cashFloor": 300,
    "available": 700,
-   "bet": 10,
+   "bet": 5,
    "slots": 70
   },
   "sizing-at-floor": {
    "cashFloor": 300,
    "available": 0,
-   "bet": 10,
+   "bet": 5,
    "slots": 0
   },
   "sizing-below-bet": {
    "cashFloor": 300,
    "available": 5,
-   "bet": 10,
-   "slots": 0
+   "bet": 5,
+   "slots": 1
   },
   "sizing-position-cap": {
    "cashFloor": 30000,
    "available": 70000,
-   "bet": 1000,
+   "bet": 5,
    "slots": 1
   },
   "sizing-position-full": {
    "cashFloor": 30000,
    "available": 70000,
-   "bet": 1000,
+   "bet": 5,
    "slots": 0
   },
   "sizing-nan-closed": {
@@ -853,7 +853,7 @@
    "slots": 70
   },
   "bet-zero": {
-   "bet": 5
+   "bet": 0
   },
   "bet-large": {
    "bet": 100
@@ -862,7 +862,7 @@
    "bet": 5
   },
   "bet-just-below": {
-   "bet": 5
+   "bet": 4.99
   },
   "bet-exact": {
    "bet": 5

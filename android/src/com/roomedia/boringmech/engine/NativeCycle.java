@@ -1334,6 +1334,7 @@ public final class NativeCycle {
         REJECT_LABELS.put("end_out_of_range", "만기범위이탈");
         REJECT_LABELS.put("bet_zero", "금액없음");
         REJECT_LABELS.put("cash_floor", "현금하한");
+        REJECT_LABELS.put("temp_cash_short", "기온현금부족");
     }
 
     private static String labelOf(Map<String, String> labels, String key) {
@@ -1675,6 +1676,14 @@ public final class NativeCycle {
                         tradeCfg.maxPositions, cashLeft, tempSettings.betUsd, tradeCfg.reserveUsd)) {
                     viaLane = true;
                 } else {
+                    // 차선이 현금 부족으로 막힌 기온 후보는 시도 기록이
+                    // 없어 조용히 사라지던 자리 — 탈락 사유로 집계해
+                    // 요약에 보이게 한다 (JS 선정 드라이버와 같은 규칙).
+                    if (TempNo.laneCashBlocked(cand.strategy, tempHold, laneLeft, positionsUsed,
+                            tradeCfg.maxPositions, cashLeft, tempSettings.betUsd,
+                            tradeCfg.reserveUsd)) {
+                        tally(rejects, "temp_cash_short");
+                    }
                     continue;
                 }
             }

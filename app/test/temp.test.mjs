@@ -20,6 +20,7 @@ const {
   boughtStrategyOf,
   tempReserveBlocksMain,
   tempReserveLaneAllows,
+  tempLaneCashBlocked,
   tempNearCapRejectNote,
   tempHasUpcomingWindow,
   tempEventSlugsForFetch,
@@ -513,6 +514,18 @@ eq(
   eq(tempReserveLaneAllows({ ...base, positionsUsed: 70 }), false, "lane: positions full → deny");
   eq(tempReserveLaneAllows({ ...base, bet: 0, cashLeft: 100 }), false, "lane: bet 0 → deny (sizing bet=0 가드 우회 차단)");
 
+  // 차선 현금 차단 — 나머지 조건이 전부 통과하고 현금만 모자랄 때만
+  // true다. 이 사유가 집계되지 않으면 현금 부족으로 못 산 사이클이
+  // 로그 어디에도 남지 않는다.
+  eq(tempLaneCashBlocked({ ...base, cashLeft: 5.49 }), true, "laneCash: cash below bet+reserve → blocked");
+  eq(tempLaneCashBlocked({ ...base, cashLeft: 5.5 }), false, "laneCash: cash exactly bet+reserve → not blocked");
+  eq(tempLaneCashBlocked(base), false, "laneCash: cash enough → not blocked");
+  eq(tempLaneCashBlocked({ ...base, strategy: undefined, cashLeft: 0 }), false, "laneCash: main strategy → not blocked");
+  eq(tempLaneCashBlocked({ ...base, tempHold: false, cashLeft: 0 }), false, "laneCash: hold off → not blocked");
+  eq(tempLaneCashBlocked({ ...base, laneLeft: 0, cashLeft: 0 }), false, "laneCash: lane exhausted → not blocked");
+  eq(tempLaneCashBlocked({ ...base, positionsUsed: 70, cashLeft: 0 }), false, "laneCash: positions full → not blocked");
+  eq(tempLaneCashBlocked({ ...base, bet: 0, cashLeft: 0 }), false, "laneCash: bet 0 → not blocked");
+
   // 구조 가드 — 드라이버가 슬롯 소진 뒤 차선으로 기온만 더 시도하고,
   // 슬롯 0 조기 반환도 차선 가능성을 먼저 보는지 확인한다.
   const { readFileSync } = await import("node:fs");
@@ -532,6 +545,16 @@ eq(
     cycleSrc.includes("laneLeft = tempHold ? tempReserveSlots : 0;"),
     true,
     "lane guard: lane budget is the reserve count while hold is on",
+  );
+  eq(
+    cycleSrc.includes('tallyReject("temp_cash_short")'),
+    true,
+    "lane guard: driver tallies lane cash block so the reason reaches the cycle summary",
+  );
+  eq(
+    src.includes('temp_cash_short: "기온현금부족"'),
+    true,
+    "lane guard: reject label exists for lane cash block",
   );
   // 최소 수량 검사 — 기온만 제외되고 메인은 기존대로 걸린다
   const verifySrc = src.slice(src.indexOf("async function verifyCandidate"), src.indexOf("export function summarizeCycle"));

@@ -8,6 +8,7 @@ import com.roomedia.boringmech.engine.ScanFilter;
 import com.roomedia.boringmech.engine.SettledBaseline;
 import com.roomedia.boringmech.engine.StopLoss;
 import com.roomedia.boringmech.engine.TempNo;
+import com.roomedia.boringmech.engine.TradeSettings;
 
 import java.math.BigInteger;
 import java.nio.file.Files;
@@ -307,9 +308,12 @@ public class Golden3Test {
                 return out;
             }
             case "betUsd": {
-                Object e = inp.get("equity");
+                Object b = inp.get("betUsd");
+                TradeSettings cfg = b instanceof Double
+                        ? TradeSettings.parse("{\"betUsd\":" + b + "}")
+                        : TradeSettings.defaults();
                 Map<String, Object> out = new LinkedHashMap<>();
-                out.put("bet", PositionBook.betUsdFor(e instanceof Double ? (Double) e : 0));
+                out.put("bet", PositionBook.betUsdFor(cfg));
                 return out;
             }
             case "settledParse": {

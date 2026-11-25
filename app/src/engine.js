@@ -869,6 +869,24 @@ export function tempReserveLaneAllows({ strategy, tempHold, laneLeft, positionsU
   return cashLeft >= bet + reserveUsd;
 }
 
+/**
+ * 예약 차선 현금 차단 판정 — 차선 게이트의 나머지 조건(기온 후보·홀드·
+ * 차선 잔여·포지션 상한·금액 있음)은 모두 통과했는데 현금만 건당 금액 +
+ * 예비금에 못 미쳐 막힌 경우만 true다. 이 차단은 시도 자체가 없어서
+ * 탈락 집계에도 안 남던 자리라, 드라이버가 사유로 집계해 사이클 요약에
+ * 보이게 한다. 차선 소진·포지션 상한은 헤더 로그의 슬롯·보유 수치로
+ * 이미 보이므로 여기 넣지 않는다 (네이티브 TempNo.laneCashBlocked와
+ * 같은 규칙).
+ */
+export function tempLaneCashBlocked({ strategy, tempHold, laneLeft, positionsUsed, maxPositions, cashLeft, bet, reserveUsd }) {
+  if (strategy !== "temp_no") return false;
+  if (!tempHold) return false;
+  if (!(bet > 0)) return false;
+  if (!(laneLeft > 0)) return false;
+  if (!(positionsUsed < maxPositions)) return false;
+  return cashLeft < bet + reserveUsd;
+}
+
 /** 상한 근처 판정 여유 — bestAsk가 밴드 상한을 이만큼까지만 넘으면 가격 쌍을 남긴다. */
 export const NEAR_CAP_BAND_EPS = 0.01;
 
@@ -1712,6 +1730,7 @@ const REJECT_LABELS = {
   end_out_of_range: "만기범위이탈",
   bet_zero: "금액없음",
   cash_floor: "현금하한",
+  temp_cash_short: "기온현금부족",
 };
 
 // 사이클 결과를 한 줄로 집계한다. 탈락을 건별로 찍으면 로그가 폭발하므로
@@ -2781,6 +2800,14 @@ async function runCycle(gen) {
       reserveUsd: tradeCfg.reserveUsd,
     })) {
       if (await attemptCandidate(cand, true)) { aborted = true; break; }
+    } else if (tempLaneCashBlocked({
+      strategy: cand.strategy, tempHold, laneLeft, positionsUsed,
+      maxPositions: tradeCfg.maxPositions, cashLeft, bet: tempSettings.betUsd,
+      reserveUsd: tradeCfg.reserveUsd,
+    })) {
+      // 차선이 현금 부족으로 막힌 기온 후보는 시도 기록이 없어 조용히
+      // 사라지던 자리 — 탈락 사유로 집계해 요약에 보이게 한다.
+      tallyReject("temp_cash_short");
     }
   }
   if (tempHold && heldMain.length) {

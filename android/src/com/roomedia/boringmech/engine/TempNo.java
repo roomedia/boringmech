@@ -140,6 +140,33 @@ public final class TempNo {
         return cashLeft >= bet + reserveUsd;
     }
 
+    /**
+     * 예약 차선 현금 차단 판정 — 차선 게이트의 나머지 조건은 모두
+     * 통과했는데 현금만 건당 금액 + 예비금에 못 미쳐 막힌 경우만
+     * true다 (JS tempLaneCashBlocked와 같은 규칙). 드라이버가 탈락
+     * 사유로 집계해 사이클 요약에 보이게 한다.
+     */
+    public static boolean laneCashBlocked(String strategy, boolean tempHold, int laneLeft,
+                                          int positionsUsed, int maxPositions,
+                                          double cashLeft, double bet, double reserveUsd) {
+        if (!STRATEGY.equals(strategy)) {
+            return false;
+        }
+        if (!tempHold) {
+            return false;
+        }
+        if (!(bet > 0)) {
+            return false;
+        }
+        if (laneLeft <= 0) {
+            return false;
+        }
+        if (positionsUsed >= maxPositions) {
+            return false;
+        }
+        return cashLeft < bet + reserveUsd;
+    }
+
     /** 상한 근처 판정 여유 — bestAsk가 밴드 상한을 이만큼까지만 넘으면 가격 쌍을 남긴다. */
     public static final double NEAR_CAP_EPS = 0.01;
 

@@ -3194,49 +3194,49 @@
   {
    "kind": "betUsd",
    "name": "bet-zero",
-   "description": "평가금 0 → 하한 $5",
+   "description": "건당 금액 0 → $0 (비율·하한 방식은 v0.3.52에서 폐지)",
    "input": {
-    "equity": 0
+    "betUsd": 0
    }
   },
   {
    "kind": "betUsd",
    "name": "bet-large",
-   "description": "평가금 1만 → $100",
+   "description": "건당 금액 $100 → $100",
    "input": {
-    "equity": 10000
+    "betUsd": 100
    }
   },
   {
    "kind": "betUsd",
    "name": "bet-null",
-   "description": "null → $5",
+   "description": "null → 기본값 $5",
    "input": {
-    "equity": null
+    "betUsd": null
    }
   },
   {
    "kind": "betUsd",
    "name": "bet-just-below",
-   "description": "1%가 $5에 못 미치면 $5",
+   "description": "건당 금액 $4.99 → $4.99",
    "input": {
-    "equity": 499.99
+    "betUsd": 4.99
    }
   },
   {
    "kind": "betUsd",
    "name": "bet-exact",
-   "description": "1%가 정확히 $5",
+   "description": "건당 금액 $5 → $5",
    "input": {
-    "equity": 500
+    "betUsd": 5
    }
   },
   {
    "kind": "betUsd",
    "name": "bet-just-above",
-   "description": "1%가 $5를 넘으면 그 값",
+   "description": "건당 금액 $5.01 → $5.01",
    "input": {
-    "equity": 501
+    "betUsd": 5.01
    }
   },
   {
