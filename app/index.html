@@ -199,7 +199,9 @@
         <p class="note">정산된 포지션을 자동으로 현금으로 바꾸는 데 필요합니다. 키가 없으면 상환만 보류되고 매매는 계속됩니다. 키는 polymarket.com → 설정 → API Keys → Relayer API Keys에서 만들고, 생성 시 표시되는 API Key와 Signer Address를 그대로 입력하세요. Signer Address는 연동된 지갑 주소와 같아야 합니다.</p>
       </div>
       <div class="stack hidden" id="relayerSaved">
+        <button class="btn ghost" id="btnRelayerCheck">연동 확인</button>
         <button class="btn ghost" id="btnRelayerClear">키 삭제</button>
+        <div class="note" id="relayerCheckMsg"></div>
       </div>
     </div>
 
@@ -934,12 +936,48 @@
       }
     }
 
+    var relayerCheckBusy = false;
+    function relayerCheckText(chk){
+      if (relayerCheckBusy) return '연동 확인 중…';
+      if (!chk) return '아직 연동을 확인하지 않았습니다.';
+      var t = '';
+      if (chk.at) { try { t = ' (' + new Date(chk.at).toLocaleString() + ')'; } catch (e) {} }
+      if (chk.status === 'ok') return '연동 정상 — 키가 서버에서 확인됐습니다.' + t;
+      if (chk.status === 'auth') return '인증 실패 — 키나 Signer Address가 서버에서 거부됐습니다. 키를 다시 만들어 등록하세요.' + t;
+      return '확인 불가 — 네트워크 등 다른 이유로 확인하지 못했습니다. 인증 실패와는 다릅니다.' + t;
+    }
+
     function renderRelayer(){
       var has = false;
       try { has = BM.hasRelayerKey(); } catch (e) {}
-      $('relayerState').textContent = has ? '저장됨' : '없음 — 상환 보류 중';
+      var chk = null;
+      if (has) { try { chk = BM.readRelayerCheck(); } catch (e) {} }
+      var stateText = '없음 — 상환 보류 중';
+      if (has) {
+        stateText = '저장됨 · 연동 미확인';
+        if (chk && chk.status === 'ok') stateText = '저장됨 · 연동 확인됨';
+        else if (chk && chk.status === 'auth') stateText = '저장됨 · 인증 실패 — 키를 다시 확인하세요';
+        else if (chk) stateText = '저장됨 · 확인 불가 (네트워크 등)';
+      }
+      $('relayerState').textContent = stateText;
       $('relayerForm').classList.toggle('hidden', has);
       $('relayerSaved').classList.toggle('hidden', !has);
+      $('relayerCheckMsg').textContent = has ? relayerCheckText(chk) : '';
+      $('btnRelayerCheck').disabled = relayerCheckBusy;
+    }
+
+    function runRelayerCheck(){
+      if (relayerCheckBusy) return;
+      if (!window.BM || !BM.checkRelayerKey) return;
+      relayerCheckBusy = true;
+      renderRelayer();
+      BM.checkRelayerKey().then(function(){
+        relayerCheckBusy = false;
+        renderRelayer();
+      }).catch(function(){
+        relayerCheckBusy = false;
+        renderRelayer();
+      });
     }
 
     // 설정 — bm_settings에 JSON으로 저장한다 (엔진이 durableRead로 읽는
@@ -1744,6 +1782,10 @@
       $('relayerKey').value = '';
       $('relayerAddr').value = '';
       renderRelayer();
+      runRelayerCheck();
+    });
+    $('btnRelayerCheck').addEventListener('click', function(){
+      runRelayerCheck();
     });
     $('btnRelayerClear').addEventListener('click', function(){
       try { BM.clearRelayerKey(); } catch (e) {}

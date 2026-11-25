@@ -3322,6 +3322,77 @@ export function relayerCredsPrint(creds) {
   return creds ? `${creds.key}\n${creds.address}` : "";
 }
 
+// ── relayer 연동 확인 ────────────────────────────────────────
+// 저장된 자격증명이 서버에서 받아들여지는지, 클레임 없이 조회 1회로
+// 판정한다. params 조회는 무인증 공개라(가짜 키에도 200) 키를 검증하지
+// 못하고, 거래 단건 조회도 무인증이라 없는 거래에 404만 돌아온다.
+// 인증이 걸리는 조회는 거래 목록(GET /v1/account/transactions)뿐이다 —
+// 헤더 없음·가짜 키에 401 invalid authorization, POST /submit과 같은
+// 거부가 돌아오는 것을 실측으로 확인했다 (2026-11-25). GET 전용이라
+// 확인 호출 자체는 제출을 만들지 않는다.
+const RELAYER_CHECK_KEY = "bm_relayer_check";
+
+/** 확인 오류 분류 — 401만 인증 실패, 그 외(503·네트워크·시간 초과)는 전부 확인 불가. */
+export function classifyRelayerCheckError(message) {
+  return isRelayerAuthError(message) ? "auth" : "unknown";
+}
+
+/** 자격증명 지문의 단방향 해시 — 상태 캐시 대조 키. 지문 원문은 저장하지 않는다. */
+export function relayerPrintHash(print) {
+  let h = 5381;
+  const s = String(print ?? "");
+  for (let i = 0; i < s.length; i += 1) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(16);
+}
+
+/** 마지막 확인 결과 — 현재 자격증명과 지문 해시가 같을 때만 유효하다. */
+export function readRelayerCheck() {
+  const creds = readRelayerCreds();
+  if (!creds) return null;
+  try {
+    const raw = localStorage.getItem(RELAYER_CHECK_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    if (o && o.hash === relayerPrintHash(relayerCredsPrint(creds)) && typeof o.status === "string") {
+      return { status: o.status, at: o.at || null };
+    }
+  } catch {}
+  return null;
+}
+
+function saveRelayerCheck(print, status) {
+  try {
+    localStorage.setItem(
+      RELAYER_CHECK_KEY,
+      JSON.stringify({ hash: relayerPrintHash(print), status, at: new Date().toISOString() }),
+    );
+  } catch {}
+}
+
+/**
+ * 저장된 relayer 자격증명을 인증 조회 1회로 확인한다.
+ * 반환 {status: "ok"|"auth"|"unknown"|"none", detail?} — 저장은 막지 않고
+ * 상태만 남긴다. 401이면 제출 경로의 401과 같은 의미라 같은 지문으로
+ * 제출 래치를 걸고, 정상이면 같은 지문의 래치를 푼다. 확인 불가는
+ * 래치를 건드리지 않는다 (인증 실패와 섞지 않는다).
+ */
+export async function checkRelayerKey() {
+  const creds = readRelayerCreds();
+  if (!creds) return { status: "none" };
+  const print = relayerCredsPrint(creds);
+  try {
+    await relayerGet(`/v1/account/transactions?address=${creds.address}`, creds);
+    if (print && state.relayerAuthFailPrint === print) state.relayerAuthFailPrint = "";
+    saveRelayerCheck(print, "ok");
+    return { status: "ok" };
+  } catch (e) {
+    const status = classifyRelayerCheckError(e?.message ?? e);
+    if (status === "auth") state.relayerAuthFailPrint = print;
+    saveRelayerCheck(print, status);
+    return { status, detail: String(e?.message ?? e).slice(0, 120) };
+  }
+}
+
 function relayerHeaders(creds) {
   return {
     "RELAYER_API_KEY": creds.key,
@@ -3967,6 +4038,8 @@ window.BM = {
   parseSnapCache: snapshotFromCache,
   readSnapCache: cachedSnapshot,
   hasRelayerKey: () => !!readRelayerCreds(),
+  checkRelayerKey,
+  readRelayerCheck,
   setRelayerKey(key, address) {
     const k = String(key || "").trim();
     const a = String(address || "").trim();
@@ -3987,6 +4060,7 @@ window.BM = {
     state.relayerAuthFailPrint = "";
     try {
       localStorage.removeItem(LS.relayer);
+      localStorage.removeItem(RELAYER_CHECK_KEY);
     } catch {}
     try { window.AndroidBridge?.setRelayerMirror?.(null); } catch {}
   },
