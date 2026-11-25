@@ -284,5 +284,29 @@ check(Number($("tempBetUsd").value) === 10,
 check($("tempNoErr").textContent === "", "lock: 기온 저장 시 오류 표시가 없다");
 check(sandbox.cardLocked.temp === true, "lock: 기온 저장 후 그 카드만 다시 잠긴다");
 
+// 8) 매매 그룹 저장 확인 — 저장소 쓰기가 실패하면(예외를 삼키는
+//    writeSettingsObject 아래) 조용히 적용된 척하지 않고 오류를 표시하고
+//    카드를 잠그지 않아야 한다. 기온 카드에만 있던 재읽기 대조를 매매
+//    그룹 저장에도 걸었는지의 가드.
+if (sandbox.cardLocked.band) $("btnEditBand").click();
+check(sandbox.cardLocked.band === false, "lock: 매수·검증 카드가 열린다 (저장 확인 검증)");
+$("ts_bandLo").value = "0.62";
+sandbox.updateSettingsUI();
+check($("btnBandSave").disabled === false, "lock: 밴드 변경 후 저장 버튼이 활성화된다");
+const origSetItem = sandbox.localStorage.setItem;
+sandbox.localStorage.setItem = () => { throw new Error("quota"); };
+$("btnBandSave").click();
+check($("bandErr").textContent.includes("저장이 확인되지 않았습니다"),
+  "lock: 쓰기 실패 시 매매 그룹 저장도 오류를 표시한다");
+check(sandbox.cardLocked.band === false, "lock: 쓰기 실패 시 카드를 잠그지 않는다");
+check(JSON.parse(lsMap.get("bm_settings")).bandLo === 0.65,
+  "lock: 쓰기 실패 시 저장본은 이전 값 그대로다");
+sandbox.localStorage.setItem = origSetItem;
+$("btnBandSave").click();
+check($("bandErr").textContent === "", "lock: 재시도 저장 시 오류 표시가 없다");
+check(JSON.parse(lsMap.get("bm_settings")).bandLo === 0.62,
+  "lock: 재시도 저장이 저장본에 기록됐다");
+check(sandbox.cardLocked.band === true, "lock: 재시도 저장 후 카드가 다시 잠긴다");
+
 console.log(`settings-lock tests: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

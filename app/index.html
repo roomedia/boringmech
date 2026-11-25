@@ -1132,6 +1132,16 @@
         }
       }
       writeSettingsObject(patch);
+      // 저장 확인 — 쓴 값이 실제로 저장본에 남았는지 다시 읽어 대조한다.
+      // 기온 카드와 같은 이유로, 조용히 적용되지 않은 저장을 그 자리에서
+      // 알리고 카드를 잠그지 않는다.
+      var savedObj = readSettingsObject();
+      for (var pk in patch) {
+        if (!isFinite(Number(savedObj[pk])) || Math.abs(Number(savedObj[pk]) - patch[pk]) >= 1e-9) {
+          err.textContent = '저장이 확인되지 않았습니다 — 다시 시도하세요.';
+          return;
+        }
+      }
       syncGroupForm(name, true);
       renderSettingsSummary();
       setCardLocked(name, true);
