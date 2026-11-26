@@ -2,6 +2,8 @@
 
 - 상태: awaiting (2026-11-27 출시 완료)
 - 릴리스: https://github.com/roomedia/boringmech/releases/tag/v0.3.59
+- 출시 커밋: 50b2127 (roomedia 단독 저자), 푸시·자산 첨부 확인 완료.
+  다운로드한 릴리스 자산이 출하 APK와 바이트 동일함을 대조했다.
 - 남은 확인은 실기기 몫이다: 설치 후 서명 제출 1회 (이번 변경은 서명
   경로 무접촉이라 게이트 표기만 유지).
 - 기준: 감사 원문 ~/workspace/audits-20261126/boringmech-axiomatic-audit.md 결합 3
