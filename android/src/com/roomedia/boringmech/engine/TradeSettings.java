@@ -1,15 +1,14 @@
 package com.roomedia.boringmech.engine;
 
 /**
- * 매매 설정(bm_settings) 해석 — engine.js parseTradeSettings 이식.
- * 매매 판단 수치는 전부 설정으로 바꿀 수 있고, 기본값은 기존 하드코딩
- * 상수와 같다. 범위를 벗어난 값은 필드 단위로 기본값으로 되돌리고,
- * 하한·상한 쌍은 순서가 어긋나면 쌍째로 기본값으로 되돌린다
- * (못 믿는 설정으로 사지 않는다).
+ * 매매 설정(bm_settings)의 평면 뷰 — 정본 해석(Settings)이 돌려준
+ * scan/sizing/stoploss 네임스페이스를 기존 소비자가 쓰던 평면 형태로
+ * 투영한 것이다. 필드 검증·기본값·쌍 리셋 규칙은 전부 Settings 한
+ * 곳에만 있고, 이 클래스는 값을 옮길 뿐 해석을 다시 하지 않는다.
  *
- * 기본값은 출처 상수(ScanFilter.BAND_LO 등)를 참조하지 않고 리터럴로
- * 둔다 — 설정 해석기가 스캔·검증·손절 클래스를 끌어오지 않게 하기
- * 위해서다. 리터럴과 출처 상수의 일치는 NativeCycleTest가 고정한다.
+ * 필드 기본값 리터럴은 투영 원본(Settings의 기본값과 같아야 하며,
+ * 출처 상수(ScanFilter.BAND_LO 등)와의 일치는 NativeCycleTest가
+ * 고정한다.
  */
 public final class TradeSettings {
     private TradeSettings() {}
@@ -44,94 +43,40 @@ public final class TradeSettings {
         return new TradeSettings();
     }
 
-    private interface Ok {
-        boolean test(double v);
-    }
-
-    /**
-     * 설정 숫자 필드의 엄격 해석 — 실제 숫자(Double)와 숫자 문자열(공백
-     * 제거 후 비어 있지 않고 완전히 숫자로 파싱되는 것)만 인정한다.
-     * null·불리언·배열·객체는 Js.num 강제변환(null→0, true→1, []→0)으로
-     * 위험한 값이 되는 대신 NaN으로 떨어져 필드 기본값을 쓰게 한다
-     * (v0.3.38 감사 축 4). Js.num 자체는 다른 사용처가 있어 건드리지 않고
-     * 이 필드 추출 지점에서만 거른다.
-     */
-    static double strictFieldNum(Object o, String key) {
-        Object v = Js.field(o, key);
-        if (v instanceof Double) {
-            return (Double) v;
-        }
-        if (v instanceof String) {
-            String t = Js.trimJs((String) v);
-            return t.isEmpty() ? Double.NaN : Js.parseNumber(t);
-        }
-        return Double.NaN;
-    }
-
-    private static double numField(Object o, String key, double def, Ok ok) {
-        double v = strictFieldNum(o, key);
-        return Double.isFinite(v) && ok.test(v) ? v : def;
-    }
-
-    /** 설정 원문(JSON) 해석 — JS parseTradeSettings와 같은 규칙. */
-    public static TradeSettings parse(String raw) {
+    /** 정본 해석(Settings)의 평면 투영. */
+    public static TradeSettings fromSettings(Settings s) {
         TradeSettings out = new TradeSettings();
-        Object o = null;
-        if (raw != null && !raw.isEmpty()) {
-            try {
-                o = JsonText.parse(raw);
-            } catch (IllegalArgumentException e) {
-                o = null;
-            }
-        }
-        if (!(o instanceof java.util.Map)) {
-            return out;
-        }
-        TradeSettings d = new TradeSettings();
-        out.bandLo = numField(o, "bandLo", d.bandLo, v -> v > 0 && v < 1);
-        out.bandHi = numField(o, "bandHi", d.bandHi, v -> v > 0 && v <= 1);
-        out.priorityBandLo = numField(o, "priorityBandLo", d.priorityBandLo, v -> v >= 0);
-        out.priorityBandHi = numField(o, "priorityBandHi", d.priorityBandHi, v -> v > 0 && v <= 1);
-        out.volumeMin = numField(o, "volumeMin", d.volumeMin, v -> v >= 0);
-        out.endWindowDays = (int) numField(o, "endWindowDays", d.endWindowDays,
-                v -> v == Math.floor(v) && v >= 1 && v <= 365);
-        out.spreadMax = numField(o, "spreadMax", d.spreadMax, v -> v > 0 && v <= 1);
-        out.askDepthMinUsd = numField(o, "askDepthMinUsd", d.askDepthMinUsd, v -> v >= 0);
-        out.slippageCap = numField(o, "slippageCap", d.slippageCap, v -> v >= 0 && v <= 0.5);
-        out.snapshotMatchTol = numField(o, "snapshotMatchTol", d.snapshotMatchTol, v -> v >= 0 && v <= 1);
-        out.askAboveSignal = numField(o, "askAboveSignal", d.askAboveSignal, v -> v >= 0 && v <= 1);
-        out.betUsd = numField(o, "betUsd", d.betUsd, v -> v >= 0);
-        out.cashFloorPct = numField(o, "cashFloorPct", d.cashFloorPct, v -> v >= 0 && v <= 1);
-        out.reserveUsd = numField(o, "reserveUsd", d.reserveUsd, v -> v >= 0);
-        out.maxPositions = (int) numField(o, "maxPositions", d.maxPositions,
-                v -> v == Math.floor(v) && v >= 1 && v <= 10000);
-        out.verifyCap = (int) numField(o, "verifyCap", d.verifyCap,
-                v -> v == Math.floor(v) && v >= 1 && v <= 10000);
-        out.stopDrop = numField(o, "stopDrop", d.stopDrop, v -> v > 0 && v < 1);
-        out.tempStopDrop = numField(o, "tempStopDrop", d.tempStopDrop, v -> v > 0 && v < 1);
-        out.decidedHigh = numField(o, "decidedHigh", d.decidedHigh, v -> v > 0 && v < 1);
-        out.decidedLow = numField(o, "decidedLow", d.decidedLow, v -> v > 0 && v < 1);
-        out.orderTestRounds = (int) numField(o, "orderTestRounds", d.orderTestRounds,
-                v -> v == Math.floor(v) && v >= 1 && v <= 100);
-        if (!(out.bandLo < out.bandHi)) {
-            out.bandLo = d.bandLo;
-            out.bandHi = d.bandHi;
-        }
-        if (!(out.priorityBandLo < out.priorityBandHi)) {
-            out.priorityBandLo = d.priorityBandLo;
-            out.priorityBandHi = d.priorityBandHi;
-        }
-        if (!(out.decidedLow < out.decidedHigh)) {
-            out.decidedLow = d.decidedLow;
-            out.decidedHigh = d.decidedHigh;
-        }
-        // decided 쌍이 0.5를 사이에 두지 않으면 모든 가격이 decided
-        // 판정이 돼 손절이 영구히 발화하지 않는다 — 순서가 맞아도 쌍째로
-        // 기본값으로 되돌린다 (v0.3.38 감사 축 2).
-        if (out.decidedLow >= 0.5 || out.decidedHigh <= 0.5) {
-            out.decidedLow = d.decidedLow;
-            out.decidedHigh = d.decidedHigh;
-        }
+        out.bandLo = s.scan.bandLo;
+        out.bandHi = s.scan.bandHi;
+        out.priorityBandLo = s.scan.priorityBandLo;
+        out.priorityBandHi = s.scan.priorityBandHi;
+        out.volumeMin = s.scan.volumeMin;
+        out.endWindowDays = s.scan.endWindowDays;
+        out.spreadMax = s.scan.spreadMax;
+        out.askDepthMinUsd = s.scan.askDepthMinUsd;
+        out.slippageCap = s.scan.slippageCap;
+        out.snapshotMatchTol = s.scan.snapshotMatchTol;
+        out.askAboveSignal = s.scan.askAboveSignal;
+        out.betUsd = s.sizing.betUsd;
+        out.cashFloorPct = s.sizing.cashFloorPct;
+        out.reserveUsd = s.sizing.reserveUsd;
+        out.maxPositions = s.sizing.maxPositions;
+        out.verifyCap = s.sizing.verifyCap;
+        out.stopDrop = s.stoploss.stopDrop;
+        out.tempStopDrop = s.stoploss.tempStopDrop;
+        out.decidedHigh = s.stoploss.decidedHigh;
+        out.decidedLow = s.stoploss.decidedLow;
+        out.orderTestRounds = s.orderTestRounds;
         return out;
+    }
+
+    /** 설정 원문(JSON) 해석 — 정본(Settings.parse)의 투영. */
+    public static TradeSettings parse(String raw) {
+        return fromSettings(Settings.parse(raw));
+    }
+
+    /** 엄격 숫자 해석 — 정본(Settings.strictFieldNum)으로 위임한다. */
+    static double strictFieldNum(Object o, String key) {
+        return Settings.strictFieldNum(o, key);
     }
 }

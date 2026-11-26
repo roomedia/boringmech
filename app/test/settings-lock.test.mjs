@@ -10,6 +10,11 @@
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
+// 설정 표시가 엔진 정본 파서를 거치므로, 스텁 BM에도 실제 파서를
+// 넣어 출하 경로와 같은 해석으로 검증한다.
+globalThis.window = {};
+const { parseTradeSettings, parseTempSettings } = await import("../src/engine.js");
+
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
 let passed = 0;
@@ -163,7 +168,8 @@ const sandbox = {
     parseSnapCache: () => null,
     readSnapCache: () => null,
     compareVersions: () => 0,
-    parseTradeSettings: (o) => o || {},
+    parseTradeSettings,
+    parseTempSettings,
     settingsSummaryText: () => "",
     effectiveSettingsSummary: () => null,
     hasRelayerKey: () => false,

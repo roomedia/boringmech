@@ -610,7 +610,9 @@ function tempEventHasCandidateMarket(ev, heldSlugs, boughtSlugs) {
 // 상수와 같고, 범위를 벗어난 값은 필드 단위로 기본값으로 되돌린다
 // (못 믿는 설정으로 사지 않는다). 하한·상한 쌍은 순서가 어긋나면
 // 쌍째로 기본값으로 되돌린다.
-export const DEFAULT_TRADE_SETTINGS = Object.freeze({
+// 설정 기본값 — FR별 네임스페이스(스캔/사이징/손절/온도)로 나눈 것이
+// 정본이고, 평면 기본값(DEFAULT_TRADE_SETTINGS)은 그 합성이다.
+export const DEFAULT_SCAN_SETTINGS = Object.freeze({
   bandLo: BAND_LO,
   bandHi: BAND_HI,
   priorityBandLo: PRIORITY_BAND_LO,
@@ -622,15 +624,36 @@ export const DEFAULT_TRADE_SETTINGS = Object.freeze({
   slippageCap: SLIPPAGE_CAP,
   snapshotMatchTol: SNAPSHOT_MATCH_TOL,
   askAboveSignal: ASK_ABOVE_SIGNAL,
+});
+
+export const DEFAULT_SIZING_SETTINGS = Object.freeze({
   betUsd: BET_USD,
   cashFloorPct: CASH_FLOOR_PCT,
   reserveUsd: RESERVE_USD,
   maxPositions: MAX_POSITIONS,
   verifyCap: VERIFY_CAP,
+});
+
+export const DEFAULT_STOPLOSS_SETTINGS = Object.freeze({
   stopDrop: STOP_DROP,
   tempStopDrop: TEMP_STOP_DROP,
   decidedHigh: DECIDED_HIGH,
   decidedLow: DECIDED_LOW,
+});
+
+export const DEFAULT_TEMP_SETTINGS = Object.freeze({
+  enabled: false,
+  bandLo: TEMP_NO_DEFAULT_BAND_LO,
+  bandHi: TEMP_NO_BAND_HI,
+  entryHourUtc: TEMP_NO_ENTRY_HOUR_UTC,
+  reserveSlots: TEMP_NO_DEFAULT_RESERVE_SLOTS,
+  betUsd: TEMP_NO_DEFAULT_BET_USD,
+});
+
+export const DEFAULT_TRADE_SETTINGS = Object.freeze({
+  ...DEFAULT_SCAN_SETTINGS,
+  ...DEFAULT_SIZING_SETTINGS,
+  ...DEFAULT_STOPLOSS_SETTINGS,
   orderTestRounds: ORDER_TEST_DEFAULT_ROUNDS,
 });
 
@@ -668,58 +691,128 @@ const inOpen01 = (v) => v > 0 && v < 1;
 const inHalfOpen01 = (v) => v > 0 && v <= 1;
 const nonNeg = (v) => v >= 0;
 
-/** 뷰어 설정(bm_settings) 해석 — 매매 판단 수치 전체. */
-export function parseTradeSettings(raw) {
+/**
+ * 뷰어 설정(bm_settings) 단일 정본 해석 — 블롭을 한 번만 풀어 FR별
+ * 네임스페이스(scan/sizing/stoploss/temp)로 나눈 동결 객체를 돌려준다.
+ * 필드 검증·쌍 리셋 규칙은 전부 여기 한 곳에만 있다. 소비자는 이
+ * 결과를 그대로 쓰거나, 아래 투영 뷰(parseTradeSettings·
+ * parseTempSettings)로 기존 평면 형태만 받는다 — 해석을 다시
+ * 구현하는 소비자는 없다.
+ * orderTestRounds는 저장 호환용 유산 필드라 네임스페이스 밖에 둔다.
+ */
+export function parseSettings(raw) {
   const o = settingsObject(raw);
-  const d = DEFAULT_TRADE_SETTINGS;
-  if (!o) return { ...d };
-  const out = {
-    bandLo: numField(o, "bandLo", d.bandLo, inOpen01),
-    bandHi: numField(o, "bandHi", d.bandHi, inHalfOpen01),
-    priorityBandLo: numField(o, "priorityBandLo", d.priorityBandLo, nonNeg),
-    priorityBandHi: numField(o, "priorityBandHi", d.priorityBandHi, inHalfOpen01),
-    volumeMin: numField(o, "volumeMin", d.volumeMin, nonNeg),
-    endWindowDays: numField(o, "endWindowDays", d.endWindowDays,
-      (v) => Number.isInteger(v) && v >= 1 && v <= 365),
-    spreadMax: numField(o, "spreadMax", d.spreadMax, inHalfOpen01),
-    askDepthMinUsd: numField(o, "askDepthMinUsd", d.askDepthMinUsd, nonNeg),
-    slippageCap: numField(o, "slippageCap", d.slippageCap, (v) => v >= 0 && v <= 0.5),
-    snapshotMatchTol: numField(o, "snapshotMatchTol", d.snapshotMatchTol, (v) => v >= 0 && v <= 1),
-    askAboveSignal: numField(o, "askAboveSignal", d.askAboveSignal, (v) => v >= 0 && v <= 1),
-    betUsd: numField(o, "betUsd", d.betUsd, nonNeg),
-    cashFloorPct: numField(o, "cashFloorPct", d.cashFloorPct, (v) => v >= 0 && v <= 1),
-    reserveUsd: numField(o, "reserveUsd", d.reserveUsd, nonNeg),
-    maxPositions: numField(o, "maxPositions", d.maxPositions,
-      (v) => Number.isInteger(v) && v >= 1 && v <= 10000),
-    verifyCap: numField(o, "verifyCap", d.verifyCap,
-      (v) => Number.isInteger(v) && v >= 1 && v <= 10000),
-    stopDrop: numField(o, "stopDrop", d.stopDrop, inOpen01),
-    tempStopDrop: numField(o, "tempStopDrop", d.tempStopDrop, inOpen01),
-    decidedHigh: numField(o, "decidedHigh", d.decidedHigh, inOpen01),
-    decidedLow: numField(o, "decidedLow", d.decidedLow, inOpen01),
-    orderTestRounds: numField(o, "orderTestRounds", d.orderTestRounds,
-      (v) => Number.isInteger(v) && v >= 1 && v <= 100),
+  const ds = DEFAULT_SCAN_SETTINGS;
+  const dz = DEFAULT_SIZING_SETTINGS;
+  const dl = DEFAULT_STOPLOSS_SETTINGS;
+  const scan = { ...ds };
+  const sizing = { ...dz };
+  const stoploss = { ...dl };
+  const temp = { ...DEFAULT_TEMP_SETTINGS };
+  let orderTestRounds = ORDER_TEST_DEFAULT_ROUNDS;
+  if (o) {
+    scan.bandLo = numField(o, "bandLo", ds.bandLo, inOpen01);
+    scan.bandHi = numField(o, "bandHi", ds.bandHi, inHalfOpen01);
+    scan.priorityBandLo = numField(o, "priorityBandLo", ds.priorityBandLo, nonNeg);
+    scan.priorityBandHi = numField(o, "priorityBandHi", ds.priorityBandHi, inHalfOpen01);
+    scan.volumeMin = numField(o, "volumeMin", ds.volumeMin, nonNeg);
+    scan.endWindowDays = numField(o, "endWindowDays", ds.endWindowDays,
+      (v) => Number.isInteger(v) && v >= 1 && v <= 365);
+    scan.spreadMax = numField(o, "spreadMax", ds.spreadMax, inHalfOpen01);
+    scan.askDepthMinUsd = numField(o, "askDepthMinUsd", ds.askDepthMinUsd, nonNeg);
+    scan.slippageCap = numField(o, "slippageCap", ds.slippageCap, (v) => v >= 0 && v <= 0.5);
+    scan.snapshotMatchTol = numField(o, "snapshotMatchTol", ds.snapshotMatchTol, (v) => v >= 0 && v <= 1);
+    scan.askAboveSignal = numField(o, "askAboveSignal", ds.askAboveSignal, (v) => v >= 0 && v <= 1);
+    if (!(scan.bandLo < scan.bandHi)) {
+      scan.bandLo = ds.bandLo;
+      scan.bandHi = ds.bandHi;
+    }
+    if (!(scan.priorityBandLo < scan.priorityBandHi)) {
+      scan.priorityBandLo = ds.priorityBandLo;
+      scan.priorityBandHi = ds.priorityBandHi;
+    }
+    sizing.betUsd = numField(o, "betUsd", dz.betUsd, nonNeg);
+    sizing.cashFloorPct = numField(o, "cashFloorPct", dz.cashFloorPct, (v) => v >= 0 && v <= 1);
+    sizing.reserveUsd = numField(o, "reserveUsd", dz.reserveUsd, nonNeg);
+    sizing.maxPositions = numField(o, "maxPositions", dz.maxPositions,
+      (v) => Number.isInteger(v) && v >= 1 && v <= 10000);
+    sizing.verifyCap = numField(o, "verifyCap", dz.verifyCap,
+      (v) => Number.isInteger(v) && v >= 1 && v <= 10000);
+    stoploss.stopDrop = numField(o, "stopDrop", dl.stopDrop, inOpen01);
+    stoploss.tempStopDrop = numField(o, "tempStopDrop", dl.tempStopDrop, inOpen01);
+    stoploss.decidedHigh = numField(o, "decidedHigh", dl.decidedHigh, inOpen01);
+    stoploss.decidedLow = numField(o, "decidedLow", dl.decidedLow, inOpen01);
+    if (!(stoploss.decidedLow < stoploss.decidedHigh)) {
+      stoploss.decidedLow = dl.decidedLow;
+      stoploss.decidedHigh = dl.decidedHigh;
+    }
+    // decided 쌍이 0.5를 사이에 두지 않으면(둘 다 한쪽) 모든 가격이
+    // decided 판정이 돼 손절이 영구히 발화하지 않는다 — 순서가 맞아도
+    // 쌍째로 기본값으로 되돌린다 (v0.3.38 감사 축 2).
+    if (stoploss.decidedLow >= 0.5 || stoploss.decidedHigh <= 0.5) {
+      stoploss.decidedLow = dl.decidedLow;
+      stoploss.decidedHigh = dl.decidedHigh;
+    }
+    orderTestRounds = numField(o, "orderTestRounds", ORDER_TEST_DEFAULT_ROUNDS,
+      (v) => Number.isInteger(v) && v >= 1 && v <= 100);
+    // 온도 네임스페이스 — 토글은 정확히 true일 때만 켜진 것으로 보고,
+    // 밴드 하한은 (0, 상한] 범위를 벗어나면 기본값으로 되돌린다.
+    // 예약 슬롯 수는 0~TEMP_NO_MAX_RESERVE_SLOTS의 정수만 받고, 그 외
+    // (음수·소수·문자열·범위 초과)는 기본값 1로 되돌린다. 기온 건당
+    // 금액은 메인 건당 금액과 독립이며, 음수·비유한 값이면 기본값으로
+    // 되돌린다.
+    const hi = strictNum(o.tempNoBandHi);
+    temp.bandHi = Number.isFinite(hi) && hi > 0 && hi <= 1 ? hi : TEMP_NO_BAND_HI;
+    const lo = strictNum(o.tempNoBandLo);
+    temp.bandLo = Number.isFinite(lo) && lo > 0 && lo <= TEMP_NO_BAND_HI
+      ? lo
+      : TEMP_NO_DEFAULT_BAND_LO;
+    if (!(temp.bandLo < temp.bandHi)) {
+      temp.bandLo = TEMP_NO_DEFAULT_BAND_LO;
+      temp.bandHi = TEMP_NO_BAND_HI;
+    }
+    const hour = strictNum(o.tempEntryHourUtc);
+    temp.entryHourUtc = Number.isInteger(hour) && hour >= 0 && hour <= 23
+      ? hour
+      : TEMP_NO_ENTRY_HOUR_UTC;
+    const rs = strictNum(o.tempNoReserveSlots);
+    temp.reserveSlots = Number.isInteger(rs)
+      && rs >= 0 && rs <= TEMP_NO_MAX_RESERVE_SLOTS
+      ? rs
+      : TEMP_NO_DEFAULT_RESERVE_SLOTS;
+    const tb = strictNum(o.tempBetUsd);
+    temp.betUsd = Number.isFinite(tb) && tb >= 0 ? tb : TEMP_NO_DEFAULT_BET_USD;
+    temp.enabled = o.tempNoEnabled === true;
+  }
+  return Object.freeze({
+    scan: Object.freeze(scan),
+    sizing: Object.freeze(sizing),
+    stoploss: Object.freeze(stoploss),
+    temp: Object.freeze(temp),
+    orderTestRounds,
+  });
+}
+
+/** 정본 해석의 매매 평면 뷰 — parseTradeSettings의 기존 반환 형태. */
+export function tradeSettingsView(settings) {
+  const s = settings ?? parseSettings(null);
+  return {
+    ...s.scan,
+    ...s.sizing,
+    ...s.stoploss,
+    orderTestRounds: s.orderTestRounds,
   };
-  if (!(out.bandLo < out.bandHi)) {
-    out.bandLo = d.bandLo;
-    out.bandHi = d.bandHi;
-  }
-  if (!(out.priorityBandLo < out.priorityBandHi)) {
-    out.priorityBandLo = d.priorityBandLo;
-    out.priorityBandHi = d.priorityBandHi;
-  }
-  if (!(out.decidedLow < out.decidedHigh)) {
-    out.decidedLow = d.decidedLow;
-    out.decidedHigh = d.decidedHigh;
-  }
-  // decided 쌍이 0.5를 사이에 두지 않으면(둘 다 한쪽) 모든 가격이
-  // decided 판정이 돼 손절이 영구히 발화하지 않는다 — 순서가 맞아도
-  // 쌍째로 기본값으로 되돌린다 (v0.3.38 감사 축 2).
-  if (out.decidedLow >= 0.5 || out.decidedHigh <= 0.5) {
-    out.decidedLow = d.decidedLow;
-    out.decidedHigh = d.decidedHigh;
-  }
-  return out;
+}
+
+/** 정본 해석의 온도 뷰 — parseTempSettings의 기존 반환 형태. */
+export function tempSettingsView(settings) {
+  const s = settings ?? parseSettings(null);
+  return { ...s.temp };
+}
+
+/** 뷰어 설정(bm_settings) 해석 — 매매 판단 수치 전체 (정본의 투영). */
+export function parseTradeSettings(raw) {
+  return tradeSettingsView(parseSettings(raw));
 }
 
 /**
@@ -735,48 +828,12 @@ export function settingsSummaryText(cfg) {
 }
 
 /**
- * 뷰어 설정(bm_settings) 해석 — { tempNoEnabled, tempNoBandLo, tempNoBandHi,
- * tempEntryHourUtc, tempNoReserveSlots, tempBetUsd }.
- * 토글은 정확히 true일 때만 켜진 것으로 보고, 밴드 하한은 (0, 상한]
- * 범위를 벗어나면 기본값으로 되돌린다 (못 믿는 설정으로 사지 않는다).
- * 예약 슬롯 수는 0~TEMP_NO_MAX_RESERVE_SLOTS의 정수만 받고, 그 외
- * (음수·소수·문자열·범위 초과)는 기본값 1로 되돌린다. 기온 건당 금액은
- * 메인 건당 금액과 독립이며, 음수·비유한 값이면 기본값으로 되돌린다.
+ * 뷰어 설정(bm_settings) 해석 — 온도 네임스페이스
+ * { enabled, bandLo, bandHi, entryHourUtc, reserveSlots, betUsd }.
+ * 정본 해석(parseSettings)의 투영이다.
  */
 export function parseTempSettings(raw) {
-  const o = settingsObject(raw);
-  if (!o) {
-    return {
-      enabled: false,
-      bandLo: TEMP_NO_DEFAULT_BAND_LO,
-      bandHi: TEMP_NO_BAND_HI,
-      entryHourUtc: TEMP_NO_ENTRY_HOUR_UTC,
-      reserveSlots: TEMP_NO_DEFAULT_RESERVE_SLOTS,
-      betUsd: TEMP_NO_DEFAULT_BET_USD,
-    };
-  }
-  const hi = strictNum(o.tempNoBandHi);
-  let bandHi = Number.isFinite(hi) && hi > 0 && hi <= 1 ? hi : TEMP_NO_BAND_HI;
-  const lo = strictNum(o.tempNoBandLo);
-  let bandLo = Number.isFinite(lo) && lo > 0 && lo <= TEMP_NO_BAND_HI
-    ? lo
-    : TEMP_NO_DEFAULT_BAND_LO;
-  if (!(bandLo < bandHi)) {
-    bandLo = TEMP_NO_DEFAULT_BAND_LO;
-    bandHi = TEMP_NO_BAND_HI;
-  }
-  const hour = strictNum(o.tempEntryHourUtc);
-  const entryHourUtc = Number.isInteger(hour) && hour >= 0 && hour <= 23
-    ? hour
-    : TEMP_NO_ENTRY_HOUR_UTC;
-  const rs = strictNum(o.tempNoReserveSlots);
-  const reserveSlots = Number.isInteger(rs)
-    && rs >= 0 && rs <= TEMP_NO_MAX_RESERVE_SLOTS
-    ? rs
-    : TEMP_NO_DEFAULT_RESERVE_SLOTS;
-  const tb = strictNum(o.tempBetUsd);
-  const betUsd = Number.isFinite(tb) && tb >= 0 ? tb : TEMP_NO_DEFAULT_BET_USD;
-  return { enabled: o.tempNoEnabled === true, bandLo, bandHi, entryHourUtc, reserveSlots, betUsd };
+  return tempSettingsView(parseSettings(raw));
 }
 
 /**
@@ -788,16 +845,15 @@ export function parseTempSettings(raw) {
  * 기본값으로 떨어진다.
  */
 export function effectiveSettingsSummary(raw) {
-  const trade = parseTradeSettings(raw);
-  const temp = parseTempSettings(raw);
+  const s = parseSettings(raw);
   return {
-    ...trade,
-    tempNoEnabled: temp.enabled,
-    tempNoBandLo: temp.bandLo,
-    tempNoBandHi: temp.bandHi,
-    tempEntryHourUtc: temp.entryHourUtc,
-    tempNoReserveSlots: temp.reserveSlots,
-    tempBetUsd: temp.betUsd,
+    ...tradeSettingsView(s),
+    tempNoEnabled: s.temp.enabled,
+    tempNoBandLo: s.temp.bandLo,
+    tempNoBandHi: s.temp.bandHi,
+    tempEntryHourUtc: s.temp.entryHourUtc,
+    tempNoReserveSlots: s.temp.reserveSlots,
+    tempBetUsd: s.temp.betUsd,
   };
 }
 
@@ -4513,7 +4569,9 @@ window.BM = {
   stop,
   sizing,
   betUsdFor,
+  parseSettings,
   parseTradeSettings,
+  parseTempSettings,
   effectiveSettingsSummary,
   settingsSummaryText,
   checkForUpdate,

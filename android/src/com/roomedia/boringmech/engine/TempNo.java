@@ -436,47 +436,20 @@ public final class TempNo {
     }
 
     /**
-     * 설정 원문(JSON) 해석 — 토글은 정확히 true일 때만 켜진 것으로 보고,
-     * 밴드 하한은 (0, 0.998] 범위를 벗어나면 기본값으로 되돌린다
-     * (못 믿는 설정으로 사지 않는다). 밴드 하한·상한은 순서가 어긋나면
-     * 쌍째로 기본값으로 되돌린다. 예약 슬롯 수는 0~MAX_RESERVE_SLOTS의
-     * 정수만 받고, 그 외(음수·소수·범위 초과)는 기본값 1로 되돌린다.
-     * 기온 건당 금액은 메인 건당 금액과 독립이며, 음수·비유한 값이면
-     * 기본값으로 되돌린다.
+     * 설정 원문(JSON) 해석 — 정본 해석(Settings.parse)의 온도
+     * 네임스페이스를 이 클래스의 Settings 형태로 투영한 것이다.
+     * 토글·밴드·예약 슬롯·기온 건당 금액의 검증 규칙은 전부 정본
+     * 한 곳에만 있다.
      */
     public static Settings parseSettings(String raw) {
-        Object o = null;
-        if (raw != null && !raw.isEmpty()) {
-            try {
-                o = JsonText.parse(raw);
-            } catch (IllegalArgumentException e) {
-                o = null;
-            }
-        }
-        if (!(o instanceof java.util.Map)) {
-            return new Settings(false, DEFAULT_BAND_LO, BAND_HI, ENTRY_HOUR_UTC,
-                    DEFAULT_RESERVE_SLOTS, DEFAULT_BET_USD);
-        }
-        double hi = TradeSettings.strictFieldNum(o, "tempNoBandHi");
-        double bandHi = Double.isFinite(hi) && hi > 0 && hi <= 1 ? hi : BAND_HI;
-        double lo = TradeSettings.strictFieldNum(o, "tempNoBandLo");
-        double bandLo = Double.isFinite(lo) && lo > 0 && lo <= BAND_HI ? lo : DEFAULT_BAND_LO;
-        if (!(bandLo < bandHi)) {
-            bandLo = DEFAULT_BAND_LO;
-            bandHi = BAND_HI;
-        }
-        double hour = TradeSettings.strictFieldNum(o, "tempEntryHourUtc");
-        int entryHourUtc = Double.isFinite(hour) && hour == Math.floor(hour)
-                && hour >= 0 && hour <= 23
-                ? (int) hour : ENTRY_HOUR_UTC;
-        double rs = TradeSettings.strictFieldNum(o, "tempNoReserveSlots");
-        int reserveSlots = Double.isFinite(rs) && rs == Math.floor(rs)
-                && rs >= 0 && rs <= MAX_RESERVE_SLOTS
-                ? (int) rs : DEFAULT_RESERVE_SLOTS;
-        double tb = TradeSettings.strictFieldNum(o, "tempBetUsd");
-        double betUsd = Double.isFinite(tb) && tb >= 0 ? tb : DEFAULT_BET_USD;
-        return new Settings(Boolean.TRUE.equals(Js.field(o, "tempNoEnabled")),
-                bandLo, bandHi, entryHourUtc, reserveSlots, betUsd);
+        return fromCanonical(com.roomedia.boringmech.engine.Settings.parse(raw));
+    }
+
+    /** 정본 해석의 온도 네임스페이스 투영. */
+    public static Settings fromCanonical(com.roomedia.boringmech.engine.Settings s) {
+        com.roomedia.boringmech.engine.Settings.Temp t = s.temp;
+        return new Settings(t.enabled, t.bandLo, t.bandHi, t.entryHourUtc,
+                t.reserveSlots, t.betUsd);
     }
 
     /**

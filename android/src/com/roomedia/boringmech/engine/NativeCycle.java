@@ -1463,8 +1463,9 @@ public final class NativeCycle {
         // 매매·기온 설정은 사이클당 1회만 파싱해 스냅샷·손절·스캔 전부에
         // 같은 객체를 넘긴다 — 지점마다 재파싱하면 사이클 도중 설정이
         // 바뀌었을 때 구·신 설정이 섞인다 (v0.3.38 감사).
-        TradeSettings tradeCfg = TradeSettings.parse(env.durableRead(TempNo.SETTINGS_KEY));
-        TempNo.Settings tempSettings = TempNo.parseSettings(env.durableRead(TempNo.SETTINGS_KEY));
+        Settings settings = Settings.parse(env.durableRead(TempNo.SETTINGS_KEY));
+        TradeSettings tradeCfg = TradeSettings.fromSettings(settings);
+        TempNo.Settings tempSettings = TempNo.fromCanonical(settings);
         long stageT0 = env.nowMs();
         stageMsSnapshot = 0;
         stageMsStopLoss = 0;

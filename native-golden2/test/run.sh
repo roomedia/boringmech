@@ -16,6 +16,7 @@ javac -encoding UTF-8 -d "$OUT" \
   "$REPO/android/src/com/roomedia/boringmech/crypto/JsNumber.java" \
   "$REPO/android/src/com/roomedia/boringmech/engine/Js.java" \
   "$REPO/android/src/com/roomedia/boringmech/engine/JsonText.java" \
+  "$REPO/android/src/com/roomedia/boringmech/engine/Settings.java" \
   "$REPO/android/src/com/roomedia/boringmech/engine/TradeSettings.java" \
   "$REPO/android/src/com/roomedia/boringmech/engine/PositionBook.java" \
   "$REPO/android/src/com/roomedia/boringmech/engine/PositionsFetcher.java" \

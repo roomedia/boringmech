@@ -1026,25 +1026,32 @@
       } catch (e) {}
     }
 
+    // 기온 카드 표시값 — 해석은 엔진 정본 파서(BM.parseTempSettings·
+    // parseTradeSettings)가 유일한 정본이고, 여기서는 그 결과에
+    // tempStopDrop만 붙여 카드 형태로 돌려준다. 자체 해석은 두지
+    // 않는다 (표시값이 엔진 실효값과 어긋나는 사고 방지). 엔진을
+    // 못 읽으면 해석 없이 기본값 상수만 돌려준다.
     function readTempSettings(){
-      var o = readSettingsObject();
-      var hi = Number(o.tempNoBandHi);
-      var bandHi = (isFinite(hi) && hi > 0 && hi <= 1) ? hi : 0.998;
-      var lo = Number(o.tempNoBandLo);
-      var bandLo = (isFinite(lo) && lo > 0 && lo <= 0.998) ? lo : 0.80;
-      if (!(bandLo < bandHi)) { bandLo = 0.80; bandHi = 0.998; }
-      var hour = Number(o.tempEntryHourUtc);
-      var drop = Number(o.tempStopDrop);
-      var rs = Number(o.tempNoReserveSlots);
-      var tb = Number(o.tempBetUsd);
+      var t = null;
+      var trade = null;
+      try {
+        if (window.BM && BM.parseTempSettings && BM.parseTradeSettings) {
+          var raw = readSettingsObject();
+          t = BM.parseTempSettings(raw);
+          trade = BM.parseTradeSettings(raw);
+        }
+      } catch (e) {}
+      if (!t || !trade) {
+        return { enabled: false, bandLo: 0.8, bandHi: 0.998, entryHourUtc: 6, tempStopDrop: 0.15, reserveSlots: 1, betUsd: 5 };
+      }
       return {
-        enabled: o.tempNoEnabled === true,
-        bandLo: bandLo,
-        bandHi: bandHi,
-        entryHourUtc: (isFinite(hour) && Math.floor(hour) === hour && hour >= 0 && hour <= 23) ? hour : 6,
-        tempStopDrop: (isFinite(drop) && drop > 0 && drop < 1) ? drop : 0.15,
-        reserveSlots: (isFinite(rs) && Math.floor(rs) === rs && rs >= 0 && rs <= 70) ? rs : 1,
-        betUsd: (isFinite(tb) && tb >= 0) ? tb : 5
+        enabled: t.enabled,
+        bandLo: t.bandLo,
+        bandHi: t.bandHi,
+        entryHourUtc: t.entryHourUtc,
+        tempStopDrop: trade.tempStopDrop,
+        reserveSlots: t.reserveSlots,
+        betUsd: t.betUsd
       };
     }
 
@@ -1207,10 +1214,15 @@
         TEMP_FIELDS.forEach(function(f){ out[f.key] = s[f.prop]; });
         return out;
       }
-      var o = readSettingsObject();
+      // 저장된 값의 표시는 엔진 정본 해석(parseTradeSettings)의
+      // 실효값으로 채운다 — 쌍 리셋까지 반영된, 엔진이 실제로 쓰는
+      // 값이다. 엔진을 못 읽으면 해석 없이 필드 기본값만 쓴다.
+      var cfg = null;
+      try {
+        if (window.BM && BM.parseTradeSettings) cfg = BM.parseTradeSettings(readSettingsObject());
+      } catch (e) {}
       TRADE_GROUPS[name].fields.forEach(function(f){
-        var v = Number(o[f.key]);
-        out[f.key] = fieldValid(f, v) ? v : f.def;
+        out[f.key] = cfg ? cfg[f.key] : f.def;
       });
       return out;
     }
