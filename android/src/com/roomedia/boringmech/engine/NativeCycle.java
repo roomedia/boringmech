@@ -204,15 +204,6 @@ public final class NativeCycle {
     private int sessionFills = 0;
     private boolean posGapWarned = false;
 
-    // 단계별 소요 (밀리초) — 사이클 요약에만 붙는 측정값이다. 단계 진입
-    // 기록(setStage·StageDeadline 판정)은 건드리지 않는다. verify·order는
-    // 스캔 단계 안의 누적, scan은 스캔 전체 경과다.
-    private long stageMsSnapshot;
-    private long stageMsStopLoss;
-    private long stageMsScan;
-    private long stageMsVerify;
-    private long stageMsOrder;
-    private long scanStartMs;
     /** slug → Gamma feeType 캐시 — 손절 판정의 Gamma 조회에서 채워지고 스냅샷의 수수료율 표시에 쓰인다. */
     private final Map<String, String> feeTypeBySlug = new HashMap<>();
 
@@ -1464,14 +1455,56 @@ public final class NativeCycle {
         // 같은 객체를 넘긴다 — 지점마다 재파싱하면 사이클 도중 설정이
         // 바뀌었을 때 구·신 설정이 섞인다 (v0.3.38 감사).
         Settings settings = Settings.parse(env.durableRead(TempNo.SETTINGS_KEY));
-        TradeSettings tradeCfg = TradeSettings.fromSettings(settings);
-        TempNo.Settings tempSettings = TempNo.fromCanonical(settings);
-        long stageT0 = env.nowMs();
-        stageMsSnapshot = 0;
-        stageMsStopLoss = 0;
-        stageMsScan = 0;
-        stageMsVerify = 0;
-        stageMsOrder = 0;
+        CycleContext ctx = new CycleContext(gen, TradeSettings.fromSettings(settings),
+                TempNo.fromCanonical(settings));
+        ctx.timingT0 = env.nowMs();
+        cycleSnapshotStage(ctx);
+        cycleStopLossStage(ctx);
+        cycleRedeemStage(ctx);
+        cycleSettleStage(ctx);
+        if (!cyclePreScanStage(ctx)) {
+            return;
+        }
+        cycleScanStage(ctx);
+        boolean aborted = cycleSelectionStage(ctx);
+        cycleShadowStage(ctx, aborted);
+        if (aborted) {
+            return;
+        }
+        cycleSummaryStage(ctx);
+    }
+
+    /**
+     * 오늘+내일 기온 이벤트 조회 — 15분 캐시. 도시별 실패는 Net 구현이
+     * 건너뛰므로 돌아온 목록(빈 목록 포함)을 그대로 캐시한다. 단,
+     * 전 도시 실패(null)는 캐시하지 않아 다음 사이클에 다시 시도한다
+     * (JS fetchTempEvents와 같은 규칙). 조회 범위만 이틀치이고 후보
+     * 생성은 창 판정으로 당일 이벤트만 쓴다. 캐시는 기준 UTC 날짜가
+     * 같은 동안만 유효하다 — 자정을 넘기면 날짜 집합이 달라져 전날
+     * 캐시가 새 집합을 덮지 않게 무효화한다.
+     */
+    private TempEventsResult tempEvents(long nowMs) throws Exception {
+        String dayKey = TempNo.fetchDayKey(nowMs);
+        if (tempEventsCache != null && dayKey.equals(tempEventsCacheDayKey)
+                && nowMs - tempEventsCacheAtMs < TempNo.CACHE_MS) {
+            return tempEventsCache;
+        }
+        TempEventsResult result = net.fetchTempEvents(TempNo.eventSlugsForFetch(nowMs));
+        if (result == null) {
+            // 전수 실패는 빈 목록으로 바꾸지 않고 null로 전파한다 —
+            // "오늘 이벤트 없음"과 구분해 호출자가 예약을 유지하는 쪽으로
+            // 판정하게 하기 위해서다 (v0.3.39 감사 E).
+            return null;
+        }
+        tempEventsCache = result;
+        tempEventsCacheAtMs = nowMs;
+        tempEventsCacheDayKey = dayKey;
+        return result;
+    }
+
+    private void cycleSnapshotStage(CycleContext ctx) throws Exception {
+        int gen = ctx.gen;
+        TradeSettings tradeCfg = ctx.tradeCfg;
         env.setStage("snapshot", cycle);
         Snap snap;
         try {
@@ -1509,7 +1542,15 @@ public final class NativeCycle {
         snapModel.put("settledRealizedPnl", numOrNull(snap.settledRealizedPnl));
         SettledBaseline.Notice settleNotice = SettledBaseline.noticeFor(settledBaseline, snapModel);
         env.beatProgress(cycle);
-        stageMsSnapshot = env.nowMs() - stageT0;
+        ctx.timingSnapshotMs = env.nowMs() - ctx.timingT0;
+        ctx.snap = snap;
+        ctx.settleNotice = settleNotice;
+    }
+
+    private void cycleStopLossStage(CycleContext ctx) throws Exception {
+        int gen = ctx.gen;
+        TradeSettings tradeCfg = ctx.tradeCfg;
+        Snap snap = ctx.snap;
         long stageT1 = env.nowMs();
         env.setStage("stoploss", cycle);
         int sold = runStopLoss(gen, tradeCfg);
@@ -1517,13 +1558,28 @@ public final class NativeCycle {
         if (sold > 0) {
             snap = snapshot(tradeCfg);
         }
-        stageMsStopLoss = env.nowMs() - stageT1;
+        ctx.timingStopLossMs = env.nowMs() - stageT1;
+        ctx.snap = snap;
+    }
+
+    private void cycleRedeemStage(CycleContext ctx) throws Exception {
+        int gen = ctx.gen;
+        TradeSettings tradeCfg = ctx.tradeCfg;
+        Snap snap = ctx.snap;
         env.setStage("redeem", cycle);
         double recovered = runRedeems(gen);
         env.beatProgress(cycle);
         if (recovered > 0) {
             snap = snapshot(tradeCfg);
         }
+        ctx.snap = snap;
+        ctx.recovered = recovered;
+    }
+
+    private void cycleSettleStage(CycleContext ctx) {
+        Snap snap = ctx.snap;
+        SettledBaseline.Notice settleNotice = ctx.settleNotice;
+        double recovered = ctx.recovered;
         if (settleNotice != null) {
             moneyNotify("정산 확정", "실현 " + com.roomedia.boringmech.write.StopLoss.signedUsd(settleNotice.realizedDelta)
                     + (recovered > 0 ? " · 회수 $" + n(recovered) : ""));
@@ -1539,6 +1595,12 @@ public final class NativeCycle {
                 log("보유 대조 경고: 체결 기록 " + sessionFills + "건인데 포지션은 " + found + "건만 확인됨");
             }
         }
+    }
+
+    private boolean cyclePreScanStage(CycleContext ctx) throws Exception {
+        TradeSettings tradeCfg = ctx.tradeCfg;
+        TempNo.Settings tempSettings = ctx.tempSettings;
+        Snap snap = ctx.snap;
         if (snap.slots < 1) {
             // sizing 슬롯이 0이어도 예약 차선이 성립할 가능성이 있으면
             // 스캔까지 진행한다 — 홀드가 비워 둔 자리는 기온이 실제로
@@ -1550,52 +1612,26 @@ public final class NativeCycle {
                     tempSettings.betUsd, snap.cash, tradeCfg.reserveUsd);
             if (!lanePossible) {
                 log("슬롯 없음 — 이번 사이클 매수 없음");
-                return;
+                return false;
             }
             log("슬롯 없음 — 기온 예약 차선으로 진입을 시도합니다");
         }
         if (BoughtReconcile.boughtCorrupted(env.durableRead("bm_bought"))) {
             log("기매수 기록 손상 감지 — 이번 사이클 매수를 건너뜁니다 (재매수 방벽 보호)");
-            return;
+            return false;
         }
         if (!boughtReconciled) {
             reconcileBoughtOnce(snap);
         }
-        scanStartMs = env.nowMs();
+        return true;
+    }
+
+    private void cycleScanStage(CycleContext ctx) throws Exception {
+        TradeSettings tradeCfg = ctx.tradeCfg;
+        TempNo.Settings tempSettings = ctx.tempSettings;
+        Snap snap = ctx.snap;
+        ctx.timingScanStartMs = env.nowMs();
         env.setStage("scan", cycle);
-        runScanAndBuy(gen, snap, tradeCfg, tempSettings);
-    }
-
-    /**
-     * 오늘+내일 기온 이벤트 조회 — 15분 캐시. 도시별 실패는 Net 구현이
-     * 건너뛰므로 돌아온 목록(빈 목록 포함)을 그대로 캐시한다. 단,
-     * 전 도시 실패(null)는 캐시하지 않아 다음 사이클에 다시 시도한다
-     * (JS fetchTempEvents와 같은 규칙). 조회 범위만 이틀치이고 후보
-     * 생성은 창 판정으로 당일 이벤트만 쓴다. 캐시는 기준 UTC 날짜가
-     * 같은 동안만 유효하다 — 자정을 넘기면 날짜 집합이 달라져 전날
-     * 캐시가 새 집합을 덮지 않게 무효화한다.
-     */
-    private TempEventsResult tempEvents(long nowMs) throws Exception {
-        String dayKey = TempNo.fetchDayKey(nowMs);
-        if (tempEventsCache != null && dayKey.equals(tempEventsCacheDayKey)
-                && nowMs - tempEventsCacheAtMs < TempNo.CACHE_MS) {
-            return tempEventsCache;
-        }
-        TempEventsResult result = net.fetchTempEvents(TempNo.eventSlugsForFetch(nowMs));
-        if (result == null) {
-            // 전수 실패는 빈 목록으로 바꾸지 않고 null로 전파한다 —
-            // "오늘 이벤트 없음"과 구분해 호출자가 예약을 유지하는 쪽으로
-            // 판정하게 하기 위해서다 (v0.3.39 감사 E).
-            return null;
-        }
-        tempEventsCache = result;
-        tempEventsCacheAtMs = nowMs;
-        tempEventsCacheDayKey = dayKey;
-        return result;
-    }
-
-    private void runScanAndBuy(int gen, Snap snap, TradeSettings tradeCfg,
-                               TempNo.Settings tempSettings) throws Exception {
         List<Object> markets = net.fetchMarkets();
         Map<String, Integer> scanStats = new LinkedHashMap<>();
         Set<String> boughtAll = boughtSlugStrings();
@@ -1652,6 +1688,25 @@ public final class NativeCycle {
                 log("기온 스캔 오류: " + slice(msg(e), 120));
             }
         }
+        ctx.candidates = candidates;
+        ctx.boughtAll = boughtAll;
+        ctx.scanStats = scanStats;
+        ctx.tempEventsList = tempEventsList;
+        ctx.tempCandsSeen = tempCandsSeen;
+        ctx.tempFetchFailed = tempFetchFailed;
+        ctx.tempFetchIncomplete = tempFetchIncomplete;
+    }
+
+    private boolean cycleSelectionStage(CycleContext ctx) throws Exception {
+        int gen = ctx.gen;
+        TradeSettings tradeCfg = ctx.tradeCfg;
+        TempNo.Settings tempSettings = ctx.tempSettings;
+        Snap snap = ctx.snap;
+        List<ScanFilter.Candidate> candidates = ctx.candidates;
+        Set<String> boughtAll = ctx.boughtAll;
+        List<Object> tempEventsList = ctx.tempEventsList;
+        boolean tempFetchFailed = ctx.tempFetchFailed;
+        boolean tempFetchIncomplete = ctx.tempFetchIncomplete;
         int slotsLeft = snap.slots;
         int verified = 0;
         Map<String, Integer> rejects = new LinkedHashMap<>();
@@ -1704,7 +1759,7 @@ public final class NativeCycle {
         List<ScanFilter.Candidate> heldMain = new ArrayList<>();
         for (ScanFilter.Candidate cand : candidates) {
             if (!env.isRunning(gen)) {
-                return;
+                return true;
             }
             if (alloc.blocksMain(cand.strategy, slotsLeft, verified)) {
                 heldMain.add(cand);
@@ -1769,12 +1824,12 @@ public final class NativeCycle {
                 detail = CandidateVerifier.verifyCandidate(cand, bet, gammaSource, bookSource, env.nowMs(),
                         tradeCfg, tempSettings.entryHourUtc);
             } catch (Exception e) {
-                stageMsVerify += env.nowMs() - verifyT0;
+                ctx.timingVerifyMs += env.nowMs() - verifyT0;
                 tally(rejects, "verify_error");
                 log("검증 오류 " + cand.slug + ": " + msg(e));
                 continue;
             }
-            stageMsVerify += env.nowMs() - verifyT0;
+            ctx.timingVerifyMs += env.nowMs() - verifyT0;
             if (!detail.ok) {
                 tally(rejects, detail.reason);
                 if (detail.note != null) {
@@ -1783,7 +1838,7 @@ public final class NativeCycle {
                 continue;
             }
             if (!env.isRunning(gen)) {
-                return;
+                return true;
             }
             if (!guard.tryAcquireSubmitLock(cand.slug, gen)) {
                 log("제출 잠금 — 중복 제출 차단 " + cand.slug);
@@ -1815,7 +1870,7 @@ public final class NativeCycle {
                         continue;
                     }
                     if (!env.isRunning(gen)) {
-                        return;
+                        return true;
                     }
                     Object resp;
                     try {
@@ -1835,7 +1890,7 @@ public final class NativeCycle {
                         if (com.roomedia.boringmech.engine.FillJudge.isFailsafe(m)) {
                             env.requestStop();
                             log("failsafe 감지 — 엔진 정지. 정지 사유를 확인한 뒤 다시 실행하세요.");
-                            return;
+                            return true;
                         }
                         continue;
                     }
@@ -1865,7 +1920,7 @@ public final class NativeCycle {
                                 || com.roomedia.boringmech.engine.FillJudge.isFailsafe(verdict.status)) {
                             env.requestStop();
                             log("failsafe 감지 — 엔진 정지. 정지 사유를 확인한 뒤 다시 실행하세요.");
-                            return;
+                            return true;
                         }
                         continue;
                     }
@@ -1912,7 +1967,7 @@ public final class NativeCycle {
                             + (hasFillPrice ? " · 체결가 " + n(fillPrice) : "")
                             + " · $" + n(bet));
                 } finally {
-                    stageMsOrder += env.nowMs() - orderT0;
+                    ctx.timingOrderMs += env.nowMs() - orderT0;
                     guard.endSubmit();
                 }
             } finally {
@@ -1931,26 +1986,44 @@ public final class NativeCycle {
                         + "건을 미루고 슬롯을 남깁니다");
             }
         }
-        // 섀도우 기록 — 거래 동작과 무관한 부수 경로라 실패해도 사이클은
-        // 그대로 마친다. 루프 중간 반환(세대 교체 등)은 JS와 같이
-        // 기록하지 않는다.
-        if (!tempCandsSeen.isEmpty()) {
-            try {
-                Set<String> boughtAfterBuy = boughtSlugStrings();
-                Set<String> enteredNow = new LinkedHashSet<>();
-                for (ScanFilter.Candidate c : tempCandsSeen) {
-                    if (!boughtBeforeBuy.contains(c.slug) && boughtAfterBuy.contains(c.slug)) {
-                        enteredNow.add(c.slug);
+        ctx.boughtBeforeBuy = boughtBeforeBuy;
+        ctx.verified = verified;
+        ctx.rejects = rejects;
+        ctx.filledCount = filledCount;
+        ctx.unfilledCount = unfilledCount;
+        ctx.failedCount = failedCount;
+        return false;
+    }
+
+    private void cycleShadowStage(CycleContext ctx, boolean aborted) {
+        Snap snap = ctx.snap;
+        if (!aborted) {
+            // 섀도우 기록 — 거래 동작과 무관한 부수 경로라 실패해도 사이클은
+            // 그대로 마친다. 루프 중간 반환(세대 교체 등)은 JS와 같이
+            // 기록하지 않는다.
+            if (!ctx.tempCandsSeen.isEmpty()) {
+                try {
+                    Set<String> boughtAfterBuy = boughtSlugStrings();
+                    Set<String> enteredNow = new LinkedHashSet<>();
+                    for (ScanFilter.Candidate c : ctx.tempCandsSeen) {
+                        if (!ctx.boughtBeforeBuy.contains(c.slug) && boughtAfterBuy.contains(c.slug)) {
+                            enteredNow.add(c.slug);
+                        }
                     }
+                    ShadowLog.recordCycle(env, env.nowMs(), cycle, snap.cash, snap.slots,
+                            snap.openCount, ctx.tempCandsSeen, enteredNow);
+                } catch (Exception ignored) {
                 }
-                ShadowLog.recordCycle(env, env.nowMs(), cycle, snap.cash, snap.slots,
-                        snap.openCount, tempCandsSeen, enteredNow);
-            } catch (Exception ignored) {
             }
         }
-        stageMsScan = env.nowMs() - scanStartMs;
-        log(summarizeCycle(candidates.size(), verified, rejects, filledCount, unfilledCount, failedCount, scanStats,
-                stageDurationsText(stageMsSnapshot, stageMsStopLoss, stageMsScan, stageMsVerify, stageMsOrder)));
+    }
+
+    private void cycleSummaryStage(CycleContext ctx) {
+        ctx.timingScanMs = env.nowMs() - ctx.timingScanStartMs;
+        log(summarizeCycle(ctx.candidates.size(), ctx.verified, ctx.rejects,
+                ctx.filledCount, ctx.unfilledCount, ctx.failedCount, ctx.scanStats,
+                stageDurationsText(ctx.timingSnapshotMs, ctx.timingStopLossMs,
+                        ctx.timingScanMs, ctx.timingVerifyMs, ctx.timingOrderMs)));
     }
 
     // ── 루프 1회전 (loop() 이식 — 스케줄링과 재시작 실행은 드라이버 몫) ──────

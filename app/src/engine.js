@@ -2959,21 +2959,57 @@ export function saveSettledBaseline(base) {
 }
 
 async function runCycle(gen) {
-  // 매매 설정은 사이클마다 새로 읽는다 — 설정 변경은 다음 사이클부터 적용.
-  const tradeCfg = parseTradeSettings(durableRead(LS.settings));
-  // 단계별 소요 (밀리초) — 사이클 요약에만 붙는 측정값이다. 단계 진입
-  // 기록(setStage·정체 판정)은 건드리지 않는다. verify·order는 스캔
-  // 단계 안의 누적, scan은 스캔 전체 경과다.
-  const stageT0 = Date.now();
-  let stageMsSnapshot = 0;
-  let stageMsStopLoss = 0;
-  let stageMsVerify = 0;
-  let stageMsOrder = 0;
-  let scanStartMs = 0;
+  const ctx = createCycleContext(gen);
+  await cycleSnapshotStage(ctx);
+  await cycleStopLossStage(ctx);
+  await cycleRedeemStage(ctx);
+  cycleSettleStage(ctx);
+  if (!(await cyclePreScanStage(ctx))) return;
+  await cycleScanStage(ctx);
+  const aborted = await cycleSelectionStage(ctx);
+  cycleShadowStage(ctx, aborted);
+  if (aborted) return;
+  cycleSummaryStage(ctx);
+}
+
+// ── 사이클 단계 (공리적 분리 3단계 — 결합 3) ─────────────────────
+// 단계 간 공유는 createCycleContext가 만드는 컨텍스트 하나로 한정한다.
+// 가변 필드의 소유권: snap은 snapshot 단계가 취득하고 stoploss·redeem
+// 단계가 자기 단계 안에서만 갱신한다. settleNotice는 snapshot이 계산해
+// settle이 소비한다. 스캔 산출물(candidates·boughtAll·scanStats·기온
+// 조회 결과)은 scan이 쓰고 selection·shadow·summary는 읽기만 한다.
+// timing 필드는 각 단계가 자기 필드만 쓴다. 선정 카운터는 selection
+// 단계의 지역 상태이고, 결과만 outcome에 남긴다.
+function createCycleContext(gen) {
+  return {
+    gen,
+    // 매매 설정은 사이클마다 새로 읽는다 — 설정 변경은 다음 사이클부터 적용.
+    tradeCfg: parseTradeSettings(durableRead(LS.settings)),
+    tempSettings: null,
+    snap: null,
+    settleNotice: null,
+    recovered: 0,
+    candidates: null,
+    boughtAll: null,
+    scanStats: null,
+    tempEventsList: null,
+    tempCandsSeen: [],
+    tempFetchFailed: false,
+    tempFetchIncomplete: false,
+    boughtBeforeBuy: null,
+    outcome: null,
+    // 단계별 소요 (밀리초) — 사이클 요약에만 붙는 측정값이다. 단계 진입
+    // 기록(setStage·정체 판정)은 건드리지 않는다. verify·order는 선정
+    // 단계 안의 누적, scan은 스캔 전체 경과다.
+    timing: { t0: Date.now(), snapshotMs: 0, stopLossMs: 0, scanStartMs: 0, verifyMs: 0, orderMs: 0 },
+  };
+}
+
+async function cycleSnapshotStage(ctx) {
+  const tradeCfg = ctx.tradeCfg;
   setStage("snapshot");
-  let snap;
   try {
-    snap = await snapshot(tradeCfg);
+    ctx.snap = await snapshot(tradeCfg);
   } catch (e) {
     // 스냅샷 실패가 손절까지 막지 않게 한다 — 손절은 포지션 목록만으로
     // 돌 수 있는데, 스냅샷 전체 성공에 결합돼 있으면 Data API 하나만
@@ -2983,23 +3019,23 @@ async function runCycle(gen) {
       const rows = await fetchPositions(state.funder);
       state.lastOpenRows = rows.filter(isOpenRow);
       setStage("stoploss");
-      await runStopLoss(gen, tradeCfg);
+      await runStopLoss(ctx.gen, tradeCfg);
       log(`스냅샷 실패로 손절만 단독 실행함 — 원래 오류: ${String(e?.message ?? e).slice(0, 100)}`);
     } catch (e2) {
       // 재조회까지 실패하면 Data API가 통째로 죽은 것이다 — 마지막
       // 스냅샷 장부 기준의 손절 폴백으로 대체한다 (2026-11-25 후속).
       try {
-        await runFallbackStopLoss(gen, tradeCfg);
+        await runFallbackStopLoss(ctx.gen, tradeCfg);
       } catch (e3) {
         log(`스냅샷 실패 + 손절 단독 실행도 실패: ${String(e2?.message ?? e2).slice(0, 100)}`);
       }
     }
     throw e;
   }
-  state.onState(snap);
+  state.onState(ctx.snap);
   log(
-    `사이클 ${state.cycle} · 잔고 $${snap.cash} · 평가 $${snap.equity} · ` +
-    `건당 $${snap.bet} · 슬롯 ${snap.slots} · 보유 ${snap.openCount}`,
+    `사이클 ${state.cycle} · 잔고 $${ctx.snap.cash} · 평가 $${ctx.snap.equity} · ` +
+    `건당 $${ctx.snap.bet} · 슬롯 ${ctx.snap.slots} · 보유 ${ctx.snap.openCount}`,
   );
   // 정산 확정 감지 — 기준선(영속) 대비 신규 정산분. 스냅샷의 정산 수치는
   // API CLOSED 합산만으로 만들어지므로 손절·수동 매도분도 CLOSED 전이
@@ -3008,27 +3044,42 @@ async function runCycle(gen) {
     state.settledBaseline = loadSettledBaseline();
     state.settledBaselineLoaded = true;
   }
-  const settleNotice = settledNoticeFor(state.settledBaseline, snap);
+  ctx.settleNotice = settledNoticeFor(state.settledBaseline, ctx.snap);
   beatProgress();
-  stageMsSnapshot = Date.now() - stageT0;
+  ctx.timing.snapshotMs = Date.now() - ctx.timing.t0;
+}
+
+async function cycleStopLossStage(ctx) {
+  const tradeCfg = ctx.tradeCfg;
   const stageT1 = Date.now();
   // 손절은 신규 매수보다 먼저 — 팔린 건이 있으면 잔고·슬롯을 다시 읽는다
   setStage("stoploss");
-  const soldCount = await runStopLoss(gen, tradeCfg);
+  const soldCount = await runStopLoss(ctx.gen, tradeCfg);
   beatProgress();
   if (soldCount > 0) {
-    snap = await snapshot(tradeCfg);
-    state.onState(snap);
+    ctx.snap = await snapshot(tradeCfg);
+    state.onState(ctx.snap);
   }
-  stageMsStopLoss = Date.now() - stageT1;
+  ctx.timing.stopLossMs = Date.now() - stageT1;
+}
+
+async function cycleRedeemStage(ctx) {
+  const tradeCfg = ctx.tradeCfg;
   // 리딤은 손절 다음·신규 매수 이전 — 회수액이 생기면 잔고를 다시 읽는다
   setStage("redeem");
-  const recovered = await runRedeems(gen);
+  const recovered = await runRedeems(ctx.gen);
   beatProgress();
   if (recovered > 0) {
-    snap = await snapshot(tradeCfg);
-    state.onState(snap);
+    ctx.snap = await snapshot(tradeCfg);
+    state.onState(ctx.snap);
   }
+  ctx.recovered = recovered;
+}
+
+function cycleSettleStage(ctx) {
+  const snap = ctx.snap;
+  const settleNotice = ctx.settleNotice;
+  const recovered = ctx.recovered;
   if (settleNotice) {
     notifyMoney(
       "정산 확정",
@@ -3050,7 +3101,13 @@ async function runCycle(gen) {
       log(`보유 대조 경고: 체결 기록 ${state.sessionFills}건인데 포지션은 ${found}건만 확인됨`);
     }
   }
+}
+
+async function cyclePreScanStage(ctx) {
+  const tradeCfg = ctx.tradeCfg;
+  const snap = ctx.snap;
   const tempSettings = parseTempSettings(durableRead(LS.settings));
+  ctx.tempSettings = tempSettings;
   if (snap.slots < 1) {
     // sizing 슬롯이 0이어도 예약 차선이 성립할 가능성이 있으면 스캔까지
     // 진행한다 — 홀드가 비워 둔 자리는 기온이 실제로 쓸 수 있어야 한다.
@@ -3062,7 +3119,7 @@ async function runCycle(gen) {
     });
     if (!lanePossible) {
       log("슬롯 없음 — 이번 사이클 매수 없음");
-      return;
+      return false;
     }
     log("슬롯 없음 — 기온 예약 차선으로 진입을 시도합니다");
   }
@@ -3070,10 +3127,17 @@ async function runCycle(gen) {
   // 닫힌 종목을 다시 사는 것보다 한 사이클 쉬는 게 안전하다.
   if (boughtCorrupted()) {
     log("기매수 기록 손상 감지 — 이번 사이클 매수를 건너뜁니다 (재매수 방벽 보호)");
-    return;
+    return false;
   }
   if (!state.boughtReconciled) await reconcileBoughtOnce(snap);
-  scanStartMs = Date.now();
+  return true;
+}
+
+async function cycleScanStage(ctx) {
+  const tradeCfg = ctx.tradeCfg;
+  const tempSettings = ctx.tempSettings;
+  const snap = ctx.snap;
+  ctx.timing.scanStartMs = Date.now();
   setStage("scan");
   const markets = await fetchMarkets();
   const scanStats = {};
@@ -3125,10 +3189,30 @@ async function runCycle(gen) {
     }
   }
   state.lastScan = { stats: scanStats, fetched: markets.length, ts: Date.now() };
+  ctx.candidates = candidates;
+  ctx.boughtAll = boughtAll;
+  ctx.scanStats = scanStats;
+  ctx.tempEventsList = tempEventsList;
+  ctx.tempCandsSeen = tempCandsSeen;
+  ctx.tempFetchFailed = tempFetchFailed;
+  ctx.tempFetchIncomplete = tempFetchIncomplete;
+}
+
+async function cycleSelectionStage(ctx) {
+  const gen = ctx.gen;
+  const tradeCfg = ctx.tradeCfg;
+  const tempSettings = ctx.tempSettings;
+  const snap = ctx.snap;
+  const candidates = ctx.candidates;
+  const boughtAll = ctx.boughtAll;
+  const tempEventsList = ctx.tempEventsList;
+  const tempFetchFailed = ctx.tempFetchFailed;
+  const tempFetchIncomplete = ctx.tempFetchIncomplete;
+  let stageMsVerify = 0;
+  let stageMsOrder = 0;
   let slotsLeft = snap.slots;
   // 자금 배분 — 선정 드라이버 구간에서 한 번 계산해 시도 지점이
   // 공유한다 (attemptCandidate는 정의가 앞서지만 호출은 배분 뒤다).
-  let alloc = null;
   // 예약 차선 회계 — sizing 슬롯 밖에서 쓴 자리·현금을 따로 센다.
   let laneLeft = 0;
   let positionsUsed = snap.openCount;
@@ -3332,7 +3416,7 @@ async function runCycle(gen) {
   // 홀드 실효값은 전체 포지션 상한으로 제한한다 (감사 축 3).
   // 배분은 자금 배분 계층이 한 번에 계산한다 — 드라이버와 시도 지점은
   // 배분 결과만 본다.
-  alloc = computeCycleAllocation({
+  const alloc = computeCycleAllocation({
     slots: snap.slots, bet: snap.bet, cashFloor: snap.cashFloor,
     cash: snap.cash, openCount: snap.openCount,
     maxPositions: tradeCfg.maxPositions, verifyCap: tradeCfg.verifyCap,
@@ -3387,32 +3471,43 @@ async function runCycle(gen) {
       log(`기온 예약 — 진입 창이 남은 이벤트가 있어 메인 ${heldMain.length}건을 미루고 슬롯을 남깁니다`);
     }
   }
+  ctx.boughtBeforeBuy = boughtBeforeBuy;
+  ctx.outcome = { verified, rejects, filled: filledCount, unfilled: unfilledCount, failed: failedCount };
+  ctx.timing.verifyMs = stageMsVerify;
+  ctx.timing.orderMs = stageMsOrder;
+  return aborted;
+}
+
+function cycleShadowStage(ctx, aborted) {
   // 섀도우 기록 — 거래 동작과 무관한 부수 경로라 실패해도 사이클은
   // 그대로 마친다. 중단된 사이클은 네이티브와 같이 기록하지 않는다.
-  if (!aborted && tempCandsSeen.length) {
+  if (!aborted && ctx.tempCandsSeen.length) {
     try {
       const boughtAfterBuy = boughtSlugs();
       const enteredNow = new Set(
-        tempCandsSeen
-          .filter((c) => !boughtBeforeBuy.has(c.slug) && boughtAfterBuy.has(c.slug))
+        ctx.tempCandsSeen
+          .filter((c) => !ctx.boughtBeforeBuy.has(c.slug) && boughtAfterBuy.has(c.slug))
           .map((c) => c.slug),
       );
       recordShadowCycle({
-        ts: Date.now(), cycle: state.cycle, snap, cands: tempCandsSeen, enteredSlugs: enteredNow,
+        ts: Date.now(), cycle: state.cycle, snap: ctx.snap, cands: ctx.tempCandsSeen, enteredSlugs: enteredNow,
       });
     } catch {}
   }
-  if (aborted) return;
+}
+
+function cycleSummaryStage(ctx) {
+  const outcome = ctx.outcome;
   log(summarizeCycle({
-    candidates: candidates.length,
-    verified,
-    rejects,
-    filled: filledCount,
-    unfilled: unfilledCount,
-    failed: failedCount,
-    scan: scanStats,
-    durations: stageDurationsText(stageMsSnapshot, stageMsStopLoss,
-      Date.now() - scanStartMs, stageMsVerify, stageMsOrder),
+    candidates: ctx.candidates.length,
+    verified: outcome.verified,
+    rejects: outcome.rejects,
+    filled: outcome.filled,
+    unfilled: outcome.unfilled,
+    failed: outcome.failed,
+    scan: ctx.scanStats,
+    durations: stageDurationsText(ctx.timing.snapshotMs, ctx.timing.stopLossMs,
+      Date.now() - ctx.timing.scanStartMs, ctx.timing.verifyMs, ctx.timing.orderMs),
   }));
 }
 
