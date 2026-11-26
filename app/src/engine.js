@@ -977,6 +977,104 @@ export function tempCashGuardBlocks({ strategy, enabled, reserveSlots, tempBetUs
   return round2(cashLeft - bet) < floor;
 }
 
+// ── 자금 배분 계층 (공리적 분리 2단계, 감사 결합 2) ──────────
+// 사이징(스냅샷 슬롯·금액·현금 하한) 위에 얹는 단일 배분 지점. 사이클
+// 시점의 현금·보유 수·예약 설정·기온 건당 금액을 입력으로, 각 전략이
+// 받을 배분 결과(메인 허용 슬롯과 금액, 온도 레인 허용 건수와 금액,
+// 현금 가드 하한)를 한 번에 계산한다. 메인 전략과 온도 전략은 이 결과
+// 만 받고 서로의 내부 상태(예약 슬롯, 포지션 수, 가드 판정)를 직접
+// 읽지 않는다. 이 계층은 새 판정을 만들지 않는다 — 위의 순수 판정
+// 함수들을 합성해 재배치만 하며, 거동은 픽스처(allocation-parity)로
+// 고정한다.
+
+/**
+ * 사이클 자금 배분 — tempHoldSignal은 드라이버가 계산한 홀드 신호
+ * (조회 전수·일부 실패 또는 진입 창이 남은 이벤트 존재)다. 배분은
+ * 사이클 상수만으로 정해지고, 사이클 중 변하는 잔여 카운터(슬롯·
+ * 차선·현금)는 드라이버가 들고 아래 판정들에 넘긴다.
+ */
+export function computeCycleAllocation({
+  slots, bet, cashFloor, cash, openCount,
+  maxPositions, verifyCap, reserveUsd,
+  tempEnabled, tempReserveSlots, tempBetUsd, tempHoldSignal,
+}) {
+  const reserveSlotsEff = effectiveTempReserveSlots(tempReserveSlots, maxPositions);
+  const tempHold = !!(
+    tempEnabled && reserveSlotsEff > 0 && tempHoldSignal
+  );
+  return {
+    // 메인 배분 — 사이징 결과 그대로다.
+    mainSlots: slots,
+    mainBet: bet,
+    cashFloor,
+    maxPositions,
+    verifyCap,
+    reserveUsd,
+    // 온도 배분 — 예약 실효값, 홀드, 차선 허용 건수, 현금 가드 하한.
+    tempEnabled: !!tempEnabled,
+    tempBetUsd,
+    reserveSlotsEff,
+    tempHold,
+    laneSlots: tempHold ? reserveSlotsEff : 0,
+    cashGuardFloor: tempCashGuardFloor({
+      enabled: tempEnabled, reserveSlots: reserveSlotsEff, tempBetUsd, reserveUsd,
+    }),
+  };
+}
+
+/**
+ * 스캔 전 차선 진입 가능성 — sizing 슬롯이 0인 사이클에서 예약 차선이
+ * 성립할 수 있어 스캔까지 진행할지를 정한다. 배분 계산 전(기온 조회
+ * 전)에 필요해 홀드 없이 예약 실효값만으로 판정한다.
+ */
+export function allocationLaneEntryPossible({
+  enabled, reserveSlots, maxPositions, openCount, tempBetUsd, cash, reserveUsd,
+}) {
+  const reserveEff = effectiveTempReserveSlots(reserveSlots, maxPositions);
+  return !!(
+    enabled && reserveEff > 0
+    && openCount < maxPositions
+    && tempBetUsd > 0
+    && cash >= tempBetUsd + reserveUsd
+  );
+}
+
+/** 배분 기준 메인 차단 — 홀드가 켜진 사이클에서만 예약 판정을 적용한다. */
+export function allocationBlocksMain(alloc, strategy, slotsLeft, verified) {
+  if (!alloc.tempHold) return false;
+  return tempReserveBlocksMain(strategy, slotsLeft, verified, alloc.reserveSlotsEff, alloc.verifyCap);
+}
+
+/** 배분 기준 예약 차선 허용 — 차선 입력은 전부 배분 결과에서 온다. */
+export function allocationLaneAllows(alloc, strategy, laneLeft, positionsUsed, cashLeft) {
+  return tempReserveLaneAllows({
+    strategy, tempHold: alloc.tempHold, laneLeft, positionsUsed,
+    maxPositions: alloc.maxPositions, cashLeft, bet: alloc.tempBetUsd,
+    reserveUsd: alloc.reserveUsd,
+  });
+}
+
+/** 배분 기준 차선 현금 차단 — temp_cash_short 집계용, 차선 허용과 같은 입력이다. */
+export function allocationLaneCashBlocked(alloc, strategy, laneLeft, positionsUsed, cashLeft) {
+  return tempLaneCashBlocked({
+    strategy, tempHold: alloc.tempHold, laneLeft, positionsUsed,
+    maxPositions: alloc.maxPositions, cashLeft, bet: alloc.tempBetUsd,
+    reserveUsd: alloc.reserveUsd,
+  });
+}
+
+/**
+ * 배분 기준 현금 가드 — 하한은 배분 시점에 한 번 계산해 두고, 후보별
+ * 판정은 하한과 후보 금액만으로 한다 (tempCashGuardBlocks와 같은 경계:
+ * 기온 후보 제외, 비유한 입력 무차단, 매수 후 현금이 하한과 같으면 허용).
+ */
+export function allocationCashGuardBlocks(alloc, strategy, cashLeft, bet) {
+  if (strategy === "temp_no") return false;
+  if (alloc.cashGuardFloor === null) return false;
+  if (!Number.isFinite(cashLeft) || !Number.isFinite(bet)) return false;
+  return round2(cashLeft - bet) < alloc.cashGuardFloor;
+}
+
 /** 상한 근처 판정 여유 — bestAsk가 밴드 상한을 이만큼까지만 넘으면 가격 쌍을 남긴다. */
 export const NEAR_CAP_BAND_EPS = 0.01;
 
@@ -2956,11 +3054,12 @@ async function runCycle(gen) {
   if (snap.slots < 1) {
     // sizing 슬롯이 0이어도 예약 차선이 성립할 가능성이 있으면 스캔까지
     // 진행한다 — 홀드가 비워 둔 자리는 기온이 실제로 쓸 수 있어야 한다.
-    const reserveEffPre = effectiveTempReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions);
-    const lanePossible = tempSettings.enabled && reserveEffPre > 0
-      && snap.openCount < tradeCfg.maxPositions
-      && tempSettings.betUsd > 0
-      && snap.cash >= tempSettings.betUsd + tradeCfg.reserveUsd;
+    // 판정은 자금 배분 계층이 맡는다.
+    const lanePossible = allocationLaneEntryPossible({
+      enabled: tempSettings.enabled, reserveSlots: tempSettings.reserveSlots,
+      maxPositions: tradeCfg.maxPositions, openCount: snap.openCount,
+      tempBetUsd: tempSettings.betUsd, cash: snap.cash, reserveUsd: tradeCfg.reserveUsd,
+    });
     if (!lanePossible) {
       log("슬롯 없음 — 이번 사이클 매수 없음");
       return;
@@ -3027,6 +3126,9 @@ async function runCycle(gen) {
   }
   state.lastScan = { stats: scanStats, fetched: markets.length, ts: Date.now() };
   let slotsLeft = snap.slots;
+  // 자금 배분 — 선정 드라이버 구간에서 한 번 계산해 시도 지점이
+  // 공유한다 (attemptCandidate는 정의가 앞서지만 호출은 배분 뒤다).
+  let alloc = null;
   // 예약 차선 회계 — sizing 슬롯 밖에서 쓴 자리·현금을 따로 센다.
   let laneLeft = 0;
   let positionsUsed = snap.openCount;
@@ -3063,22 +3165,14 @@ async function runCycle(gen) {
     // 기온 예약 현금 가드 — 홀드가 풀린 사이클에서도 예약 현금을
     // 메인이 먼저 쓰지 않게 하는 최후 방어선. 차선은 물론이고 기온
     // 후보 자체도 대상이 아니다 (예약 현금을 쓰는 주체라서다). 판정은
-    // 순수 함수가 맡고, 여기서는 집계와 사이클당 1회 로그만 한다.
-    if (!viaLane) {
-      const guardArgs = {
-        strategy: cand.strategy, enabled: tempSettings.enabled,
-        reserveSlots: effectiveTempReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions),
-        tempBetUsd: tempSettings.betUsd, reserveUsd: tradeCfg.reserveUsd,
-        cashLeft, bet,
-      };
-      if (tempCashGuardBlocks(guardArgs)) {
-        tallyReject("temp_cash_guard");
-        if (!cashGuardLogged) {
-          cashGuardLogged = true;
-          log(`기온 예약 현금 가드 — 메인 매수를 막습니다 (보호 하한 $${tempCashGuardFloor(guardArgs)} · 현금 $${round2(cashLeft)} · 건당 $${bet})`);
-        }
-        return false;
+    // 자금 배분 계층이 맡고, 여기서는 집계와 사이클당 1회 로그만 한다.
+    if (!viaLane && allocationCashGuardBlocks(alloc, cand.strategy, cashLeft, bet)) {
+      tallyReject("temp_cash_guard");
+      if (!cashGuardLogged) {
+        cashGuardLogged = true;
+        log(`기온 예약 현금 가드 — 메인 매수를 막습니다 (보호 하한 $${alloc.cashGuardFloor} · 현금 $${round2(cashLeft)} · 건당 $${bet})`);
       }
+      return false;
     }
     // 자리를 소모하는 결과(체결·결과 불명·지연 접수)마다 한 번씩 센다.
     // 차선 매수는 sizing 슬롯 대신 예약 차선을 소모한다.
@@ -3236,21 +3330,29 @@ async function runCycle(gen) {
   // 동일하다. 해당하는 이벤트가 없거나 전부 종료됐으면 홀드가 풀려
   // 메인이 전 용량을 쓴다.
   // 홀드 실효값은 전체 포지션 상한으로 제한한다 (감사 축 3).
-  const tempReserveSlots = effectiveTempReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions);
-  const tempHold = tempSettings.enabled
-    && tempReserveSlots > 0
-    && (tempFetchFailed
+  // 배분은 자금 배분 계층이 한 번에 계산한다 — 드라이버와 시도 지점은
+  // 배분 결과만 본다.
+  alloc = computeCycleAllocation({
+    slots: snap.slots, bet: snap.bet, cashFloor: snap.cashFloor,
+    cash: snap.cash, openCount: snap.openCount,
+    maxPositions: tradeCfg.maxPositions, verifyCap: tradeCfg.verifyCap,
+    reserveUsd: tradeCfg.reserveUsd,
+    tempEnabled: tempSettings.enabled, tempReserveSlots: tempSettings.reserveSlots,
+    tempBetUsd: tempSettings.betUsd,
+    tempHoldSignal: tempFetchFailed
       || tempFetchIncomplete
-      || tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc, snap.heldSlugs, boughtAll));
+      || tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc, snap.heldSlugs, boughtAll),
+  });
+  const tempHold = alloc.tempHold;
   // 홀드 해제 전이 로그 — 홀드가 풀리는 순간을 남기지 않으면 예약이
   // 사라진 것을 사후에 알 수 없다 (2026-11-26 진단). 켜짐 전이는 기존
   // 홀드 로그(차단된 메인이 있을 때)가 덮으므로 꺼짐만 남긴다.
   if (state.lastTempHold === true && !tempHold
-    && tempSettings.enabled && tempReserveSlots > 0) {
+    && alloc.tempEnabled && alloc.reserveSlotsEff > 0) {
     log("기온 예약 해제 — 진입 창이 남은 이벤트가 없어 메인 차단을 풉니다");
   }
   state.lastTempHold = tempHold;
-  laneLeft = tempHold ? tempReserveSlots : 0;
+  laneLeft = alloc.laneSlots;
   const heldMain = [];
   // 섀도우 기록의 진입 판정 기준 — 선정 패스 전후의 매수 기록 차이로
   // 이 사이클에 실제로 진입한 기온 후보를 가른다.
@@ -3258,7 +3360,7 @@ async function runCycle(gen) {
   let aborted = false;
   for (const cand of candidates) {
     if (!state.running || gen !== state.gen) { aborted = true; break; }
-    if (tempHold && tempReserveBlocksMain(cand.strategy, slotsLeft, verified, tempReserveSlots, tradeCfg.verifyCap)) {
+    if (allocationBlocksMain(alloc, cand.strategy, slotsLeft, verified)) {
       heldMain.push(cand);
       continue;
     }
@@ -3268,17 +3370,9 @@ async function runCycle(gen) {
       continue;
     }
     // sizing 슬롯이 소진된 뒤에는 예약 차선으로 기온 후보만 더 시도한다.
-    if (tempReserveLaneAllows({
-      strategy: cand.strategy, tempHold, laneLeft, positionsUsed,
-      maxPositions: tradeCfg.maxPositions, cashLeft, bet: tempSettings.betUsd,
-      reserveUsd: tradeCfg.reserveUsd,
-    })) {
+    if (allocationLaneAllows(alloc, cand.strategy, laneLeft, positionsUsed, cashLeft)) {
       if (await attemptCandidate(cand, true)) { aborted = true; break; }
-    } else if (tempLaneCashBlocked({
-      strategy: cand.strategy, tempHold, laneLeft, positionsUsed,
-      maxPositions: tradeCfg.maxPositions, cashLeft, bet: tempSettings.betUsd,
-      reserveUsd: tradeCfg.reserveUsd,
-    })) {
+    } else if (allocationLaneCashBlocked(alloc, cand.strategy, laneLeft, positionsUsed, cashLeft)) {
       // 차선이 현금 부족으로 막힌 기온 후보는 시도 기록이 없어 조용히
       // 사라지던 자리 — 탈락 사유로 집계해 요약에 보이게 한다.
       tallyReject("temp_cash_short");

@@ -1542,13 +1542,12 @@ public final class NativeCycle {
         if (snap.slots < 1) {
             // sizing 슬롯이 0이어도 예약 차선이 성립할 가능성이 있으면
             // 스캔까지 진행한다 — 홀드가 비워 둔 자리는 기온이 실제로
-            // 쓸 수 있어야 한다 (JS runCycle과 같은 규칙).
-            int reserveEffPre = TempNo.effectiveReserveSlots(
-                    tempSettings.reserveSlots, tradeCfg.maxPositions);
-            boolean lanePossible = tempSettings.enabled && reserveEffPre > 0
-                    && snap.openCount < tradeCfg.maxPositions
-                    && tempSettings.betUsd > 0
-                    && snap.cash >= tempSettings.betUsd + tradeCfg.reserveUsd;
+            // 쓸 수 있어야 한다 (JS runCycle과 같은 규칙). 판정은 자금
+            // 배분 계층이 맡는다.
+            boolean lanePossible = CycleAllocation.laneEntryPossible(
+                    tempSettings.enabled, tempSettings.reserveSlots,
+                    tradeCfg.maxPositions, snap.openCount,
+                    tempSettings.betUsd, snap.cash, tradeCfg.reserveUsd);
             if (!lanePossible) {
                 log("슬롯 없음 — 이번 사이클 매수 없음");
                 return;
@@ -1674,24 +1673,27 @@ public final class NativeCycle {
         // 차단되는 후보가 없어 기존 단일 패스와 동일하다. 해당하는
         // 이벤트가 없거나 전부 종료됐으면 홀드가 풀려 메인이 전
         // 용량을 쓴다.
-        int reserveEff = TempNo.effectiveReserveSlots(
-                tempSettings.reserveSlots, tradeCfg.maxPositions);
-        boolean tempHold = tempSettings.enabled
-                && reserveEff > 0
-                && (tempFetchFailed
+        // 배분은 자금 배분 계층이 한 번에 계산한다 — 드라이버는 배분
+        // 결과만 본다 (JS 선정 드라이버와 같은 규칙).
+        CycleAllocation alloc = CycleAllocation.compute(
+                snap.slots, snap.bet, snap.cashFloor, snap.cash, snap.openCount,
+                tradeCfg.maxPositions, tradeCfg.verifyCap, tradeCfg.reserveUsd,
+                tempSettings.enabled, tempSettings.reserveSlots, tempSettings.betUsd,
+                tempFetchFailed
                     || tempFetchIncomplete
                     || TempNo.hasUpcomingWindow(tempEventsList, env.nowMs(),
                             tempSettings.entryHourUtc, snap.heldSlugs, boughtAll));
+        boolean tempHold = alloc.tempHold;
         // 홀드 해제 전이 로그 — 홀드가 풀리는 순간을 남기지 않으면
         // 예약이 사라진 것을 사후에 알 수 없다 (2026-11-26 진단, JS
         // 드라이버와 같은 규칙).
         if (Boolean.TRUE.equals(lastTempHold) && !tempHold
-                && tempSettings.enabled && reserveEff > 0) {
+                && alloc.tempEnabled && alloc.reserveSlotsEff > 0) {
             log("기온 예약 해제 — 진입 창이 남은 이벤트가 없어 메인 차단을 풉니다");
         }
         lastTempHold = tempHold;
         // 예약 차선 회계 — sizing 슬롯 밖에서 쓴 자리·현금을 따로 센다.
-        int laneLeft = tempHold ? reserveEff : 0;
+        int laneLeft = alloc.laneSlots;
         int positionsUsed = snap.openCount;
         double cashLeft = snap.cash;
         // 현금 가드 차단 로그는 사이클당 1회만 남긴다 (후보마다 찍으면 폭증).
@@ -1704,9 +1706,7 @@ public final class NativeCycle {
             if (!env.isRunning(gen)) {
                 return;
             }
-            if (tempHold
-                    && TempNo.reserveBlocksMain(cand.strategy, slotsLeft, verified, tradeCfg.verifyCap,
-                            reserveEff)) {
+            if (alloc.blocksMain(cand.strategy, slotsLeft, verified)) {
                 heldMain.add(cand);
                 continue;
             }
@@ -1717,16 +1717,13 @@ public final class NativeCycle {
             if (slotsLeft < 1) {
                 // sizing 슬롯이 소진된 뒤에는 예약 차선으로 기온 후보만
                 // 더 시도한다 (JS 선정 드라이버와 같은 규칙).
-                if (TempNo.reserveLaneAllows(cand.strategy, tempHold, laneLeft, positionsUsed,
-                        tradeCfg.maxPositions, cashLeft, tempSettings.betUsd, tradeCfg.reserveUsd)) {
+                if (alloc.laneAllows(cand.strategy, laneLeft, positionsUsed, cashLeft)) {
                     viaLane = true;
                 } else {
                     // 차선이 현금 부족으로 막힌 기온 후보는 시도 기록이
                     // 없어 조용히 사라지던 자리 — 탈락 사유로 집계해
                     // 요약에 보이게 한다 (JS 선정 드라이버와 같은 규칙).
-                    if (TempNo.laneCashBlocked(cand.strategy, tempHold, laneLeft, positionsUsed,
-                            tradeCfg.maxPositions, cashLeft, tempSettings.betUsd,
-                            tradeCfg.reserveUsd)) {
+                    if (alloc.laneCashBlocked(cand.strategy, laneLeft, positionsUsed, cashLeft)) {
                         tally(rejects, "temp_cash_short");
                     }
                     continue;
@@ -1752,16 +1749,14 @@ public final class NativeCycle {
             // 기온 예약 현금 가드 — 홀드가 풀린 사이클에서도 예약
             // 현금을 메인이 먼저 쓰지 않게 하는 최후 방어선. 차선은
             // 물론이고 기온 후보 자체도 대상이 아니다 (예약 현금을
-            // 쓰는 주체라서다). 판정은 TempNo가 맡고, 여기서는 집계와
+            // 쓰는 주체라서다). 판정은 자금 배분 계층이 맡고, 여기서는 집계와
             // 사이클당 1회 로그만 한다 (JS attemptCandidate와 같은 규칙).
-            if (!viaLane && TempNo.cashGuardBlocks(cand.strategy, tempSettings.enabled, reserveEff,
-                    tempSettings.betUsd, tradeCfg.reserveUsd, cashLeft, bet)) {
+            if (!viaLane && alloc.cashGuardBlocks(cand.strategy, cashLeft, bet)) {
                 tally(rejects, "temp_cash_guard");
                 if (!cashGuardLogged) {
                     cashGuardLogged = true;
                     log("기온 예약 현금 가드 — 메인 매수를 막습니다 (보호 하한 $"
-                            + n(TempNo.cashGuardFloor(tempSettings.enabled, reserveEff,
-                                    tempSettings.betUsd, tradeCfg.reserveUsd))
+                            + n(alloc.cashGuardFloor)
                             + " · 현금 $" + n(Js.round2(cashLeft)) + " · 건당 $" + n(bet) + ")");
                 }
                 continue;

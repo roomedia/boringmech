@@ -469,22 +469,22 @@ eq(
   const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
   const cycleSrc = src.slice(src.indexOf("async function runCycle"));
   eq(
-    cycleSrc.includes("tempReserveBlocksMain(cand.strategy, slotsLeft, verified, tempReserveSlots, tradeCfg.verifyCap)"),
+    cycleSrc.includes("allocationBlocksMain(alloc, cand.strategy, slotsLeft, verified)"),
     true,
-    "hold guard: driver blocks via predicate with clamped reserve",
+    "hold guard: driver blocks via allocation with clamped reserve",
   );
   eq(
-    cycleSrc.includes("effectiveTempReserveSlots(tempSettings.reserveSlots, tradeCfg.maxPositions)"),
+    src.includes("effectiveTempReserveSlots(tempReserveSlots, maxPositions)"),
     true,
-    "hold guard: driver clamps reserve by maxPositions",
+    "hold guard: allocation clamps reserve by maxPositions",
   );
   eq(
-    cycleSrc.includes("const tempHold = tempSettings.enabled"),
+    cycleSrc.includes("const tempHold = alloc.tempHold;"),
     true,
-    "hold guard: driver computes hold activation",
+    "hold guard: driver takes hold activation from allocation",
   );
   eq(
-    cycleSrc.includes("&& tempReserveSlots > 0"),
+    src.includes("tempEnabled && reserveSlotsEff > 0 && tempHoldSignal"),
     true,
     "hold guard: reserve 0 means no hold",
   );
@@ -494,7 +494,7 @@ eq(
     "hold guard: no deferred-main second pass (held slots stay empty)",
   );
   eq(
-    cycleSrc.includes("|| tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc, snap.heldSlugs, boughtAll))"),
+    cycleSrc.includes("|| tempHasUpcomingWindow(tempEventsList, Date.now(), tempSettings.entryHourUtc, snap.heldSlugs, boughtAll),"),
     true,
     "hold guard: hold also activates on upcoming window (markets-aware)",
   );
@@ -562,7 +562,7 @@ eq(
   const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
   const cycleSrc = src.slice(src.indexOf("async function runCycle"));
   eq(
-    cycleSrc.includes("tempReserveLaneAllows({"),
+    cycleSrc.includes("allocationLaneAllows(alloc, cand.strategy, laneLeft, positionsUsed, cashLeft)"),
     true,
     "lane guard: driver attempts lane after slots exhausted",
   );
@@ -572,7 +572,7 @@ eq(
     "lane guard: slots-0 early return yields to lane possibility",
   );
   eq(
-    cycleSrc.includes("laneLeft = tempHold ? tempReserveSlots : 0;"),
+    cycleSrc.includes("laneLeft = alloc.laneSlots;"),
     true,
     "lane guard: lane budget is the reserve count while hold is on",
   );
@@ -629,7 +629,7 @@ eq(
   const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
   const cycleSrc = src.slice(src.indexOf("async function runCycle"));
   eq(
-    cycleSrc.includes("tempCashGuardBlocks(guardArgs)"),
+    cycleSrc.includes("allocationCashGuardBlocks(alloc, cand.strategy, cashLeft, bet)"),
     true,
     "cashguard guard: driver applies guard on main attempts",
   );
@@ -809,7 +809,7 @@ eq(effectiveTempReserveSlots(0, 70), 0, "audit6: zero reserve kept");
     "auditE: total failure is logged",
   );
   eq(
-    cycleSrc.includes("&& (tempFetchFailed"),
+    cycleSrc.includes("tempHoldSignal: tempFetchFailed"),
     true,
     "auditE: total failure keeps the reserve",
   );
