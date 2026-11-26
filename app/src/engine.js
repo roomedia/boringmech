@@ -1644,6 +1644,15 @@ function loadDurableJsonList(key) {
   }
 }
 
+// ── 장부·스냅샷 소유자 구간 시작 ──────────────────────────────────
+// 기매수 장부(LS.bought)와 스냅샷 캐시(LS.snap)의 키 접근은 이 구간
+// 안에서만 한다 (공리적 분리 4단계, 감사 결합 4). 구간 밖 코드는
+// 조회 인터페이스(boughtEntries·boughtSlugs·boughtStrategyOf·
+// markBought·boughtCorrupted·reconcileBoughtOnce·snapshot·
+// cachedSnapshot·snapshotCacheOf·snapshotFromCache·readBoughtRaw·
+// readSnapCacheRaw)로만 읽는다. index.html도 키를 직접 만지지 않고
+// BM 경유로만 읽는다. 이 규율은 ledger-owner 테스트가 고정한다.
+
 // 기매수 기록이 손상됐는지 — 손상을 "기록 없음"과 구분하지 못하면 닫힌
 // 종목 전체가 신규로 떨어져 재매수가 열린다 (2026-11-15 감사). 원문이
 // 있는데 배열로 파싱되지 않으면 손상이다.
@@ -1667,6 +1676,16 @@ function boughtEntries() {
   } catch {
     return [];
   }
+}
+
+/**
+ * 제보 payload용 장부 원문 읽기 — 뷰어(index.html)가 키를 직접 만지지
+ * 않게 소유자가 대신 읽는다. 종전 뷰어 식(localStorage 단독, 깨진
+ * JSON은 던짐)을 그대로 옮긴 것이라 호출자는 기존처럼 try/catch로
+ * 감싼다. 엔진 내부 읽기는 boughtEntries(durable 미러 포함)가 정본.
+ */
+export function readBoughtRaw() {
+  return JSON.parse(localStorage.getItem(LS.bought) || "[]");
 }
 
 function boughtEntrySlug(entry) {
@@ -2048,6 +2067,16 @@ function cachedSnapshot() {
   }
 }
 
+/**
+ * 제보 payload용 스냅샷 캐시 원문 읽기 — 정규화를 거치는
+ * cachedSnapshot과 달리 저장된 JSON을 그대로 돌려준다. 종전 뷰어
+ * 식(localStorage 단독, 깨진 JSON은 던짐)을 그대로 옮긴 것이라
+ * 호출자는 기존처럼 try/catch로 감싼다.
+ */
+export function readSnapCacheRaw() {
+  return JSON.parse(localStorage.getItem(LS.snap) || "null");
+}
+
 async function clobCash() {
   const bal = await state.client.getBalanceAllowance({
     asset_type: AssetType.COLLATERAL,
@@ -2136,6 +2165,8 @@ async function snapshot(cfg) {
   } catch {}
   return snap;
 }
+
+// ── 장부·스냅샷 소유자 구간 끝 ────────────────────────────────────
 
 async function verifyCandidate(cand, bet, cfg = DEFAULT_TRADE_SETTINGS, entryHourUtc = TEMP_NO_ENTRY_HOUR_UTC) {
   const reject = (reason) => ({ ok: false, reason });
@@ -4770,6 +4801,8 @@ window.BM = {
   compareVersions,
   parseSnapCache: snapshotFromCache,
   readSnapCache: cachedSnapshot,
+  readBoughtRaw,
+  readSnapCacheRaw,
   hasRelayerKey: () => !!readRelayerCreds(),
   checkRelayerKey,
   readRelayerCheck,

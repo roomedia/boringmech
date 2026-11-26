@@ -193,6 +193,8 @@ public final class NativeCycle {
     private final RedeemSubmitter redeemSubmitter;
     private final SubmitGuard guard;
     private final StopLossLedger.Store ledgerStore;
+    /** 기매수 장부 단일 소유자 (공리적 분리 4단계) — bm_bought 접근은 이 필드 경유만. */
+    private final BoughtLedger boughtLedger;
     private final String funder;
     private final Supplier<RedeemSubmitter.RelayerCreds> relayerCreds;
     private final StopLossSeller seller;
@@ -249,6 +251,22 @@ public final class NativeCycle {
         this.redeemSubmitter = redeemSubmitter;
         this.guard = guard;
         this.ledgerStore = ledgerStore;
+        this.boughtLedger = new BoughtLedger(new BoughtLedger.Store() {
+            @Override
+            public String read(String key) {
+                return env.durableRead(key);
+            }
+
+            @Override
+            public void write(String key, String value) {
+                env.durableWrite(key, value);
+            }
+
+            @Override
+            public void log(String body) {
+                NativeCycle.this.log(body);
+            }
+        });
         this.funder = funder;
         this.relayerCreds = relayerCreds;
         this.seller = new StopLossSeller(client,
@@ -539,48 +557,7 @@ public final class NativeCycle {
         return new ArrayList<>();
     }
 
-    private Set<Object> boughtSlugsObjects() {
-        Set<Object> out = new LinkedHashSet<>();
-        for (Object v : loadDurableJsonList("bm_bought")) {
-            out.add(v);
-        }
-        return out;
-    }
-
-    private Set<String> boughtSlugStrings() {
-        Set<String> out = new LinkedHashSet<>();
-        for (Object v : boughtSlugsObjects()) {
-            // 문자열 항목과 전략 태그 객체 항목 양쪽에서 slug를 뽑는다.
-            String s = BoughtReconcile.slugOfEntry(v);
-            if (s != null) {
-                out.add(s);
-            }
-        }
-        return out;
-    }
-
-    private void markBought(String slug, String strategy) {
-        // 같은 slug의 기존 항목은 지우고 한 건만 남긴다. 기온 매수는 전략
-        // 태그를 단 객체로, 메인 매수는 기존 문자열 형태로 기록한다.
-        List<Object> entries = new ArrayList<>();
-        for (Object v : boughtSlugsObjects()) {
-            if (!slug.equals(BoughtReconcile.slugOfEntry(v))) {
-                entries.add(v);
-            }
-        }
-        if (TempNo.STRATEGY.equals(strategy)) {
-            Map<String, Object> e = new LinkedHashMap<>();
-            e.put("slug", slug);
-            e.put("strategy", TempNo.STRATEGY);
-            entries.add(e);
-        } else {
-            entries.add(slug);
-        }
-        env.durableWrite("bm_bought", ModelJson.stringify(entries));
-        if (!boughtSlugStrings().contains(slug)) {
-            log("매수 기록 저장 확인 실패 " + slug + " — 저장소 쓰기가 반영되지 않았습니다");
-        }
-    }
+    // 기매수 장부 접근은 boughtLedger(BoughtLedger) 경유만 — 공리적 분리 4단계.
 
     private void saveSettledBaseline() {
         if (settledBaseline == null) {
@@ -618,7 +595,7 @@ public final class NativeCycle {
         // (메인 매수·기록 없음은 메인 폭 적용). 판정 폭은 evaluate에도
         // 같은 기준으로 들어간다.
         boolean tempTagged = slug != null
-                && TempNo.isTempTagged(loadDurableJsonList("bm_bought"), slug);
+                && boughtLedger.isTempTagged(slug);
         double stopDrop = tempTagged ? tradeCfg.tempStopDrop : tradeCfg.stopDrop;
         // JS는 1차 판정이 triggered일 때만 2차 조회를 한다 — 조회 횟수·시점을 맞춘다.
         boolean firstTriggered = false;
@@ -1275,7 +1252,7 @@ public final class NativeCycle {
             }
             return;
         }
-        Set<Object> cur = boughtSlugsObjects();
+        Set<Object> cur = boughtLedger.entrySet();
         if (!fetched.complete || (cur.size() > 0 && fetched.slugs.isEmpty())) {
             if (!reconcileFailLogged) {
                 reconcileFailLogged = true;
@@ -1292,7 +1269,7 @@ public final class NativeCycle {
         if (rec.dropped.isEmpty()) {
             return;
         }
-        env.durableWrite("bm_bought", ModelJson.stringify(rec.kept));
+        boughtLedger.writeEntries(rec.kept);
         StringBuilder joined = new StringBuilder();
         int show = Math.min(5, rec.dropped.size());
         for (int i = 0; i < show; i++) {
@@ -1616,7 +1593,7 @@ public final class NativeCycle {
             }
             log("슬롯 없음 — 기온 예약 차선으로 진입을 시도합니다");
         }
-        if (BoughtReconcile.boughtCorrupted(env.durableRead("bm_bought"))) {
+        if (boughtLedger.corrupted()) {
             log("기매수 기록 손상 감지 — 이번 사이클 매수를 건너뜁니다 (재매수 방벽 보호)");
             return false;
         }
@@ -1634,7 +1611,7 @@ public final class NativeCycle {
         env.setStage("scan", cycle);
         List<Object> markets = net.fetchMarkets();
         Map<String, Integer> scanStats = new LinkedHashMap<>();
-        Set<String> boughtAll = boughtSlugStrings();
+        Set<String> boughtAll = boughtLedger.slugStrings();
         boughtAll.addAll(snap.stopLossSlugs);
         // 결과 불명으로 끝난 손절 시도의 slug도 차단한다 — 실제로는
         // 체결됐는데 bm_bought에 없는 포지션이면 체결 기록도 보유도
@@ -1755,7 +1732,7 @@ public final class NativeCycle {
         boolean cashGuardLogged = false;
         // 섀도우 기록의 진입 판정 기준 — 선정 패스 전후의 매수 기록 차이로
         // 이 사이클에 실제로 진입한 기온 후보를 가른다.
-        Set<String> boughtBeforeBuy = boughtSlugStrings();
+        Set<String> boughtBeforeBuy = boughtLedger.slugStrings();
         List<ScanFilter.Candidate> heldMain = new ArrayList<>();
         for (ScanFilter.Candidate cand : candidates) {
             if (!env.isRunning(gen)) {
@@ -1845,7 +1822,7 @@ public final class NativeCycle {
                 continue;
             }
             try {
-                if (boughtSlugStrings().contains(cand.slug)) {
+                if (boughtLedger.slugStrings().contains(cand.slug)) {
                     log("제출 직전 재확인 — 이미 매수 기록 있음 " + cand.slug);
                     continue;
                 }
@@ -1877,7 +1854,7 @@ public final class NativeCycle {
                         resp = client.postOrder(signed, "FOK");
                     } catch (Exception e) {
                         failedCount++;
-                        markBought(cand.slug, cand.strategy);
+                        boughtLedger.mark(cand.slug, cand.strategy);
                         if (viaLane) { laneLeft--; } else { slotsLeft--; }
                         positionsUsed++;
                         cashLeft -= bet;
@@ -1897,7 +1874,7 @@ public final class NativeCycle {
                     JudgeFill.Verdict verdict = JudgeFill.judgeFill(resp);
                     if (!verdict.filled && "unknown".equals(verdict.kind)) {
                         failedCount++;
-                        markBought(cand.slug, cand.strategy);
+                        boughtLedger.mark(cand.slug, cand.strategy);
                         if (viaLane) { laneLeft--; } else { slotsLeft--; }
                         positionsUsed++;
                         cashLeft -= bet;
@@ -1927,7 +1904,7 @@ public final class NativeCycle {
                     if (!verdict.filled) {
                         unfilledCount++;
                         if ("delayed".equals(verdict.status)) {
-                            markBought(cand.slug, cand.strategy);
+                            boughtLedger.mark(cand.slug, cand.strategy);
                             if (viaLane) { laneLeft--; } else { slotsLeft--; }
                             positionsUsed++;
                             cashLeft -= bet;
@@ -1941,7 +1918,7 @@ public final class NativeCycle {
                         }
                         continue;
                     }
-                    markBought(cand.slug, cand.strategy);
+                    boughtLedger.mark(cand.slug, cand.strategy);
                     sessionFills++;
                     filledCount++;
                     if (viaLane) { laneLeft--; } else { slotsLeft--; }
@@ -2003,7 +1980,7 @@ public final class NativeCycle {
             // 기록하지 않는다.
             if (!ctx.tempCandsSeen.isEmpty()) {
                 try {
-                    Set<String> boughtAfterBuy = boughtSlugStrings();
+                    Set<String> boughtAfterBuy = boughtLedger.slugStrings();
                     Set<String> enteredNow = new LinkedHashSet<>();
                     for (ScanFilter.Candidate c : ctx.tempCandsSeen) {
                         if (!ctx.boughtBeforeBuy.contains(c.slug) && boughtAfterBuy.contains(c.slug)) {

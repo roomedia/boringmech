@@ -1756,14 +1756,16 @@
         payload.stage = nstage ? JSON.parse(nstage) : JSON.parse(localStorage.getItem('bm_stage') || 'null');
       } catch (e) {}
       // snap도 로그·stage와 같은 기준으로 네이티브를 정본으로 읽는다.
-      // LS bm_snap은 뷰어 JS가 복원 시점에 쓴 값이라 엔진이 그 뒤로
+      // LS 스냅샷 캐시는 뷰어 JS가 복원 시점에 쓴 값이라 엔진이 그 뒤로
       // 매매해도 얼어붙어, 제보 snap이 로그보다 뒤처져 보이는 사고가
       // 났다 (2026-11-19 제보 38: snap 현금 $12.67 vs 로그 $26.63).
+      // 장부·스냅샷 키는 엔진 소유자만 만진다 — 뷰어는 BM 경유로 읽는다
+      // (공리적 분리 4단계).
       try { payload.snap = readSnap(); } catch (e) {}
       if (!payload.snap) {
-        try { payload.snap = JSON.parse(localStorage.getItem('bm_snap') || 'null'); } catch (e) {}
+        try { if (window.BM && BM.readSnapCacheRaw) payload.snap = BM.readSnapCacheRaw(); } catch (e) {}
       }
-      try { payload.bought = JSON.parse(localStorage.getItem('bm_bought') || '[]'); } catch (e) {}
+      try { if (window.BM && BM.readBoughtRaw) payload.bought = BM.readBoughtRaw(); } catch (e) {}
       // 네이티브 워치독 상태 — 워치독이 돌았는지·재로드가 걸렸는지·
       // 부팅이 실패했는지를 다음 사고 때 원격으로 가르기 위한 재료.
       try {
