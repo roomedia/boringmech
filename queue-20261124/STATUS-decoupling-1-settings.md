@@ -1,8 +1,11 @@
 # 공리적 설계 분리 1단계 — 설정 네임스페이스 분리·파서 단일화
 
-상태: running (2026-11-26 착수)
+상태: awaiting (2026-11-26 출시 완료)
+릴리스: https://github.com/roomedia/boringmech/releases/tag/v0.3.57
+출시 커밋: 61e9827 (roomedia 단독 저자), 푸시·자산 첨부 확인 완료.
+남은 확인은 실기기 몫이다: 설치 후 서명 제출 1회 (이번 변경은 서명
+경로 무접촉이라 게이트 표기만 유지).
 감사 원문: ~/workspace/audits-20261126/boringmech-axiomatic-audit.md 결합 1
-목표 버전: v0.3.57
 
 ## 현행 구조 (실측)
 
@@ -54,7 +57,8 @@
       DEX 게이트 PASSED·축소 스모크 PASSED. 출하 APK 직접 대조:
       versionCode 60, versionName 0.3.57, dex에 JavascriptInterface·
       engine/Settings 존재, 번들에 APP_VERSION 0.3.57·parseSettings 존재.
-- [ ] 커밋·푸시·릴리스
+- [x] 커밋·푸시·릴리스 — 61e9827, 릴리스 자산 boringmech-v0.3.57.apk
+      (356,904B, uploaded 상태 확인)
 
 ## 검증 수치
 
