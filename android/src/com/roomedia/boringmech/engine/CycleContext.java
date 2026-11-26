@@ -30,7 +30,8 @@ final class CycleContext {
     public Set<String> boughtAll;
     public Map<String, Integer> scanStats;
     public List<Object> tempEventsList;
-    public List<ScanFilter.Candidate> tempCandsSeen;
+    /** 섀도우 입력 계약 — scan이 스캔 후보를 변환해 채우고 shadow만 읽는다. */
+    public List<ShadowLog.CandInput> shadowInputs;
     public boolean tempFetchFailed;
     public boolean tempFetchIncomplete;
 

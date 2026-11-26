@@ -1341,10 +1341,32 @@ export function tempEventDayKey(endDate) {
 }
 
 /**
+ * 섀도우 입력 계약 (공리적 분리 7단계 — 결합 7) — 섀도우 기록이 스캔
+ * 산출물에 직접 결합하지 않게, 소비하는 입력을 이 형태로 고정한다.
+ * 후보 1건당 필드는 3개뿐이다.
+ *   slug: string — 후보 식별자. 도시 파싱의 입력.
+ *   price: number — 평가 시점 No 가격.
+ *   endDate: string — 이벤트 종료 시각 ISO 문자열. 날짜 키의 입력.
+ * 스캔 후보의 나머지 필드(question·side·strategy·bandLo·bandHi·
+ * feeRate)는 계약에 없다. 스캔 내부 형태가 바뀌어도 이 변환이 같은
+ * 계약을 만들면 섀도우 기록은 흔들리지 않는다. 변환은 값 복사만 하고
+ * 기본값이나 형 변환을 붙이지 않는다.
+ */
+export function toShadowCandInput(cand) {
+  return { slug: cand.slug, price: cand.price, endDate: cand.endDate };
+}
+
+export function toShadowCandInputs(cands) {
+  return (cands || []).map(toShadowCandInput);
+}
+
+/**
  * 사이클 섀도우 기록 1건 — 그 사이클이 평가한 기온 후보 전체에 도시·
  * 버킷·점수·순위를 붙인다. 순위는 점수 내림차순, 무점수는 뒤, 동률은
- * 평가 순서를 유지한다. enteredSlugs는 그 사이클에 매수로 기록된 slug
- * 집합이다.
+ * 평가 순서를 유지한다. cands는 섀도우 입력 계약(toShadowCandInput)
+ * 레코드이고, enteredSlugs는 그 사이클에 매수로 기록된 slug 집합이다.
+ * 사이클 헤더(ts·cycle·cash·slots·openCount)도 계약의 일부다 —
+ * cash·slots·openCount는 스냅샷이 없으면 null이다.
  */
 export function buildShadowCycleRecord({ ts, cycle, cash, slots, openCount, cands, enteredSlugs }) {
   const entered = enteredSlugs instanceof Set ? enteredSlugs : new Set(enteredSlugs || []);
@@ -1471,15 +1493,17 @@ export function appendShadowCycle(store, record, limits = {}) {
 /**
  * 섀도우 기록 드라이버 — 저장소 읽기·붙이기·쓰기를 한 번에 한다. 기록은
  * 부수 경로라 어떤 실패도 사이클을 막지 않는다 (호출 지점에서도 격리).
+ * 입력은 섀도우 입력 계약만 받는다 — 스냅샷 객체를 받지 않고, 헤더
+ * 값(cash·slots·openCount)은 호출자가 스냅샷에서 꺼내 평면으로 넘긴다.
  */
-export function recordShadowCycle({ ts, cycle, snap, cands, enteredSlugs }) {
+export function recordShadowCycle({ ts, cycle, cash, slots, openCount, cands, enteredSlugs }) {
   if (!cands || !cands.length) return;
   const record = buildShadowCycleRecord({
     ts,
     cycle,
-    cash: snap ? snap.cash : null,
-    slots: snap ? snap.slots : null,
-    openCount: snap ? snap.openCount : null,
+    cash,
+    slots,
+    openCount,
     cands,
     enteredSlugs,
   });
@@ -3037,7 +3061,7 @@ function createCycleContext(gen) {
     boughtAll: null,
     scanStats: null,
     tempEventsList: null,
-    tempCandsSeen: [],
+    shadowInputs: [],
     tempFetchFailed: false,
     tempFetchIncomplete: false,
     boughtBeforeBuy: null,
@@ -3196,8 +3220,9 @@ async function cycleScanStage(ctx) {
   // 선정 패스(슬롯·검증 캡 공유)를 타고, 메인 후보와 slug가 겹치면
   // 메인 쪽이 이긴다 (excludeSlugs). 기온 스캔 통계는 요약에 섞지 않는다.
   let tempEventsList = null;
-  // 섀도우 기록용 — 이 사이클이 평가한 기온 후보 (기록은 선정 패스 뒤).
-  let tempCandsSeen = [];
+  // 섀도우 기록용 — 이 사이클이 평가한 기온 후보를 섀도우 입력 계약으로
+  // 변환한 것 (기록은 선정 패스 뒤). 스캔 후보 원형은 넘기지 않는다.
+  let shadowInputs = [];
   // 기온 이벤트 조회 실패 여부 — 전수 실패와 "오늘 이벤트 없음"을
   // 구분해, 실패한 사이클은 예약을 유지하는 쪽으로 판정한다
   // (안전 방향, v0.3.39 감사 E). 부분 실패도 같은 방향이다: 조회
@@ -3222,7 +3247,7 @@ async function cycleScanStage(ctx) {
         const tempCands = scanTempCandidates(
           fetched.events, snap.heldSlugs, boughtAll, tempSettings, Date.now(), null, mainSlugs,
         );
-        tempCandsSeen = tempCands;
+        shadowInputs = toShadowCandInputs(tempCands);
         if (tempCands.length) {
           log(`기온 후보 ${tempCands.length}건 (밴드 ${tempSettings.bandLo}–${tempSettings.bandHi})`);
           candidates.push(...tempCands);
@@ -3237,7 +3262,7 @@ async function cycleScanStage(ctx) {
   ctx.boughtAll = boughtAll;
   ctx.scanStats = scanStats;
   ctx.tempEventsList = tempEventsList;
-  ctx.tempCandsSeen = tempCandsSeen;
+  ctx.shadowInputs = shadowInputs;
   ctx.tempFetchFailed = tempFetchFailed;
   ctx.tempFetchIncomplete = tempFetchIncomplete;
 }
@@ -3525,16 +3550,21 @@ async function cycleSelectionStage(ctx) {
 function cycleShadowStage(ctx, aborted) {
   // 섀도우 기록 — 거래 동작과 무관한 부수 경로라 실패해도 사이클은
   // 그대로 마친다. 중단된 사이클은 네이티브와 같이 기록하지 않는다.
-  if (!aborted && ctx.tempCandsSeen.length) {
+  // 입력은 스캔 단계가 만든 섀도우 입력 계약(ctx.shadowInputs)만 쓴다.
+  if (!aborted && ctx.shadowInputs.length) {
     try {
       const boughtAfterBuy = boughtSlugs();
       const enteredNow = new Set(
-        ctx.tempCandsSeen
+        ctx.shadowInputs
           .filter((c) => !ctx.boughtBeforeBuy.has(c.slug) && boughtAfterBuy.has(c.slug))
           .map((c) => c.slug),
       );
       recordShadowCycle({
-        ts: Date.now(), cycle: state.cycle, snap: ctx.snap, cands: ctx.tempCandsSeen, enteredSlugs: enteredNow,
+        ts: Date.now(), cycle: state.cycle,
+        cash: ctx.snap ? ctx.snap.cash : null,
+        slots: ctx.snap ? ctx.snap.slots : null,
+        openCount: ctx.snap ? ctx.snap.openCount : null,
+        cands: ctx.shadowInputs, enteredSlugs: enteredNow,
       });
     } catch {}
   }

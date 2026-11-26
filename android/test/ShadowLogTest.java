@@ -5,6 +5,7 @@
 import com.roomedia.boringmech.engine.JsonText;
 import com.roomedia.boringmech.engine.ScanFilter;
 import com.roomedia.boringmech.engine.ShadowLog;
+import com.roomedia.boringmech.write.ModelJson;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,9 +46,9 @@ public class ShadowLogTest {
     private static final String END = "2026-10-06T12:00:00Z";
     private static final long T0 = Instant.parse("2026-10-06T00:00:00Z").toEpochMilli();
 
-    private static ScanFilter.Candidate cand(String city, int temp, double price) {
-        return new ScanFilter.Candidate(slug(city, temp), "", "no", price, END,
-                "temp_no", 0.9, 0.998, null);
+    private static ShadowLog.CandInput cand(String city, int temp, double price) {
+        return ShadowLog.CandInput.of(new ScanFilter.Candidate(
+                slug(city, temp), "", "no", price, END, "temp_no", 0.9, 0.998, null));
     }
 
     @SuppressWarnings("unchecked")
@@ -111,11 +112,11 @@ public class ShadowLogTest {
 
         // ── 사이클 기록 ────────────────────────────────────────
         {
-            ScanFilter.Candidate dallas = cand("dallas", 30, 0.95);
-            ScanFilter.Candidate paris = cand("paris", 18, 0.99);
-            ScanFilter.Candidate atlantis = new ScanFilter.Candidate(
+            ShadowLog.CandInput dallas = cand("dallas", 30, 0.95);
+            ShadowLog.CandInput paris = cand("paris", 18, 0.99);
+            ShadowLog.CandInput atlantis = ShadowLog.CandInput.of(new ScanFilter.Candidate(
                     "highest-temperature-in-atlantis-on-october-6-2026-20c",
-                    "", "no", 0.97, END, "temp_no", 0.9, 0.998, null);
+                    "", "no", 0.97, END, "temp_no", 0.9, 0.998, null));
             Map<String, Object> rec = ShadowLog.buildCycleRecord(
                     T0, 7, 42.5, 3, 2,
                     List.of(paris, dallas, atlantis), Set.of(dallas.slug));
@@ -137,8 +138,8 @@ public class ShadowLogTest {
         }
         {
             // 동률(같은 도시 두 시장)은 평가 순서를 유지한다.
-            ScanFilter.Candidate a = cand("seoul", 28, 0.95);
-            ScanFilter.Candidate b = cand("seoul", 29, 0.96);
+            ShadowLog.CandInput a = cand("seoul", 28, 0.95);
+            ShadowLog.CandInput b = cand("seoul", 29, 0.96);
             Map<String, Object> rec = ShadowLog.buildCycleRecord(
                     T0, 1, 10, 1, 0, List.of(a, b), Set.of());
             List<?> rows = (List<?>) rec.get("cands");
@@ -165,9 +166,9 @@ public class ShadowLogTest {
         // ── 일별 롤업과 섀도우 픽 ──────────────────────────────
         {
             Map<String, Object> store = ShadowLog.parseStore(null);
-            ScanFilter.Candidate dallas = cand("dallas", 30, 0.95);
-            ScanFilter.Candidate seoul = cand("seoul", 28, 0.96);
-            ScanFilter.Candidate paris = cand("paris", 18, 0.99);
+            ShadowLog.CandInput dallas = cand("dallas", 30, 0.95);
+            ShadowLog.CandInput seoul = cand("seoul", 28, 0.96);
+            ShadowLog.CandInput paris = cand("paris", 18, 0.99);
             ShadowLog.appendCycle(store, ShadowLog.buildCycleRecord(
                     T0, 1, 50, 5, 0, List.of(paris, seoul, dallas), Set.of(seoul.slug)));
             ShadowLog.appendCycle(store, ShadowLog.buildCycleRecord(
@@ -202,7 +203,7 @@ public class ShadowLogTest {
         // ── 보관 상한 ──────────────────────────────────────────
         {
             Map<String, Object> store = ShadowLog.parseStore(null);
-            ScanFilter.Candidate c = cand("seoul", 28, 0.95);
+            ShadowLog.CandInput c = cand("seoul", 28, 0.95);
             for (int i = 0; i < 5; i++) {
                 ShadowLog.appendCycle(store, ShadowLog.buildCycleRecord(
                         T0 + i * 1000L, i, 1, 1, 0, List.of(c), Set.of()),
@@ -214,7 +215,7 @@ public class ShadowLogTest {
         }
         {
             Map<String, Object> store = ShadowLog.parseStore(null);
-            ScanFilter.Candidate c = cand("seoul", 28, 0.95);
+            ShadowLog.CandInput c = cand("seoul", 28, 0.95);
             ShadowLog.appendCycle(store, ShadowLog.buildCycleRecord(
                     T0, 1, 1, 1, 0, List.of(c), Set.of()), 10, ShadowLog.MAX_CYCLES, ShadowLog.MAX_DAYS);
             checkEq("상한: 바이트 상한이 사이클을 비움", ((List<?>) store.get("cycles")).size(), 0);
@@ -225,8 +226,8 @@ public class ShadowLogTest {
             List<String> dates = new ArrayList<>();
             for (int d = 1; d <= 5; d++) {
                 String end = "2026-10-0" + d + "T12:00:00Z";
-                ScanFilter.Candidate c = new ScanFilter.Candidate(
-                        slug("seoul", 28), "", "no", 0.95, end, "temp_no", 0.9, 0.998, null);
+                ShadowLog.CandInput c = ShadowLog.CandInput.of(new ScanFilter.Candidate(
+                        slug("seoul", 28), "", "no", 0.95, end, "temp_no", 0.9, 0.998, null));
                 ShadowLog.appendCycle(store, ShadowLog.buildCycleRecord(
                         T0, d, 1, 1, 0, List.of(c), Set.of()),
                         ShadowLog.MAX_BYTES, ShadowLog.MAX_CYCLES, 3);
@@ -268,6 +269,72 @@ public class ShadowLogTest {
                             ((Number) b.getValue()).doubleValue());
                 }
             }
+        }
+
+        // ── 입력 계약 가드 (분리 7단계) ────────────────────────
+        {
+            // 계약 밖 필드(question·side·strategy·band·feeRate)가 달라도
+            // 계약 3필드가 같으면 기록은 바이트 단위로 같다.
+            ScanFilter.Candidate base = new ScanFilter.Candidate(
+                    slug("dallas", 30), "질문 A", "no", 0.95, END, "temp_no", 0.9, 0.998, null);
+            ScanFilter.Candidate other = new ScanFilter.Candidate(
+                    slug("dallas", 30), "질문 B", "yes", 0.95, END, "main", 0.6, 0.9, 0.07);
+            Map<String, Object> ra = ShadowLog.buildCycleRecord(
+                    T0, 7, 42.5, 3, 2, ShadowLog.CandInput.ofAll(List.of(base)), Set.of());
+            Map<String, Object> rb = ShadowLog.buildCycleRecord(
+                    T0, 7, 42.5, 3, 2, ShadowLog.CandInput.ofAll(List.of(other)), Set.of());
+            checkEq("계약: 계약 밖 필드는 기록에 영향 없음",
+                    ModelJson.stringify(rb), ModelJson.stringify(ra));
+            ShadowLog.CandInput in = ShadowLog.CandInput.of(base);
+            checkEq("계약: slug 복사", in.slug, base.slug);
+            checkEq("계약: price 복사", in.price, base.price);
+            checkEq("계약: endDate 복사", in.endDate, base.endDate);
+            checkEq("계약: ofAll null → 빈 배열", ShadowLog.CandInput.ofAll(null).size(), 0);
+        }
+
+        // ── 기준선 바이트 대조 (리팩터 전 코드 산출) ───────────
+        {
+            Path fixture = Path.of(System.getProperty("repoDir"),
+                    "android/test/fixtures/shadow-contract-baseline.json");
+            Map<?, ?> baseline = (Map<?, ?>) JsonText.parse(Files.readString(fixture));
+            List<?> baseRecords = (List<?>) baseline.get("records");
+            String baseStore = (String) baseline.get("store");
+            List<List<ShadowLog.CandInput>> scenCands = new ArrayList<>(List.of(
+                    List.of(cand("paris", 18, 0.99), cand("dallas", 30, 0.95),
+                            cand("atlantis", 20, 0.97)),
+                    List.of(cand("dallas", 30, 0.95), cand("seoul", 28, 0.96)),
+                    List.of(ShadowLog.CandInput.of(new ScanFilter.Candidate(
+                                    slug("seoul", 28), "", "no", 0.95, "", "temp_no", 0.9, 0.998, null)),
+                            cand("seoul", 29, 0.96)),
+                    List.of(cand("wellington", 21, 0.93), cand("dallas", 30, 0.95))));
+            // S4의 wellington은 날짜가 다르다 — 픽스처와 같은 endDate로 교체
+            scenCands.set(3, List.of(
+                    ShadowLog.CandInput.of(new ScanFilter.Candidate(
+                            slug("wellington", 21), "", "no", 0.93,
+                            "2026-10-07T12:00:00Z", "temp_no", 0.9, 0.998, null)),
+                    cand("dallas", 30, 0.95)));
+            long[] ts = {T0, T0 + 60_000, T0 + 120_000, T0 + 180_000};
+            int[] cycle = {7, 8, 9, 10};
+            double[] cash = {42.5, 45, 0, 12.34};
+            int[] slots = {3, 4, 0, 2};
+            int[] open = {2, 1, 0, 5};
+            List<Set<String>> entered = List.of(
+                    Set.of(slug("dallas", 30)),
+                    Set.of(slug("seoul", 28), slug("dallas", 30)),
+                    Set.of(),
+                    Set.of(slug("wellington", 21)));
+            checkEq("기준선: 시나리오 수 일치", baseRecords.size(), scenCands.size());
+            Map<String, Object> store = ShadowLog.parseStore(null);
+            for (int i = 0; i < scenCands.size(); i++) {
+                Map<String, Object> rec = ShadowLog.buildCycleRecord(
+                        ts[i], cycle[i], cash[i], slots[i], open[i],
+                        scenCands.get(i), entered.get(i));
+                checkEq("기준선: 레코드 " + (i + 1) + " 바이트 동일",
+                        ModelJson.stringify(rec), baseRecords.get(i));
+                ShadowLog.appendCycle(store, rec);
+            }
+            checkEq("기준선: 저장소 직렬화 바이트 동일",
+                    ModelJson.stringify(store), baseStore);
         }
 
         System.out.println("shadow-log: " + passed + " passed, " + failed + " failed");

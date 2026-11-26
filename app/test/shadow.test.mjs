@@ -230,14 +230,14 @@ eq(parseShadowStore('{"cycles":[1],"days":"x"}'), { v: 1, cycles: [], days: [] }
   lsStore.set("bm_shadow", "garbage{{{");
   recordShadowCycle({
     ts: T0, cycle: 3,
-    snap: { cash: 20, slots: 2, openCount: 1 },
+    cash: 20, slots: 2, openCount: 1,
     cands: [cand("dallas", 30, 0.95)],
     enteredSlugs: new Set(),
   });
   const stored = parseShadowStore(lsStore.get("bm_shadow"));
   eq(stored.cycles.length, 1, "드라이버: 깨진 저장소를 딛고 기록");
   eq(stored.days.length, 1, "드라이버: 롤업 생성");
-  recordShadowCycle({ ts: T0, cycle: 4, snap: { cash: 1, slots: 1, openCount: 0 }, cands: [], enteredSlugs: new Set() });
+  recordShadowCycle({ ts: T0, cycle: 4, cash: 1, slots: 1, openCount: 0, cands: [], enteredSlugs: new Set() });
   eq(parseShadowStore(lsStore.get("bm_shadow")).cycles.length, 1, "드라이버: 후보 없으면 기록 안 함");
 }
 

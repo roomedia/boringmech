@@ -1626,8 +1626,10 @@ public final class NativeCycle {
         // 겹치면 메인 쪽이 이긴다. 기온 스캔 통계는 요약에 섞지 않는다.
         // 조회한 이벤트 목록은 아래 홀드 판정(창 대기)도 함께 쓴다.
         List<Object> tempEventsList = null;
-        // 섀도우 기록용 — 이 사이클이 평가한 기온 후보 (기록은 선정 패스 뒤).
-        List<ScanFilter.Candidate> tempCandsSeen = new ArrayList<>();
+        // 섀도우 기록용 — 이 사이클이 평가한 기온 후보를 섀도우 입력
+        // 계약으로 변환한 것 (기록은 선정 패스 뒤). 스캔 후보 원형은
+        // 넘기지 않는다.
+        List<ShadowLog.CandInput> shadowInputs = new ArrayList<>();
         // 기온 이벤트 조회 실패 여부 — 전수 실패와 "오늘 이벤트 없음"을
         // 구분해, 실패한 사이클은 예약을 유지하는 쪽으로 판정한다
         // (안전 방향, v0.3.39 감사 E). 부분 실패도 같은 방향이다: 조회
@@ -1655,7 +1657,7 @@ public final class NativeCycle {
                     }
                     List<ScanFilter.Candidate> tempCands = TempNo.scanTempCandidates(
                             fetched.events, snap.heldSlugs, boughtAll, tempSettings, env.nowMs(), mainSlugs);
-                    tempCandsSeen = tempCands;
+                    shadowInputs = ShadowLog.CandInput.ofAll(tempCands);
                     if (!tempCands.isEmpty()) {
                         log("기온 후보 " + tempCands.size() + "건 (밴드 " + n(tempSettings.bandLo)
                                 + "–" + n(tempSettings.bandHi) + ")");
@@ -1670,7 +1672,7 @@ public final class NativeCycle {
         ctx.boughtAll = boughtAll;
         ctx.scanStats = scanStats;
         ctx.tempEventsList = tempEventsList;
-        ctx.tempCandsSeen = tempCandsSeen;
+        ctx.shadowInputs = shadowInputs;
         ctx.tempFetchFailed = tempFetchFailed;
         ctx.tempFetchIncomplete = tempFetchIncomplete;
     }
@@ -1979,17 +1981,17 @@ public final class NativeCycle {
             // 섀도우 기록 — 거래 동작과 무관한 부수 경로라 실패해도 사이클은
             // 그대로 마친다. 루프 중간 반환(세대 교체 등)은 JS와 같이
             // 기록하지 않는다.
-            if (!ctx.tempCandsSeen.isEmpty()) {
+            if (!ctx.shadowInputs.isEmpty()) {
                 try {
                     Set<String> boughtAfterBuy = boughtLedger.slugStrings();
                     Set<String> enteredNow = new LinkedHashSet<>();
-                    for (ScanFilter.Candidate c : ctx.tempCandsSeen) {
+                    for (ShadowLog.CandInput c : ctx.shadowInputs) {
                         if (!ctx.boughtBeforeBuy.contains(c.slug) && boughtAfterBuy.contains(c.slug)) {
                             enteredNow.add(c.slug);
                         }
                     }
                     ShadowLog.recordCycle(env, env.nowMs(), cycle, snap.cash, snap.slots,
-                            snap.openCount, ctx.tempCandsSeen, enteredNow);
+                            snap.openCount, ctx.shadowInputs, enteredNow);
                 } catch (Exception ignored) {
                 }
             }

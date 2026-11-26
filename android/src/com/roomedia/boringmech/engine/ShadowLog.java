@@ -233,17 +233,55 @@ public final class ShadowLog {
     }
 
     /**
+     * 섀도우 입력 계약 (공리적 분리 7단계 — 결합 7) — 섀도우 기록이 스캔
+     * 산출물(ScanFilter.Candidate)에 직접 결합하지 않게, 소비하는 필드를
+     * 이 3개로 고정한다.
+     *   slug — 후보 식별자. 도시 파싱의 입력.
+     *   price — 평가 시점 No 가격.
+     *   endDate — 이벤트 종료 시각 ISO 문자열. 날짜 키의 입력.
+     * 스캔 후보의 나머지 필드(question·side·strategy·bandLo·bandHi·
+     * feeRate)는 계약에 없다. 스캔 내부 형태가 바뀌어도 of/ofAll이 같은
+     * 계약을 만들면 섀도우 기록은 흔들리지 않는다. 변환은 값 복사만 한다.
+     */
+    public static final class CandInput {
+        public final String slug;
+        public final double price;
+        public final String endDate;
+
+        public CandInput(String slug, double price, String endDate) {
+            this.slug = slug;
+            this.price = price;
+            this.endDate = endDate;
+        }
+
+        public static CandInput of(ScanFilter.Candidate cand) {
+            return new CandInput(cand.slug, cand.price, cand.endDate);
+        }
+
+        public static List<CandInput> ofAll(List<ScanFilter.Candidate> cands) {
+            List<CandInput> out = new ArrayList<>();
+            if (cands != null) {
+                for (ScanFilter.Candidate cand : cands) {
+                    out.add(of(cand));
+                }
+            }
+            return out;
+        }
+    }
+
+    /**
      * 사이클 섀도우 기록 1건 — 그 사이클이 평가한 기온 후보 전체에
      * 도시·버킷·점수·순위를 붙인다. 순위는 점수 내림차순, 무점수는 뒤,
-     * 동률은 평가 순서를 유지한다. entered는 그 사이클에 매수로 기록된
-     * slug 집합이다.
+     * 동률은 평가 순서를 유지한다. cands는 섀도우 입력 계약(CandInput)
+     * 레코드이고, entered는 그 사이클에 매수로 기록된 slug 집합이다.
+     * 사이클 헤더(ts·cycle·cash·slots·openCount)도 계약의 일부다.
      */
     public static Map<String, Object> buildCycleRecord(
             long ts, int cycle, double cash, int slots, int openCount,
-            List<ScanFilter.Candidate> cands, Set<String> entered) {
+            List<CandInput> cands, Set<String> entered) {
         List<Map<String, Object>> rows = new ArrayList<>();
         if (cands != null) {
-            for (ScanFilter.Candidate cand : cands) {
+            for (CandInput cand : cands) {
                 String city = cityOfSlug(cand.slug);
                 String bucket = city == null ? null : localBucketOf(city, ts);
                 Double score = (city != null && bucket != null) ? scoreFor(city, bucket) : null;
@@ -509,7 +547,7 @@ public final class ShadowLog {
      */
     public static void recordCycle(NativeCycle.Env env, long ts, int cycle, double cash,
                                    int slots, int openCount,
-                                   List<ScanFilter.Candidate> cands, Set<String> entered) {
+                                   List<CandInput> cands, Set<String> entered) {
         if (cands == null || cands.isEmpty()) {
             return;
         }
