@@ -91,3 +91,12 @@ R8 enum unboxing이 Bouncy Castle `DefaultServiceProperties`의
   "3빌드 연속 동일 오류 출하"로 읽으면 이미 고쳐진 결함을 다시
   고치게 된다. 출하본 판정은 로그가 아니라 해당 APK의 dex를 직접
   열어 확인한다 (dexdump로 문제 클래스의 문제 오프셋을 대조).
+
+## 삼중 구현 상수 대조 게이트 (2026-11-27 추가 — 분리 5/7)
+
+판단 상수는 JS 정본·Java 미러·Python 트랙 세 구현에 흩어져 있어 한 곳만
+고치면 조용히 어긋난다. `tools/constants_gate.py`가 규칙 38개(공유 32,
+구현 고유 고정값 6)를 대조하고, `app`의 `npm test` 체인 마지막에 연결돼
+있어 전체 테스트 통과에 게이트 통과가 포함된다. 상수를 바꿀 때는 정본
+(JS)부터 바꾸고 게이트가 나머지를 따라왔는지 확인한다. Python 트랙의
+지위와 동기화 의무 범위는 `docs/PYTHON-TRACK.md`가 정본이다.
