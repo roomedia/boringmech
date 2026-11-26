@@ -2533,6 +2533,17 @@ async function fetchGammaPrices(slug) {
   return { outcomes, prices };
 }
 
+// ── 손절 장부 소유자 구간 시작 ──────────────────────────────────
+// 손절 원장(LS.stopLoss·LS.stopLossArchive·LS.manualSell·
+// LS.manualSellArchive)과 attempted 장부(LS.stopLossAttempted·
+// LS.stopLossAttemptedSlugs·LS.manualSellAttempted·
+// LS.manualSellAttemptedArchive)의 저장 접근은 이 구간만 한다
+// (공리적 분리 6단계, 감사 결합 6 — 4단계 장부 소유자 규율의 연장).
+// attempted 고정 인터페이스: 기록은 recordStopLossAttempt 하나만,
+// 조회는 stopLossAttemptedTokens·stopLossAttemptedSlugs·
+// manualSellAttemptedTokens만 쓴다. 자동 손절·폴백 손절·수동 매도
+// 세 경로는 키를 직접 만지지 않고 이 인터페이스만 통한다.
+
 // 손절 실행 원장 — 사후 판정용 영속 기록. 정산 집계(summarizeBook)가
 // token_id로 대조해 현재가가 아닌 매도 실현손익으로 승패를 가른다.
 // 최근 STOPLOSS_RECENT_CAP건은 전체 기록을 유지하고, 그보다 오래된 건은
@@ -2625,7 +2636,7 @@ export function stopLossAttemptedSlugs() {
   }
 }
 
-function recordStopLossAttempt(tokenId, slug) {
+export function recordStopLossAttempt(tokenId, slug) {
   if (tokenId) {
     const set = stopLossAttemptedTokens();
     if (!set.has(tokenId)) {
@@ -2643,6 +2654,8 @@ function recordStopLossAttempt(tokenId, slug) {
     }
   }
 }
+
+// ── 손절 장부 소유자 구간 끝 ────────────────────────────────────
 
 async function executeStopLossSell(row, current, cfg = DEFAULT_TRADE_SETTINGS) {
   if (!tryAcquireSubmitLock(row.slug)) {

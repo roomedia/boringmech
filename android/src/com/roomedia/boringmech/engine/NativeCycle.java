@@ -7,6 +7,7 @@ import com.roomedia.boringmech.crypto.Redeem;
 import com.roomedia.boringmech.write.ClobWriteClient;
 import com.roomedia.boringmech.write.JudgeFill;
 import com.roomedia.boringmech.write.ManualSell;
+import com.roomedia.boringmech.write.ManualSellLedger;
 import com.roomedia.boringmech.write.ModelJson;
 import com.roomedia.boringmech.write.RedeemSubmitter;
 import com.roomedia.boringmech.write.SignedOrder;
@@ -195,6 +196,8 @@ public final class NativeCycle {
     private final StopLossLedger.Store ledgerStore;
     /** 기매수 장부 단일 소유자 (공리적 분리 4단계) — bm_bought 접근은 이 필드 경유만. */
     private final BoughtLedger boughtLedger;
+    /** 수동 매도 장부·attempted 단일 소유자 (공리적 분리 6단계) — 수동 매도 키 접근은 이 필드 경유만. */
+    private final ManualSellLedger manualSellLedger;
     private final String funder;
     private final Supplier<RedeemSubmitter.RelayerCreds> relayerCreds;
     private final StopLossSeller seller;
@@ -267,6 +270,28 @@ public final class NativeCycle {
                 NativeCycle.this.log(body);
             }
         });
+        // 수동 매도 장부의 저장 경로는 종전 인라인 합성과 같은 env durable이다
+        // (BoughtLedger 어댑터와 같은 방식 — ledgerStore로 바꾸면 테스트
+        // 하네스처럼 백엔드가 갈리는 환경에서 기록이 다른 저장소로 샌다).
+        this.manualSellLedger = new ManualSellLedger(new StopLossLedger.Store() {
+            @Override
+            public Object read(String key) {
+                String raw = env.durableRead(key);
+                if (raw == null) {
+                    return null;
+                }
+                try {
+                    return JsonText.parse(raw);
+                } catch (Exception e) {
+                    return null;
+                }
+            }
+
+            @Override
+            public void write(String key, Object model) {
+                env.durableWrite(key, ModelJson.stringify(model));
+            }
+        });
         this.funder = funder;
         this.relayerCreds = relayerCreds;
         this.seller = new StopLossSeller(client,
@@ -286,29 +311,7 @@ public final class NativeCycle {
                     }
                 },
                 guard, ledgerStore, env::log, this::moneyNotify, timeoutRunner, env::nowMs,
-                new StopLossSeller.ManualSellRecorder() {
-                    @Override
-                    public void record(Map<String, Object> rec) {
-                        ManualSell.CappedLists r = ManualSell.appendRecordWithArchive(
-                                loadDurableJsonList(ManualSell.ARCHIVE_KEY),
-                                loadDurableJsonList(ManualSell.LEDGER_KEY), rec);
-                        env.durableWrite(ManualSell.LEDGER_KEY,
-                                ModelJson.stringify(r.recent));
-                        env.durableWrite(ManualSell.ARCHIVE_KEY,
-                                ModelJson.stringify(r.archive));
-                    }
-
-                    @Override
-                    public void recordAttempt(String tokenId) {
-                        ManualSell.CappedLists r = ManualSell.appendAttemptedWithArchive(
-                                loadDurableJsonList(ManualSell.ATTEMPTED_ARCHIVE_KEY),
-                                loadDurableJsonList(ManualSell.ATTEMPTED_KEY), tokenId);
-                        env.durableWrite(ManualSell.ATTEMPTED_KEY,
-                                ModelJson.stringify(r.recent));
-                        env.durableWrite(ManualSell.ATTEMPTED_ARCHIVE_KEY,
-                                ModelJson.stringify(r.archive));
-                    }
-                });
+                manualSellLedger);
         this.seller.setErrorNotifier(this::errorNotify);
         this.gammaSource = net::gammaPageBySlug;
         this.bookSource = new CandidateVerifier.BookSource() {
@@ -763,12 +766,10 @@ public final class NativeCycle {
                 soldTokens.add((String) t);
             }
         }
-        for (String key : new String[]{ManualSell.ARCHIVE_KEY, ManualSell.LEDGER_KEY}) {
-            for (Object r : StopLoss.parseStopLossList(env.durableRead(key))) {
-                Object t = Js.field(r, "token_id");
-                if (t instanceof String) {
-                    soldTokens.add((String) t);
-                }
+        for (Object r : manualSellLedger.records()) {
+            Object t = Js.field(r, "token_id");
+            if (t instanceof String) {
+                soldTokens.add((String) t);
             }
         }
         List<Object> dead = StopLossFallback.parseDead(
