@@ -75,4 +75,6 @@
 - [x] 전면 감사 4축 — 발견 0건
 - [x] JS·JVM 전 슈트 + 골든
 - [x] 버전 범프 0.3.63 (versionCode 66) + 번들 + APK 게이트
-- [ ] 커밋·푸시·릴리스
+- [x] 커밋·푸시·릴리스 — 커밋 0a6afe9, 릴리스
+  https://github.com/roomedia/boringmech/releases/tag/v0.3.63
+  (다운로드 자산 md5 = 출하 APK md5 대조 완료)
