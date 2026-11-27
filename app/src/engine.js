@@ -2328,7 +2328,7 @@ const SCAN_DROP_LABELS = {
   band_out: "밴드밖",
 };
 
-export function summarizeCycle({ candidates, verified, rejects, filled, unfilled, failed, scan = null, durations = null }) {
+export function summarizeCycle({ candidates, verified, rejects, filled, unfilled, failed, scan = null, durations = null, stageFailures = null }) {
   const parts = [`사이클 요약 · 후보 ${candidates} · 검증 ${verified}`];
   if (scan) {
     const drops = Object.entries(scan)
@@ -2351,6 +2351,11 @@ export function summarizeCycle({ candidates, verified, rejects, filled, unfilled
   parts.push(`제출 ${filled}`);
   if (unfilled > 0) parts.push(`미체결 ${unfilled}`);
   if (failed > 0) parts.push(`실패 ${failed}`);
+  // 격리된 단계 실패는 요약에도 남긴다 — 실패가 없는 사이클의 요약은
+  // 종전과 바이트 단위로 같다.
+  if (stageFailures && stageFailures.length) {
+    parts.push(`단계 실패 ${stageFailures.map((f) => f.stage).join("·")}`);
+  }
   if (durations) parts.push(durations);
   return parts.join(" · ");
 }
@@ -3028,16 +3033,63 @@ export function saveSettledBaseline(base) {
 
 async function runCycle(gen) {
   const ctx = createCycleContext(gen);
-  await cycleSnapshotStage(ctx);
-  await cycleStopLossStage(ctx);
-  await cycleRedeemStage(ctx);
-  cycleSettleStage(ctx);
-  if (!(await cyclePreScanStage(ctx))) return;
-  await cycleScanStage(ctx);
-  const aborted = await cycleSelectionStage(ctx);
-  cycleShadowStage(ctx, aborted);
-  if (aborted) return;
-  cycleSummaryStage(ctx);
+  return runCycleStages(ctx, {
+    snapshot: () => cycleSnapshotStage(ctx),
+    stoploss: () => cycleStopLossStage(ctx),
+    redeem: () => cycleRedeemStage(ctx),
+    settle: () => cycleSettleStage(ctx),
+    prescan: () => cyclePreScanStage(ctx),
+    scan: () => cycleScanStage(ctx),
+    selection: () => cycleSelectionStage(ctx),
+    shadow: (aborted) => cycleShadowStage(ctx, aborted),
+    summary: () => cycleSummaryStage(ctx),
+  });
+}
+
+// ── 단계 실패 격리 (2026-11-27 동호 결정 — 거동 변경) ─────────────
+// 단계 하나가 예외로 실패하면 그 단계만 건너뛰고 나머지는 계속 돈다.
+// 실패는 ctx.stageFailures에 기록하고 즉시 로그로 남긴다 — 조용히
+// 삼키지 않는다. 루프는 stageFailures가 있는 사이클을 오류 사이클로
+// 세어 기존 표면(사이클 오류 로그·연속 오류 카운터·자동 제보)이
+// 격리된 실패도 잡게 한다.
+// 경계 규칙: 스냅샷은 뒤 단계 전부의 입력이라 실패하면 그 사이클은
+// 여기서 끝낸다 (폴백 체인은 스냅샷 단계 안이 담당). scan 실패 시
+// selection·shadow·summary는 입력이 없어 실행하지 않는다.
+// selection 실패도 종전 중단 거동과 같이 shadow·summary를 생략한다.
+// prescan 실패는 정상 false와 같이 매수를 건너뛴다 (안전 방향).
+export async function runCycleStages(ctx, stages) {
+  const snap = await isolateCycleStage(ctx, "snapshot", stages.snapshot);
+  if (!snap.ok) return ctx;
+  await isolateCycleStage(ctx, "stoploss", stages.stoploss);
+  await isolateCycleStage(ctx, "redeem", stages.redeem);
+  await isolateCycleStage(ctx, "settle", stages.settle);
+  const pre = await isolateCycleStage(ctx, "prescan", stages.prescan);
+  if (!pre.ok || pre.value !== true) return ctx;
+  const scan = await isolateCycleStage(ctx, "scan", stages.scan);
+  if (!scan.ok) return ctx;
+  const sel = await isolateCycleStage(ctx, "selection", stages.selection);
+  if (!sel.ok) return ctx;
+  await isolateCycleStage(ctx, "shadow", () => stages.shadow(sel.value === true));
+  if (sel.value === true) return ctx;
+  await isolateCycleStage(ctx, "summary", stages.summary);
+  return ctx;
+}
+
+async function isolateCycleStage(ctx, stage, fn) {
+  try {
+    return { ok: true, value: await fn() };
+  } catch (e) {
+    const entry = recordStageFailure(ctx.stageFailures, stage, e);
+    log(`단계 실패 격리 — ${stage} 단계 오류로 이 단계만 건너뜁니다: ${entry.message}`);
+    return { ok: false, value: undefined };
+  }
+}
+
+/** 격리된 단계 실패의 기록 형태 — {stage, message} (메시지는 120자 절단). */
+export function recordStageFailure(failures, stage, error) {
+  const entry = { stage, message: String(error?.message ?? error).slice(0, 120) };
+  failures.push(entry);
+  return entry;
 }
 
 // ── 사이클 단계 (공리적 분리 3단계 — 결합 3) ─────────────────────
@@ -3066,6 +3118,9 @@ function createCycleContext(gen) {
     tempFetchIncomplete: false,
     boughtBeforeBuy: null,
     outcome: null,
+    // 격리된 단계 실패 기록 — {stage, message} 목록. 루프가 오류
+    // 사이클 판정에 쓰고, 요약이 "단계 실패" 구간으로 표면에 남긴다.
+    stageFailures: [],
     // 단계별 소요 (밀리초) — 사이클 요약에만 붙는 측정값이다. 단계 진입
     // 기록(setStage·정체 판정)은 건드리지 않는다. verify·order는 선정
     // 단계 안의 누적, scan은 스캔 전체 경과다.
@@ -3551,22 +3606,21 @@ function cycleShadowStage(ctx, aborted) {
   // 섀도우 기록 — 거래 동작과 무관한 부수 경로라 실패해도 사이클은
   // 그대로 마친다. 중단된 사이클은 네이티브와 같이 기록하지 않는다.
   // 입력은 스캔 단계가 만든 섀도우 입력 계약(ctx.shadowInputs)만 쓴다.
+  // 실패는 여기서 삼키지 않고 격리 경계(runCycleStages)가 기록·표면화한다.
   if (!aborted && ctx.shadowInputs.length) {
-    try {
-      const boughtAfterBuy = boughtSlugs();
-      const enteredNow = new Set(
-        ctx.shadowInputs
-          .filter((c) => !ctx.boughtBeforeBuy.has(c.slug) && boughtAfterBuy.has(c.slug))
-          .map((c) => c.slug),
-      );
-      recordShadowCycle({
-        ts: Date.now(), cycle: state.cycle,
-        cash: ctx.snap ? ctx.snap.cash : null,
-        slots: ctx.snap ? ctx.snap.slots : null,
-        openCount: ctx.snap ? ctx.snap.openCount : null,
-        cands: ctx.shadowInputs, enteredSlugs: enteredNow,
-      });
-    } catch {}
+    const boughtAfterBuy = boughtSlugs();
+    const enteredNow = new Set(
+      ctx.shadowInputs
+        .filter((c) => !ctx.boughtBeforeBuy.has(c.slug) && boughtAfterBuy.has(c.slug))
+        .map((c) => c.slug),
+    );
+    recordShadowCycle({
+      ts: Date.now(), cycle: state.cycle,
+      cash: ctx.snap ? ctx.snap.cash : null,
+      slots: ctx.snap ? ctx.snap.slots : null,
+      openCount: ctx.snap ? ctx.snap.openCount : null,
+      cands: ctx.shadowInputs, enteredSlugs: enteredNow,
+    });
   }
 }
 
@@ -3580,6 +3634,7 @@ function cycleSummaryStage(ctx) {
     unfilled: outcome.unfilled,
     failed: outcome.failed,
     scan: ctx.scanStats,
+    stageFailures: ctx.stageFailures,
     durations: stageDurationsText(ctx.timing.snapshotMs, ctx.timing.stopLossMs,
       Date.now() - ctx.timing.scanStartMs, ctx.timing.verifyMs, ctx.timing.orderMs),
   }));
@@ -3681,11 +3736,24 @@ async function loop(gen) {
   state.cycleInFlight = true;
   beatProgress();
   let cycleFailed = false;
+  let failMessage = null;
   try {
-    await runCycle(gen);
+    const ctx = await runCycle(gen);
+    // 단계 실패 격리 — 사이클이 끝까지 돌아도 단계 실패가 1건이라도
+    // 있으면 오류 사이클로 센다. 카운터 의미가 "예외로 중단된 사이클"
+    // 에서 "단계 실패가 있는 사이클"로 넓어진 것이라, 뷰어의 연속
+    // 오류 자동 제보와 자가 재로드가 격리된 실패도 같은 방식으로
+    // 드러낸다 (2026-11-27 동호 결정).
+    if (ctx && Array.isArray(ctx.stageFailures) && ctx.stageFailures.length) {
+      cycleFailed = true;
+      failMessage = ctx.stageFailures[0].message;
+    }
   } catch (e) {
     cycleFailed = true;
-    log(`사이클 오류: ${String(e.message ?? e).slice(0, 160)}`);
+    failMessage = String(e.message ?? e);
+  }
+  if (cycleFailed) {
+    log(`사이클 오류: ${String(failMessage ?? "").slice(0, 160)}`);
   }
   // 완료 기록은 현재 세대일 때만 남긴다 — 정지→재시작 뒤에 끝난 구
   // 사이클이 새 체인의 감시 기준을 흔들지 않게 한다.

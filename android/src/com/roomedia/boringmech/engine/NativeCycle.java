@@ -1364,6 +1364,14 @@ public final class NativeCycle {
     public static String summarizeCycle(int candidateCount, int verified, Map<String, Integer> rejects,
                                  int filled, int unfilled, int failed, Map<String, Integer> scan,
                                  String durationsText) {
+        return summarizeCycle(candidateCount, verified, rejects, filled, unfilled, failed, scan,
+                durationsText, null);
+    }
+
+    /** 격리된 단계 실패를 붙인 요약 — 실패가 없으면 기존 요약과 같다 (JS summarizeCycle와 같은 규칙). */
+    public static String summarizeCycle(int candidateCount, int verified, Map<String, Integer> rejects,
+                                 int filled, int unfilled, int failed, Map<String, Integer> scan,
+                                 String durationsText, List<String> stageFailureNames) {
         StringBuilder sb = new StringBuilder();
         sb.append("사이클 요약 · 후보 ").append(candidateCount).append(" · 검증 ").append(verified);
         if (scan != null) {
@@ -1384,6 +1392,9 @@ public final class NativeCycle {
         }
         if (failed > 0) {
             sb.append(" · 실패 ").append(failed);
+        }
+        if (stageFailureNames != null && !stageFailureNames.isEmpty()) {
+            sb.append(" · 단계 실패 ").append(String.join("·", stageFailureNames));
         }
         if (durationsText != null && !durationsText.isEmpty()) {
             sb.append(" · ").append(durationsText);
@@ -1427,8 +1438,12 @@ public final class NativeCycle {
 
     // ── runCycle ────────────────────────────────────────────────────────────
 
-    /** runCycle 이식. 예외는 호출자(runIteration)가 "사이클 오류"로 기록한다. */
-    public void runCycle(int gen) throws Exception {
+    /**
+     * runCycle 이식. 단계 예외는 격리 경계가 흡수해 ctx.stageFailures에
+     * 남기고, 호출자(runIteration)는 그 기록으로 오류 사이클을 판정한다.
+     * 단계 밖 예외(설정 파싱 등)만 호출자에게 전파된다.
+     */
+    public CycleContext runCycle(int gen) throws Exception {
         // 매매·기온 설정은 사이클당 1회만 파싱해 스냅샷·손절·스캔 전부에
         // 같은 객체를 넘긴다 — 지점마다 재파싱하면 사이클 도중 설정이
         // 바뀌었을 때 구·신 설정이 섞인다 (v0.3.38 감사).
@@ -1436,20 +1451,70 @@ public final class NativeCycle {
         CycleContext ctx = new CycleContext(gen, TradeSettings.fromSettings(settings),
                 TempNo.fromCanonical(settings));
         ctx.timingT0 = env.nowMs();
-        cycleSnapshotStage(ctx);
-        cycleStopLossStage(ctx);
-        cycleRedeemStage(ctx);
-        cycleSettleStage(ctx);
-        if (!cyclePreScanStage(ctx)) {
-            return;
+        // 단계 실패 격리 (2026-11-27 동호 결정 — JS runCycleStages와 같은
+        // 경계 규칙): 스냅샷 실패는 그 사이클을 끝내고, scan 실패는
+        // selection·shadow·summary를, selection 실패는 shadow·summary를
+        // 생략한다. prescan 실패는 정상 false와 같이 매수를 건너뛴다.
+        StageResult<Void> snap = isolateStage(ctx, "snapshot",
+                () -> { cycleSnapshotStage(ctx); return null; });
+        if (!snap.ok) {
+            return ctx;
         }
-        cycleScanStage(ctx);
-        boolean aborted = cycleSelectionStage(ctx);
-        cycleShadowStage(ctx, aborted);
+        isolateStage(ctx, "stoploss", () -> { cycleStopLossStage(ctx); return null; });
+        isolateStage(ctx, "redeem", () -> { cycleRedeemStage(ctx); return null; });
+        isolateStage(ctx, "settle", () -> { cycleSettleStage(ctx); return null; });
+        StageResult<Boolean> pre = isolateStage(ctx, "prescan", () -> cyclePreScanStage(ctx));
+        if (!pre.ok || !Boolean.TRUE.equals(pre.value)) {
+            return ctx;
+        }
+        StageResult<Void> scan = isolateStage(ctx, "scan",
+                () -> { cycleScanStage(ctx); return null; });
+        if (!scan.ok) {
+            return ctx;
+        }
+        StageResult<Boolean> sel = isolateStage(ctx, "selection", () -> cycleSelectionStage(ctx));
+        if (!sel.ok) {
+            return ctx;
+        }
+        boolean aborted = Boolean.TRUE.equals(sel.value);
+        isolateStage(ctx, "shadow", () -> { cycleShadowStage(ctx, aborted); return null; });
         if (aborted) {
-            return;
+            return ctx;
         }
-        cycleSummaryStage(ctx);
+        isolateStage(ctx, "summary", () -> { cycleSummaryStage(ctx); return null; });
+        return ctx;
+    }
+
+    /** 격리 경계가 감싸는 단계 호출. */
+    private interface StageCall<T> {
+        T run() throws Exception;
+    }
+
+    /** 격리 경계의 결과 — ok=false면 단계가 실패해 기록만 남았다. */
+    private static final class StageResult<T> {
+        final boolean ok;
+        final T value;
+
+        StageResult(boolean ok, T value) {
+            this.ok = ok;
+            this.value = value;
+        }
+    }
+
+    /**
+     * 단계 실패 격리 경계 — 단계 하나가 예외로 실패하면 그 단계만
+     * 건너뛰고 나머지는 계속 돈다. 실패는 ctx.stageFailures에 기록하고
+     * 즉시 로그로 남긴다 (JS isolateCycleStage와 같은 규칙·문구).
+     */
+    private <T> StageResult<T> isolateStage(CycleContext ctx, String stage, StageCall<T> call) {
+        try {
+            return new StageResult<>(true, call.run());
+        } catch (Exception e) {
+            String m = slice(msg(e), 120);
+            ctx.stageFailures.add(new CycleContext.StageFailure(stage, m));
+            log("단계 실패 격리 — " + stage + " 단계 오류로 이 단계만 건너뜁니다: " + m);
+            return new StageResult<>(false, null);
+        }
     }
 
     /**
@@ -1975,35 +2040,38 @@ public final class NativeCycle {
         return false;
     }
 
-    private void cycleShadowStage(CycleContext ctx, boolean aborted) {
+    private void cycleShadowStage(CycleContext ctx, boolean aborted) throws Exception {
         Snap snap = ctx.snap;
         if (!aborted) {
             // 섀도우 기록 — 거래 동작과 무관한 부수 경로라 실패해도 사이클은
             // 그대로 마친다. 루프 중간 반환(세대 교체 등)은 JS와 같이
-            // 기록하지 않는다.
+            // 기록하지 않는다. 실패는 여기서 삼키지 않고 격리 경계
+            // (runCycle의 isolateStage)가 기록·표면화한다.
             if (!ctx.shadowInputs.isEmpty()) {
-                try {
-                    Set<String> boughtAfterBuy = boughtLedger.slugStrings();
-                    Set<String> enteredNow = new LinkedHashSet<>();
-                    for (ShadowLog.CandInput c : ctx.shadowInputs) {
-                        if (!ctx.boughtBeforeBuy.contains(c.slug) && boughtAfterBuy.contains(c.slug)) {
-                            enteredNow.add(c.slug);
-                        }
+                Set<String> boughtAfterBuy = boughtLedger.slugStrings();
+                Set<String> enteredNow = new LinkedHashSet<>();
+                for (ShadowLog.CandInput c : ctx.shadowInputs) {
+                    if (!ctx.boughtBeforeBuy.contains(c.slug) && boughtAfterBuy.contains(c.slug)) {
+                        enteredNow.add(c.slug);
                     }
-                    ShadowLog.recordCycle(env, env.nowMs(), cycle, snap.cash, snap.slots,
-                            snap.openCount, ctx.shadowInputs, enteredNow);
-                } catch (Exception ignored) {
                 }
+                ShadowLog.recordCycle(env, env.nowMs(), cycle, snap.cash, snap.slots,
+                        snap.openCount, ctx.shadowInputs, enteredNow);
             }
         }
     }
 
     private void cycleSummaryStage(CycleContext ctx) {
         ctx.timingScanMs = env.nowMs() - ctx.timingScanStartMs;
+        List<String> failureNames = new ArrayList<>();
+        for (CycleContext.StageFailure f : ctx.stageFailures) {
+            failureNames.add(f.stage);
+        }
         log(summarizeCycle(ctx.candidates.size(), ctx.verified, ctx.rejects,
                 ctx.filledCount, ctx.unfilledCount, ctx.failedCount, ctx.scanStats,
                 stageDurationsText(ctx.timingSnapshotMs, ctx.timingStopLossMs,
-                        ctx.timingScanMs, ctx.timingVerifyMs, ctx.timingOrderMs)));
+                        ctx.timingScanMs, ctx.timingVerifyMs, ctx.timingOrderMs),
+                failureNames));
     }
 
     // ── 루프 1회전 (loop() 이식 — 스케줄링과 재시작 실행은 드라이버 몫) ──────
@@ -2018,11 +2086,21 @@ public final class NativeCycle {
         cycle++;
         env.beatProgress(cycle);
         boolean failed = false;
+        String failMessage = null;
         try {
-            runCycle(gen);
+            CycleContext ctx = runCycle(gen);
+            // 단계 실패 격리 — 사이클이 끝까지 돌아도 단계 실패가 1건이라도
+            // 있으면 오류 사이클로 센다 (JS loop와 같은 규칙).
+            if (ctx != null && !ctx.stageFailures.isEmpty()) {
+                failed = true;
+                failMessage = ctx.stageFailures.get(0).message;
+            }
         } catch (Exception e) {
             failed = true;
-            log("사이클 오류: " + slice(msg(e), 160));
+            failMessage = msg(e);
+        }
+        if (failed) {
+            log("사이클 오류: " + slice(failMessage == null ? "" : failMessage, 160));
         }
         if (gen != env.generation() || !env.isRunning(gen)) {
             return Result.ABORTED;

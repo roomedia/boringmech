@@ -1,5 +1,6 @@
 package com.roomedia.boringmech.engine;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -34,6 +35,21 @@ final class CycleContext {
     public List<ShadowLog.CandInput> shadowInputs;
     public boolean tempFetchFailed;
     public boolean tempFetchIncomplete;
+
+    // 격리된 단계 실패 기록 — {stage, message} 목록. runIteration이 오류
+    // 사이클 판정에 쓰고, 요약이 "단계 실패" 구간으로 표면에 남긴다.
+    public final List<StageFailure> stageFailures = new ArrayList<>();
+
+    /** 단계 실패 격리 1건의 기록 (JS recordStageFailure와 같은 형태). */
+    public static final class StageFailure {
+        public final String stage;
+        public final String message;
+
+        StageFailure(String stage, String message) {
+            this.stage = stage;
+            this.message = message;
+        }
+    }
 
     // 선정 단계 산출
     public Set<String> boughtBeforeBuy;

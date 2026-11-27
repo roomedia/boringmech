@@ -116,7 +116,13 @@ public class NativeCycleTest {
             return false;
         }
         @Override public String durableRead(String k) { return durable.get(k); }
-        @Override public void durableWrite(String k, String v) { durable.put(k, v); }
+        String throwOnDurableKey = null;
+        @Override public void durableWrite(String k, String v) {
+            if (k.equals(throwOnDurableKey)) {
+                throw new RuntimeException("durable boom: " + k);
+            }
+            durable.put(k, v);
+        }
         @Override public void requestStop() { running = false; gen++; }
         @Override public long lastSelfReloadMs() { return selfReloadMs; }
         @Override public void saveSelfReloadMs(long ms) { selfReloadMs = ms; }
@@ -157,11 +163,15 @@ public class NativeCycleTest {
         int positionsCalls = 0;
         Object latestRelease;
 
+        int failPositionsFromCall = Integer.MAX_VALUE;
         @Override
         public List<Object> fetchPositions(String status) throws Exception {
             if (failPositions) throw new Exception("positions boom");
             if (status == null) {
                 positionsCalls++;
+                if (positionsCalls >= failPositionsFromCall) {
+                    throw new Exception("positions boom");
+                }
                 return positions;
             }
             if (failSettled) throw new Exception("settled boom");
@@ -2340,6 +2350,12 @@ public class NativeCycleTest {
         String s = NativeCycle.summarizeCycle(3, 2, rejects, 1, 1, 0, scan);
         check("summary: JS 형식", s.equals(
                 "사이클 요약 · 후보 3 · 검증 2 · 조회 10 (밴드밖 3·스포츠 1) · 탈락 매도호가없음 2 · 제출 1 · 미체결 1"));
+        String sf = NativeCycle.summarizeCycle(3, 2, rejects, 1, 1, 0, scan, null,
+                List.of("stoploss", "shadow"));
+        check("summary: 단계 실패 구간", sf.equals(
+                "사이클 요약 · 후보 3 · 검증 2 · 조회 10 (밴드밖 3·스포츠 1) · 탈락 매도호가없음 2 · 제출 1 · 미체결 1 · 단계 실패 stoploss·shadow"));
+        String sn = NativeCycle.summarizeCycle(3, 2, rejects, 1, 1, 0, scan, null, List.of());
+        check("summary: 실패 없으면 기존과 동일", sn.equals(s));
         // 수동 매도 수수료 매핑 — 명세 요율표 (크립토 0.07·스포츠/기타 0.05·정치/금융/테크 0.04·지정학 0)
         check("fee: crypto", ManualSell.feeRateForFeeType("crypto_fees") == 0.07);
         check("fee: sports", ManualSell.feeRateForFeeType("sports_fees_v2") == 0.05);
@@ -2703,6 +2719,133 @@ public class NativeCycleTest {
                 !env2.durable.getOrDefault("bm_redeem_pending_archive", "").contains(worthlessCid));
     }
 
+    // ── 단계 실패 격리 (2026-11-27 동호 결정 — 거동 변경) ─────────────
+
+    /** 손절 단계 실패(매도 후 재스냅샷이 던짐)에도 매수 스캔이 계속 돈다. */
+    private static void isolationStopLossFailsScanContinues() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("slug", "test-sl-market");
+        row.put("token_id", "123456789");
+        row.put("outcome", "Yes");
+        row.put("avg_price", 0.75);
+        row.put("current_size", 10.0);
+        row.put("status", "OPEN");
+        row.put("condition_id", "0x" + "cd".repeat(32));
+        net.positions = new ArrayList<>(List.of(row));
+        Map<String, Object> gamma = new LinkedHashMap<>();
+        gamma.put("outcomes", "[\"Yes\",\"No\"]");
+        gamma.put("outcomePrices", "[\"0.4\",\"0.6\"]");
+        net.gammaPages.put("test-sl-market", new ArrayList<>(List.of(gamma)));
+        net.books.put("123456789", jmap("{\"tick_size\":\"0.01\",\"neg_risk\":false,"
+                + "\"asks\":[{\"price\":\"0.41\",\"size\":\"100\"}],"
+                + "\"bids\":[{\"price\":\"0.4\",\"size\":\"100\"}]}"));
+        net.condBalance = BigInteger.valueOf(10_000_000);
+        buyStage(net);
+        env.durable.put("bm_settings", "{\"betUsd\":6}");
+        // 첫 스냅샷은 성공, 손절 단계의 재스냅샷(두 번째 조회)부터 실패.
+        net.failPositionsFromCall = 2;
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("iso-sl: 결과 FAILED (단계 실패가 있는 사이클)", r == NativeCycle.Result.FAILED);
+        check("iso-sl: 손절 매도는 실행됨", env.logged("손절 매도 test-sl-market"));
+        check("iso-sl: 격리 기록 로그", env.logged("단계 실패 격리 — stoploss"));
+        check("iso-sl: 매수 스캔 계속", net.marketsCalls >= 1);
+        check("iso-sl: 매수 제출까지 진행", t.posts == 2
+                && env.durable.getOrDefault("bm_bought", "").contains("test-buy-market"));
+        check("iso-sl: 요약에 단계 실패 표기",
+                env.logged("사이클 요약") && env.logged("단계 실패 stoploss"));
+        check("iso-sl: 사이클 오류 표면", env.logged("사이클 오류: positions boom"));
+        check("iso-sl: 오류 카운터 1", c.cycleErrors() == 1);
+        // 다음 사이클은 살아서 정상 완주하고 카운터가 풀린다.
+        net.failPositionsFromCall = Integer.MAX_VALUE;
+        net.positions = new ArrayList<>();
+        NativeCycle.Result r2 = c.runIteration(1);
+        check("iso-sl: 다음 사이클 정상", r2 == NativeCycle.Result.OK);
+        check("iso-sl: 오류 카운터 리셋", c.cycleErrors() == 0);
+    }
+
+    /** 스냅샷 폴백까지 실패하면 그 사이클은 진행 불가지만 루프는 산다. */
+    private static void isolationSnapshotAbortsCycle() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.failPositions = true;
+        NativeCycle c = newCycle(env, net, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("iso-snap: 결과 FAILED", r == NativeCycle.Result.FAILED);
+        check("iso-snap: 격리 기록 로그", env.logged("단계 실패 격리 — snapshot"));
+        check("iso-snap: 사이클 오류 표면", env.logged("사이클 오류: positions boom"));
+        check("iso-snap: 스캔 미실행", net.marketsCalls == 0 && !env.stages.contains("scan"));
+        net.failPositions = false;
+        NativeCycle.Result r2 = c.runIteration(1);
+        check("iso-snap: 다음 사이클 정상 (루프 생존)", r2 == NativeCycle.Result.OK);
+    }
+
+    /** scan 실패 — selection·summary는 입력이 없어 실행하지 않는다. */
+    private static void isolationScanSkipsSelection() {
+        FakeEnv env = new FakeEnv();
+        FakeNet net = new FakeNet();
+        net.failMarkets = true;
+        NativeCycle c = newCycle(env, net, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("iso-scan: 결과 FAILED", r == NativeCycle.Result.FAILED);
+        check("iso-scan: 격리 기록 로그", env.logged("단계 실패 격리 — scan"));
+        check("iso-scan: 요약 없음", !env.logged("사이클 요약"));
+        net.failMarkets = false;
+        check("iso-scan: 다음 사이클 정상", c.runIteration(1) == NativeCycle.Result.OK);
+    }
+
+    /** 정산 단계 실패(기준선 저장이 던짐)에도 스캔·선정이 계속 돈다. */
+    private static void isolationSettleFailsScanContinues() {
+        FakeEnv env = new FakeEnv();
+        env.throwOnDurableKey = "bm_settled_base";
+        FakeNet net = new FakeNet();
+        NativeCycle c = newCycle(env, net, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("iso-settle: 결과 FAILED", r == NativeCycle.Result.FAILED);
+        check("iso-settle: 격리 기록 로그", env.logged("단계 실패 격리 — settle"));
+        check("iso-settle: 스캔 계속", net.marketsCalls == 1);
+        check("iso-settle: 요약에 단계 실패 표기", env.logged("단계 실패 settle"));
+    }
+
+    /** 리딤 단계 실패(pending 저장이 던짐)에도 스캔·선정이 계속 돈다. */
+    private static void isolationRedeemFailsScanContinues() {
+        FakeEnv env = new FakeEnv();
+        env.throwOnDurableKey = "bm_redeem_pending";
+        FakeNet net = new FakeNet();
+        Map<String, Object> winRow = new LinkedHashMap<>();
+        winRow.put("condition_id", String.format("0x%064x", 9999));
+        winRow.put("token_id", "tnew");
+        winRow.put("slug", "new-win");
+        winRow.put("current_value", 5.0);
+        net.winRows = new ArrayList<>(List.of(winRow));
+        NativeCycle c = newCycle(env, net, new OrderTransport(), new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("iso-redeem: 결과 FAILED", r == NativeCycle.Result.FAILED);
+        check("iso-redeem: 격리 기록 로그", env.logged("단계 실패 격리 — redeem"));
+        check("iso-redeem: 스캔 계속", net.marketsCalls == 1);
+        check("iso-redeem: 요약 실행", env.logged("사이클 요약"));
+    }
+
+    /** 섀도우 기록 실패 — 종전에는 조용히 삼켰지만 이제 기록되고 표면에 남는다. */
+    private static void isolationShadowFailureSurfaced() {
+        FakeEnv env = new FakeEnv();
+        env.throwOnDurableKey = "bm_shadow";
+        FakeNet net = new FakeNet();
+        net.markets = new ArrayList<>();
+        tempStage(net);
+        env.durable.put("bm_settings", "{\"tempNoEnabled\":true,\"tempNoBandLo\":0.8}");
+        OrderTransport t = new OrderTransport();
+        NativeCycle c = newCycle(env, net, t, new FakeLedgerStore(), () -> null);
+        NativeCycle.Result r = c.runIteration(1);
+        check("iso-shadow: 결과 FAILED (실패가 표면에 남음)", r == NativeCycle.Result.FAILED);
+        check("iso-shadow: 격리 기록 로그", env.logged("단계 실패 격리 — shadow"));
+        check("iso-shadow: 매수는 무영향", t.posts == 1);
+        check("iso-shadow: 요약에 단계 실패 표기", env.logged("단계 실패 shadow"));
+    }
+
     public static void main(String[] args) {
         happyPath();
         buyPath();
@@ -2793,6 +2936,12 @@ public class NativeCycleTest {
         manualSellSlippageCapFromSettings();
         manualSellUsesPassedSettings();
         redeemPendingArchiveSurvives();
+        isolationStopLossFailsScanContinues();
+        isolationSnapshotAbortsCycle();
+        isolationScanSkipsSelection();
+        isolationSettleFailsScanContinues();
+        isolationRedeemFailsScanContinues();
+        isolationShadowFailureSurfaced();
         pureLogic();
         System.out.println("NativeCycleTest: " + passed + " passed, " + failed + " failed");
         if (failed > 0) {

@@ -200,5 +200,18 @@ public class CycleAllocationTest {
                 "TempNo.cashGuardFloor(", "TempNo.effectiveReserveSlots("}) {
             eq("guard: no direct " + direct, src.contains(direct), false);
         }
+        // 단계 실패 격리 가드 (2026-11-27) — runCycle의 9단계 전부가 격리
+        // 경계로 감싸져 있고, runIteration이 격리 기록으로 오류 사이클을
+        // 판정하는지.
+        for (String stage : new String[]{
+                "snapshot", "stoploss", "redeem", "settle", "prescan",
+                "scan", "selection", "shadow", "summary"}) {
+            eq("guard: stage isolated " + stage,
+                    src.contains("isolateStage(ctx, \"" + stage + "\""), true);
+        }
+        eq("guard: isolation records failure",
+                src.contains("ctx.stageFailures.add(new CycleContext.StageFailure("), true);
+        eq("guard: iteration counts isolated failures",
+                src.contains("!ctx.stageFailures.isEmpty()"), true);
     }
 }
