@@ -22,7 +22,7 @@ public final class ScanFilter {
     public static final double PRIORITY_BAND_LO = 0.7;
     public static final double PRIORITY_BAND_HI = 0.8;
     public static final double VOLUME_MIN = 10000;
-    public static final int END_WINDOW_DAYS = 45;
+    public static final int END_WINDOW_DAYS = 14;
     public static final long END_WINDOW_DAYS_MS = END_WINDOW_DAYS * 86400_000L;
 
     private static final Pattern SHORT_TERM_RE =

@@ -1447,7 +1447,19 @@ public final class NativeCycle {
         // 매매·기온 설정은 사이클당 1회만 파싱해 스냅샷·손절·스캔 전부에
         // 같은 객체를 넘긴다 — 지점마다 재파싱하면 사이클 도중 설정이
         // 바뀌었을 때 구·신 설정이 섞인다 (v0.3.38 감사).
-        Settings settings = Settings.parse(env.durableRead(TempNo.SETTINGS_KEY));
+        // 만기 창 기본값 이관 (v0.3.64) — 이관이 필요한 블롭이면 사이클
+        // 진입에서 한 번 써넣고 로그를 남긴다 (표식이 붙어 다시 걸리지
+        // 않는다). 파서도 같은 규칙으로 읽으므로, 이 쓰기가 JS 엔진보다
+        // 늦어도 실효값은 같다.
+        String rawSettings = env.durableRead(TempNo.SETTINGS_KEY);
+        String migratedSettings = Settings.migrateEndWindowSettings(rawSettings);
+        if (migratedSettings != null) {
+            env.durableWrite(TempNo.SETTINGS_KEY, migratedSettings);
+            log("설정 이관: 만기 창 기본값 변경으로 endWindowDays "
+                    + Settings.END_WINDOW_DAYS_LEGACY + " → 14 적용");
+            rawSettings = migratedSettings;
+        }
+        Settings settings = Settings.parse(rawSettings);
         CycleContext ctx = new CycleContext(gen, TradeSettings.fromSettings(settings),
                 TempNo.fromCanonical(settings));
         ctx.timingT0 = env.nowMs();

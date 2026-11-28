@@ -760,6 +760,36 @@ eq(pickOutcomeIndex(["Yes", "No"], { outcome_index: -1 }), -1, "index: negative 
   );
 }
 
+// 28b. 만기 창 경계 (기본 14일, v0.3.64) — 오늘 마감은 제외, 잔여 14일은
+// 포함, 15일은 제외. 창을 45로 넓히면 15일이 들어오는 것도 함께 고정해
+// 픽스처가 창 값을 실제로 타는지 확인한다.
+{
+  const day = 86400_000;
+  const isoIn = (days) => new Date(Date.now() + days * day).toISOString();
+  const mkt = (slug, days) => ({
+    active: true,
+    closed: false,
+    slug,
+    endDate: isoIn(days),
+    volume: 20000,
+    outcomePrices: JSON.stringify([0.75, 0.25]),
+  });
+  const markets = [mkt("win-today", 0), mkt("win-1d", 1), mkt("win-14d", 14), mkt("win-15d", 15)];
+  const out = scanCandidates(markets, new Set(), new Set());
+  eq(
+    out.map((c) => c.slug).sort(),
+    ["win-14d", "win-1d"],
+    "window: today excluded, 14d included, 15d excluded at default 14",
+  );
+  const wide = scanCandidates(markets, new Set(), new Set(), null,
+    { ...parseTradeSettings(null), endWindowDays: 45 });
+  eq(
+    wide.map((c) => c.slug).sort(),
+    ["win-14d", "win-15d", "win-1d"],
+    "window: 15d included when window widened to 45",
+  );
+}
+
 // 29. F1 — 하트비트 주기·타임아웃·페이지 상한 상수 정합
 eq(HEARTBEAT_INTERVAL_MS, 30000, "f1: heartbeat interval");
 eq(HEARTBEAT_INTERVAL_MS < HEARTBEAT_STALE_MS, true, "f1: interval beats well before stale");

@@ -298,11 +298,11 @@
         <div class="set-head"><span class="lab">만기 창</span>
           <span class="stepper">
             <button type="button" class="step-btn" data-for="ts_endWindowDays" data-dir="-1">−</button>
-            <span><span class="val" id="val_endWindowDays">45</span><span class="unit">일</span></span>
+            <span><span class="val" id="val_endWindowDays">14</span><span class="unit">일</span></span>
             <button type="button" class="step-btn" data-for="ts_endWindowDays" data-dir="1">+</button>
           </span>
         </div>
-        <input type="hidden" id="ts_endWindowDays" value="45">
+        <input type="hidden" id="ts_endWindowDays" value="14">
       </div>
       <div class="set">
         <div class="set-head"><span class="lab">스프레드 상한</span><span class="val" id="val_spreadMax">0.02</span></div>
@@ -1073,7 +1073,7 @@
         { id: 'ts_priorityBandLo', key: 'priorityBandLo', def: 0.7, min: 0, max: 1, label: '우선 밴드 하한', ctrl: 'slider' },
         { id: 'ts_priorityBandHi', key: 'priorityBandHi', def: 0.8, min: 0, max: 1, minEx: true, label: '우선 밴드 상한', ctrl: 'slider' },
         { id: 'ts_volumeMin', key: 'volumeMin', def: 10000, min: 0, label: '최소 거래량', ctrl: 'num' },
-        { id: 'ts_endWindowDays', key: 'endWindowDays', def: 45, min: 1, max: 365, int: true, label: '만기 창', ctrl: 'step', step: 1 },
+        { id: 'ts_endWindowDays', key: 'endWindowDays', def: 14, min: 1, max: 365, int: true, label: '만기 창', ctrl: 'step', step: 1 },
         { id: 'ts_spreadMax', key: 'spreadMax', def: 0.02, min: 0, max: 1, minEx: true, label: '스프레드 상한', ctrl: 'slider' },
         { id: 'ts_askDepthMinUsd', key: 'askDepthMinUsd', def: 10, min: 0, label: '호가 깊이 하한', ctrl: 'step', step: 5, smax: 500 },
         { id: 'ts_slippageCap', key: 'slippageCap', def: 0.015, min: 0, max: 0.5, label: '지정가 버퍼 · 매도 하한 폭', ctrl: 'slider' },
@@ -1161,6 +1161,10 @@
           return;
         }
       }
+      // 만기 창 기본값 이관 표식 — 새 버전 화면에서 band 그룹을 저장한
+      // 값은 사용자 확정이라, 파서 이관이 다시 걸리지 않게 표식을 남긴다
+      // (45로 직접 저장한 경우를 존중하기 위해서다).
+      if (name === 'band') writeSettingsObject({ endWindowDaysMigrated: true });
       syncGroupForm(name, true);
       renderSettingsSummary();
       setCardLocked(name, true);

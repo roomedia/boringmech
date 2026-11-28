@@ -61,7 +61,7 @@ SHARED = [
     ("scan.volumeMin", 10000, [js_const("VOLUME_MIN"),
                                java_const(J_SCAN, "VOLUME_MIN"),
                                (PY_SCAN, r'\(m\.get\("volume"\) or 0\) < ([0-9_]+)', 1)]),
-    ("scan.endWindowDays", 45, [js_const("END_WINDOW_DAYS"),
+    ("scan.endWindowDays", 14, [js_const("END_WINDOW_DAYS"),
                                 java_const(J_SCAN, "END_WINDOW_DAYS"),
                                 (PY_SCAN, r"timedelta\(days=([0-9]+)\)", 1)]),
     ("scan.spreadMax", 0.02, [js_const("SPREAD_MAX"),

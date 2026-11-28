@@ -15,6 +15,12 @@ import java.util.Map;
  * orderTestRounds는 저장 호환용 유산 필드라 네임스페이스 밖에 둔다.
  */
 public final class Settings {
+    // 만기 창 기본값 이관 (v0.3.64) — engine.js parseSettings와 같은 규칙.
+    // 저장값이 옛 기본값과 정확히 같고 이관 표식이 없으면 기본값이 저장된
+    // 것으로 보고 새 기본값(14)으로 읽는다.
+    public static final int END_WINDOW_DAYS_LEGACY = 45;
+    public static final String END_WINDOW_MIGRATED_KEY = "endWindowDaysMigrated";
+
     private Settings(Scan scan, Sizing sizing, StopLoss stoploss, Temp temp, int orderTestRounds) {
         this.scan = scan;
         this.sizing = sizing;
@@ -166,7 +172,7 @@ public final class Settings {
         double priorityBandLo = 0.7;
         double priorityBandHi = 0.8;
         double volumeMin = 10000;
-        int endWindowDays = 45;
+        int endWindowDays = 14;
         double spreadMax = 0.02;
         double askDepthMinUsd = 10;
         double slippageCap = 0.015;
@@ -199,6 +205,14 @@ public final class Settings {
             volumeMin = numField(o, "volumeMin", volumeMin, v -> v >= 0);
             endWindowDays = (int) numField(o, "endWindowDays", endWindowDays,
                     v -> v == Math.floor(v) && v >= 1 && v <= 365);
+            // 만기 창 기본값 이관 (v0.3.64) — JS parseSettings와 같은 규칙:
+            // 저장값이 옛 기본값과 정확히 같고 이관 표식이 없으면 새
+            // 기본값으로 읽는다. 45가 아닌 값과 표식이 있는 45는 사용자
+            // 확정값이라 건드리지 않는다.
+            if (!Boolean.TRUE.equals(Js.field(o, END_WINDOW_MIGRATED_KEY))
+                    && strictFieldNum(o, "endWindowDays") == END_WINDOW_DAYS_LEGACY) {
+                endWindowDays = 14;
+            }
             spreadMax = numField(o, "spreadMax", spreadMax, v -> v > 0 && v <= 1);
             askDepthMinUsd = numField(o, "askDepthMinUsd", askDepthMinUsd, v -> v >= 0);
             slippageCap = numField(o, "slippageCap", slippageCap, v -> v >= 0 && v <= 0.5);
@@ -272,5 +286,43 @@ public final class Settings {
                 new Temp(tempEnabled, tempBandLo, tempBandHi, tempEntryHourUtc,
                         tempReserveSlots, tempBetUsd),
                 orderTestRounds);
+    }
+
+    /**
+     * 만기 창 기본값 이관이 필요한 블롭인지 — JS endWindowMigrationApplies와
+     * 같은 판정. 블롭을 객체로 못 풀면 false.
+     */
+    public static boolean endWindowMigrationApplies(String raw) {
+        Object o = null;
+        if (raw != null && !raw.isEmpty()) {
+            try {
+                o = JsonText.parse(raw);
+            } catch (IllegalArgumentException e) {
+                o = null;
+            }
+        }
+        if (!(o instanceof Map)) {
+            return false;
+        }
+        return !Boolean.TRUE.equals(Js.field(o, END_WINDOW_MIGRATED_KEY))
+                && strictFieldNum(o, "endWindowDays") == END_WINDOW_DAYS_LEGACY;
+    }
+
+    /**
+     * 이관이 필요한 블롭이면 이관본(JSON 문자열)을, 아니면 null을 돌려준다
+     * — JS migrateEndWindowSettings와 같은 계약. 이관본은 endWindowDays만
+     * 새 기본값으로 바꾸고 이관 표식을 단다. 영속화와 로그는 호출자
+     * (사이클 진입)가 맡는다.
+     */
+    @SuppressWarnings("unchecked")
+    public static String migrateEndWindowSettings(String raw) {
+        if (!endWindowMigrationApplies(raw)) {
+            return null;
+        }
+        Map<String, Object> o = (Map<String, Object>) JsonText.parse(raw);
+        Map<String, Object> next = new java.util.LinkedHashMap<>(o);
+        next.put("endWindowDays", 14.0);
+        next.put(END_WINDOW_MIGRATED_KEY, Boolean.TRUE);
+        return JsonText.stringify(next);
     }
 }

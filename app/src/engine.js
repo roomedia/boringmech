@@ -38,7 +38,13 @@ export const BAND_HI = 0.9;
 export const PRIORITY_BAND_LO = 0.7;
 export const PRIORITY_BAND_HI = 0.8;
 export const VOLUME_MIN = 10000;
-export const END_WINDOW_DAYS = 45;
+export const END_WINDOW_DAYS = 14;
+// 만기 창 기본값 이관 (v0.3.64) — 옛 기본값 45가 저장된 블롭은 기본값이
+// 저장된 것으로 보고 14로 이관한다. 사용자가 직접 바꾼 값(45가 아닌 값,
+// 또는 이관 표식이 있는 45)은 건드리지 않는다. 판정 규칙은 parseSettings
+// 안의 한 곳에만 있고, 영속화·로그는 migrateEndWindowSettings가 맡는다.
+export const END_WINDOW_DAYS_LEGACY = 45;
+export const END_WINDOW_MIGRATED_KEY = "endWindowDaysMigrated";
 export const SPREAD_MAX = 0.02;
 export const ASK_DEPTH_MIN_USD = 10.0;
 export const SLIPPAGE_CAP = 0.015;
@@ -718,6 +724,14 @@ export function parseSettings(raw) {
     scan.volumeMin = numField(o, "volumeMin", ds.volumeMin, nonNeg);
     scan.endWindowDays = numField(o, "endWindowDays", ds.endWindowDays,
       (v) => Number.isInteger(v) && v >= 1 && v <= 365);
+    // 만기 창 기본값 이관 (v0.3.64) — 저장값이 옛 기본값과 정확히 같고
+    // 이관 표식이 없으면, 사용자가 고른 값이 아니라 기본값이 저장된
+    // 것으로 보고 새 기본값으로 읽는다. 45가 아닌 값과 표식이 있는
+    // 45는 사용자 확정값이라 건드리지 않는다.
+    if (o[END_WINDOW_MIGRATED_KEY] !== true
+      && strictNum(o.endWindowDays) === END_WINDOW_DAYS_LEGACY) {
+      scan.endWindowDays = ds.endWindowDays;
+    }
     scan.spreadMax = numField(o, "spreadMax", ds.spreadMax, inHalfOpen01);
     scan.askDepthMinUsd = numField(o, "askDepthMinUsd", ds.askDepthMinUsd, nonNeg);
     scan.slippageCap = numField(o, "slippageCap", ds.slippageCap, (v) => v >= 0 && v <= 0.5);
@@ -791,6 +805,34 @@ export function parseSettings(raw) {
     temp: Object.freeze(temp),
     orderTestRounds,
   });
+}
+
+/**
+ * 만기 창 기본값 이관이 필요한 블롭인지 — 저장값이 옛 기본값과 정확히
+ * 같고 이관 표식이 없을 때만 true. parseSettings 안의 이관 규칙과 같은
+ * 판정이다 (한쪽을 바꾸면 다른 쪽도 바꾼다 — 패리티 픽스처가 고정).
+ */
+export function endWindowMigrationApplies(raw) {
+  const o = settingsObject(raw);
+  if (!o) return false;
+  return o[END_WINDOW_MIGRATED_KEY] !== true
+    && strictNum(o.endWindowDays) === END_WINDOW_DAYS_LEGACY;
+}
+
+/**
+ * 이관이 필요한 블롭이면 이관본(JSON 문자열)을, 아니면 null을 돌려준다.
+ * 이관본은 endWindowDays만 새 기본값으로 바꾸고 이관 표식을 단다 — 다른
+ * 키는 원본 그대로다. 영속화와 로그는 호출자(사이클 진입)가 맡는다.
+ */
+export function migrateEndWindowSettings(raw) {
+  if (!endWindowMigrationApplies(raw)) return null;
+  const o = settingsObject(raw);
+  const next = {
+    ...o,
+    endWindowDays: END_WINDOW_DAYS,
+    [END_WINDOW_MIGRATED_KEY]: true,
+  };
+  return JSON.stringify(next);
 }
 
 /** 정본 해석의 매매 평면 뷰 — parseTradeSettings의 기존 반환 형태. */
@@ -3101,10 +3143,19 @@ export function recordStageFailure(failures, stage, error) {
 // timing 필드는 각 단계가 자기 필드만 쓴다. 선정 카운터는 selection
 // 단계의 지역 상태이고, 결과만 outcome에 남긴다.
 function createCycleContext(gen) {
+  // 만기 창 기본값 이관 — 이관이 필요한 블롭이면 사이클 진입에서 한 번
+  // 써넣고 로그를 남긴다 (표식이 붙어 다시 걸리지 않는다). 파서도 같은
+  // 규칙으로 읽으므로, 이 쓰기가 네이티브 엔진보다 늦어도 실효값은 같다.
+  const rawSettings = durableRead(LS.settings);
+  const migratedSettings = migrateEndWindowSettings(rawSettings);
+  if (migratedSettings != null) {
+    durableWrite(LS.settings, migratedSettings);
+    log(`설정 이관: 만기 창 기본값 변경으로 endWindowDays ${END_WINDOW_DAYS_LEGACY} → ${END_WINDOW_DAYS} 적용`);
+  }
   return {
     gen,
     // 매매 설정은 사이클마다 새로 읽는다 — 설정 변경은 다음 사이클부터 적용.
-    tradeCfg: parseTradeSettings(durableRead(LS.settings)),
+    tradeCfg: parseTradeSettings(migratedSettings ?? rawSettings),
     tempSettings: null,
     snap: null,
     settleNotice: null,

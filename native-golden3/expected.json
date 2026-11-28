@@ -79,13 +79,6 @@
      "side": "yes",
      "price": 0.75,
      "endDate": "2026-11-25T12:00:00.000Z"
-    },
-    {
-     "slug": "end-max",
-     "question": "질문?",
-     "side": "yes",
-     "price": 0.75,
-     "endDate": "2026-12-30T12:00:00.000Z"
     }
    ],
    "stats": {
@@ -93,7 +86,7 @@
     "not_accepting": 2,
     "short_term": 2,
     "owned": 2,
-    "end_out": 2,
+    "end_out": 3,
     "volume_low": 2,
     "price_bad": 3,
     "total": 18

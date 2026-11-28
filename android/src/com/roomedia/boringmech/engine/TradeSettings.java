@@ -18,7 +18,7 @@ public final class TradeSettings {
     public double priorityBandLo = 0.7;    // ScanFilter.PRIORITY_BAND_LO
     public double priorityBandHi = 0.8;    // ScanFilter.PRIORITY_BAND_HI
     public double volumeMin = 10000;       // ScanFilter.VOLUME_MIN
-    public int endWindowDays = 45;         // ScanFilter.END_WINDOW_DAYS
+    public int endWindowDays = 14;         // ScanFilter.END_WINDOW_DAYS
     public double spreadMax = 0.02;        // CandidateVerifier.SPREAD_MAX
     public double askDepthMinUsd = 10;     // CandidateVerifier.ASK_DEPTH_MIN_USD
     public double slippageCap = 0.015;     // CandidateVerifier.SLIPPAGE_CAP

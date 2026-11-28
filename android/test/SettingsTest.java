@@ -95,9 +95,29 @@ public class SettingsTest {
             cmp(name, "tempview.reserveSlots", p.reserveSlots, num(ep, "reserveSlots"));
             cmp(name, "tempview.betUsd", p.betUsd, num(ep, "betUsd"));
         }
+        // 만기 창 기본값 이관 헬퍼 (v0.3.64) — JS migrateEndWindowSettings와
+        // 같은 계약: 옛 기본값 45만 이관되고, 표식이 있거나 사용자가 바꾼
+        // 값은 이관하지 않는다. 이관본은 다른 키를 보존하고 멱등하다.
+        checkMigration("legacy-45", "{\"endWindowDays\":45}", true);
+        checkMigration("marker-45", "{\"endWindowDays\":45,\"endWindowDaysMigrated\":true}", false);
+        checkMigration("user-30", "{\"endWindowDays\":30}", false);
+        checkMigration("null-raw", null, false);
+        String migrated = Settings.migrateEndWindowSettings("{\"bandLo\":0.7,\"endWindowDays\":45}");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> mo = (Map<String, Object>) JsonText.parse(migrated);
+        cmp("migrate", "endWindowDays", ((Number) mo.get("endWindowDays")).doubleValue(), 14);
+        cmp("migrate", "bandLo preserved", ((Number) mo.get("bandLo")).doubleValue(), 0.7);
+        cmpBool("migrate", "marker", Boolean.TRUE.equals(mo.get("endWindowDaysMigrated")), true);
+        cmpBool("migrate", "idempotent", Settings.migrateEndWindowSettings(migrated) == null, true);
+
         System.out.println("Settings tests: " + passed + " passed, " + failed
                 + " failed (" + fixtures.size() + " fixtures)");
         System.exit(failed == 0 ? 0 : 1);
+    }
+
+    private static void checkMigration(String name, String raw, boolean expected) {
+        cmpBool(name, "migrationApplies", Settings.endWindowMigrationApplies(raw), expected);
+        cmpBool(name, "migrateNonNull", Settings.migrateEndWindowSettings(raw) != null, expected);
     }
 
     private static double num(Map<String, Object> m, String key) {

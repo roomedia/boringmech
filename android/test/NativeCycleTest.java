@@ -1245,7 +1245,7 @@ public class NativeCycleTest {
         TradeSettings d = TradeSettings.parse(null);
         check("cfg defaults", d.bandLo == 0.6 && d.bandHi == 0.9
                 && d.priorityBandLo == 0.7 && d.priorityBandHi == 0.8
-                && d.volumeMin == 10000 && d.endWindowDays == 45
+                && d.volumeMin == 10000 && d.endWindowDays == 14
                 && d.spreadMax == 0.02 && d.askDepthMinUsd == 10
                 && d.slippageCap == 0.015 && d.snapshotMatchTol == 0.03
                 && d.askAboveSignal == 0.05

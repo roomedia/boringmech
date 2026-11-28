@@ -176,7 +176,7 @@ def main():
     # 중간에 죽어도 미판단 후보가 다음 run에 다시 뜬다.
 
     today = date.today()
-    end_max = today + timedelta(days=45)
+    end_max = today + timedelta(days=14)
     candidates = []
     for m in markets:
         if not m.get("active") or m.get("closed"):

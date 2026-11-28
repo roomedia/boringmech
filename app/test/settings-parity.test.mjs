@@ -11,6 +11,8 @@ const {
   parseTempSettings,
   tradeSettingsView,
   tempSettingsView,
+  endWindowMigrationApplies,
+  migrateEndWindowSettings,
 } = await import("../src/engine.js");
 import { readFileSync } from "node:fs";
 
@@ -75,6 +77,23 @@ for (const f of fixtures) {
   eq(Object.keys(s.temp).sort(), [
     "bandHi", "bandLo", "betUsd", "enabled", "entryHourUtc", "reserveSlots",
   ], "namespaces: temp keys");
+}
+
+// 만기 창 기본값 이관 헬퍼 (v0.3.64) — 옛 기본값 45만 이관되고, 표식이
+// 있거나 사용자가 바꾼 값은 이관하지 않는다. 이관본은 다른 키를 보존하고
+// 멱등하다.
+{
+  check(endWindowMigrationApplies({ endWindowDays: 45 }), "migration: legacy 45 applies");
+  check(!endWindowMigrationApplies({ endWindowDays: 45, endWindowDaysMigrated: true }),
+    "migration: marker blocks");
+  check(!endWindowMigrationApplies({ endWindowDays: 30 }), "migration: user value untouched");
+  check(!endWindowMigrationApplies(null), "migration: null blob");
+  const migrated = migrateEndWindowSettings(JSON.stringify({ bandLo: 0.7, endWindowDays: 45 }));
+  const mo = JSON.parse(migrated);
+  check(mo.endWindowDays === 14 && mo.endWindowDaysMigrated === true && mo.bandLo === 0.7,
+    "migration: migrated blob shape");
+  check(migrateEndWindowSettings(migrated) === null, "migration: idempotent");
+  check(migrateEndWindowSettings({ endWindowDays: 30 }) === null, "migration: noop returns null");
 }
 
 console.log(`settings-parity: ${passed} passed, ${failed} failed (${fixtures.length} fixtures)`);

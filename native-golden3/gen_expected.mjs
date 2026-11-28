@@ -93,6 +93,11 @@ const parts = [
     .map((n) => extractLine(`const ${n} =`)),
   extractArray("const FAILSAFE_KEYWORDS ="),
   extractLine("const round2 ="),
+  // 분리 1단계에서 기본값이 FR별 네임스페이스로 나뉘어 DEFAULT_TRADE_SETTINGS가
+  // 그 합성이 됐다 — 네임스페이스 문장도 함께 추출해야 평가가 성립한다.
+  extractStatement("export const DEFAULT_SCAN_SETTINGS", "});"),
+  extractStatement("export const DEFAULT_SIZING_SETTINGS", "});"),
+  extractStatement("export const DEFAULT_STOPLOSS_SETTINGS", "});"),
   extractStatement("export const DEFAULT_TRADE_SETTINGS", "});"),
   extractBlock("const LS = {"),
   extractBlock("export function isSportsMarket"),
